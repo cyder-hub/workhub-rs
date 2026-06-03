@@ -18,10 +18,10 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=build /build/target/release/cyder-mcp-template /usr/local/bin/cyder-mcp-template
+COPY --from=build /build/target/release/mcp-atlassian-rs /usr/local/bin/mcp-atlassian-rs
 
 EXPOSE 8000
 
 USER app
 
-CMD ["cyder-mcp-template", "streamhttp", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["mcp-atlassian-rs", "streamhttp", "--host", "0.0.0.0", "--port", "8000"]

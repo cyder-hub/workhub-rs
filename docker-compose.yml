@@ -1,8 +1,8 @@
 services:
-  app:
+  mcp-atlassian-rs:
     build:
       context: .
       dockerfile: Dockerfile
-    image: cyder-mcp-template:local
+    image: mcp-atlassian-rs:local
     ports:
       - "${MCP_PORT:-8000}:8000"

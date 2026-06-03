@@ -1,49 +1,34 @@
-# cyder-mcp-template
+# mcp-atlassian-rs
 
-Rust-based development template for building Model Context Protocol (MCP) servers with `rmcp`.
+Rust migration workspace for MCP Atlassian.
 
-The template provides a minimal Rust MCP server with one binary and two transports:
+This repository is migrating the Python `mcp-atlassian` Jira and Confluence MCP server to a Rust-native implementation. The current Rust binary is a Stage 0 baseline: project identity, runtime skeleton, Docker/compose wiring, and migration tracking are in place. Jira and Confluence business tools are not available yet.
 
-- `stdio` for local MCP clients that launch the server as a subprocess.
-- `streamhttp` for streamable HTTP clients that connect to `/mcp`.
+## Current Status
 
-The starter implementation includes a small in-memory counter and echo tool. Replace those tools with your own application-specific capabilities.
+Implemented in the Rust root project:
 
-## Use This Template
+- Package, binary, server name, Docker image, compose service, and CI image identity use `mcp-atlassian-rs`.
+- MCP server runs over `stdio` and streamable HTTP at `/mcp`.
+- Logging is configured to stderr so stdio MCP stdout remains protocol-only.
+- The temporary MCP tool `migration_status` reports the migration state.
+- Dockerfile, compose file, just commands, and CI metadata build the Rust binary.
 
-Create a new repository from this template with GitHub's **Use this template** button, then clone your new repository and rename the project before the first release. Search for these template names after each rename pass:
+Not implemented yet:
 
-- `cyder-mcp-template`
-- `cyder_mcp_template`
-
-Rename checklist:
-
-- `README.md`: update the title, project description, and MCP client examples.
-- `Cargo.toml`: update `[package].name`, `default-run`, and `[[bin]].name`.
-- `Cargo.lock`: regenerate it after changing the Rust package name.
-- `src/mcp.rs`: update `SERVER_NAME` and the starter tool descriptions.
-- `Dockerfile`: update the copied release binary path and `CMD` binary name.
-- `docker-compose.yml`: update the `cyder-mcp-template:local` image name.
-- `justfile`: update the default Docker image name.
-- `.github/workflows/ci.yml`: update the Docker image tag `cyder-mcp-template:ci`.
-- `.github/PULL_REQUEST_TEMPLATE.md` and `CONTRIBUTING.md`: update verification command examples.
-- `.github/dependabot.yml`: update `target-branch` if the new repository does not use `main`.
-- `LICENSE`: update the copyright holder if needed.
-
-Shortest local verification path after renaming:
-
-```bash
-just check
-docker compose -f docker-compose.yml config
-docker build -t your-project:ci -f Dockerfile .
-```
+- Atlassian configuration, authentication, HTTP client, or API models.
+- Jira and Confluence MCP tools.
+- Tool filtering through `ENABLED_TOOLS` or `TOOLSETS`.
+- Read-only write protection.
+- `/healthz`.
+- Real Jira or Confluence smoke tests.
 
 ## Requirements
 
 - Rust 1.94 or newer
 - just
-- Docker when you want container builds or local compose
-- An MCP client or the MCP inspector for manual smoke testing
+- Docker when validating container or compose behavior
+- An MCP client or MCP inspector for manual transport checks in later stages
 
 ## Quick Start
 
@@ -59,23 +44,10 @@ Run over streamable HTTP:
 just dev-http
 ```
 
-The HTTP endpoint is:
+The streamable HTTP endpoint is:
 
 ```text
 http://127.0.0.1:8000/mcp
-```
-
-## Commands
-
-Run `just --list` to see the command surface.
-
-```bash
-just dev           # run stdio transport
-just dev-http      # run streamable HTTP transport on 127.0.0.1:8000
-just build         # build the release binary
-just test          # run tests
-just check         # fmt, check, and tests
-just docker-build  # local Docker image build
 ```
 
 Direct binary usage:
@@ -89,29 +61,24 @@ When no command is provided, the binary defaults to `stdio`.
 
 ## MCP Tools
 
-The starter server exposes these example tools:
+The Rust server currently exposes one temporary tool:
 
-- `increment`: increment the in-memory counter by 1.
-- `decrement`: decrement the in-memory counter by 1.
-- `get_value`: read the current counter value.
-- `echo`: return the caller-provided message.
+- `migration_status`: reports that the Rust project is in Stage 0 and that Jira/Confluence tools have not been migrated.
 
-## Inspector Smoke Tests
+This tool is a migration aid. Later stages will replace or reclassify tool exposure after the shared runtime and tool registry are implemented.
 
-Stdio:
+## Commands
 
-```bash
-npx @modelcontextprotocol/inspector cargo run -- stdio
-```
-
-Streamable HTTP:
+Run `just --list` to see the local command surface.
 
 ```bash
-cargo run -- streamhttp --host 127.0.0.1 --port 8000
-npx @modelcontextprotocol/inspector
+just dev           # run stdio transport
+just dev-http      # run streamable HTTP transport on 127.0.0.1:8000
+just build         # build the release binary
+just test          # run tests
+just check         # fmt, check, and tests
+just docker-build  # local Docker image build
 ```
-
-Then connect the inspector to `http://127.0.0.1:8000/mcp`.
 
 ## Docker And Compose
 
@@ -121,25 +88,25 @@ Build the local image:
 just docker-build
 ```
 
-The equivalent direct Docker command is:
+Equivalent direct Docker command:
 
 ```bash
-docker build -t cyder-mcp-template:local -f Dockerfile .
+docker build -t mcp-atlassian-rs:local -f Dockerfile .
 ```
 
 Run the image:
 
 ```bash
-docker run --rm -p 8000:8000 cyder-mcp-template:local
+docker run --rm -p 8000:8000 mcp-atlassian-rs:local
 ```
 
 The image runs:
 
 ```bash
-cyder-mcp-template streamhttp --host 0.0.0.0 --port 8000
+mcp-atlassian-rs streamhttp --host 0.0.0.0 --port 8000
 ```
 
-Run the app with compose:
+Run with compose:
 
 ```bash
 docker compose up --build
@@ -147,15 +114,21 @@ docker compose up --build
 
 Set `MCP_PORT` to change the host port used by compose.
 
-## Automation
+## Verification
 
-This template includes `.github/workflows/ci.yml`. The workflow runs on pull requests, pushes to `main` or `master`, and manual dispatch:
+Stage 0 baseline checks:
 
-- `Service`: installs Rust 1.94, then runs Rust formatting, `cargo check`, and tests.
-- `Docker`: waits for the service job, validates `docker-compose.yml`, and builds `cyder-mcp-template:ci`.
+```bash
+cargo fmt --check
+cargo check
+cargo test
+just check
+docker compose -f docker-compose.yml config
+docker build -t mcp-atlassian-rs:ci -f Dockerfile .
+```
 
-When renaming the template, update the workflow's Docker image tag together with the local Docker and compose names. If you use a different CI system, copy the same command set from the workflow.
+Real Jira and Confluence validation is intentionally deferred. The roadmap requires a real Jira gate before Confluence migration begins.
 
 ## License
 
-Licensed under the MIT License. See `LICENSE`.
+Licensed under the MIT License. See [LICENSE](LICENSE).

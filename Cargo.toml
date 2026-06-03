@@ -1,13 +1,13 @@
 [package]
-name = "cyder-mcp-template"
+name = "mcp-atlassian-rs"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT"
-default-run = "cyder-mcp-template"
+default-run = "mcp-atlassian-rs"
 
 [[bin]]
-name = "cyder-mcp-template"
+name = "mcp-atlassian-rs"
 path = "src/main.rs"
 
 [dependencies]

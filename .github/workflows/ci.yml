@@ -62,4 +62,4 @@ jobs:
         run: docker compose -f docker-compose.yml config
 
       - name: Build image
-        run: docker build -t cyder-mcp-template:ci -f Dockerfile .
+        run: docker build -t mcp-atlassian-rs:ci -f Dockerfile .

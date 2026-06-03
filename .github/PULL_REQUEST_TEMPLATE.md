@@ -10,7 +10,7 @@ Commands run:
 - [ ] `cargo check`
 - [ ] `cargo test`
 - [ ] `docker compose -f docker-compose.yml config`
-- [ ] `docker build -t cyder-mcp-template:ci -f Dockerfile .`
+- [ ] `docker build -t mcp-atlassian-rs:ci -f Dockerfile .`
 - [ ] Not run; reason:
 
 ## Impact
@@ -19,7 +19,7 @@ Commands run:
 - [ ] Docker or compose
 - [ ] GitHub Actions or repository metadata
 - [ ] Documentation only
-- [ ] Template naming or rename guidance
+- [ ] Project naming or migration-stage guidance
 - [ ] Dependencies or lockfiles
 
 ## Checklist

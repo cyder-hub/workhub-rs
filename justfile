@@ -36,5 +36,5 @@ fmt-check:
 	cd '{{justfile_directory()}}' && cargo fmt --check
 
 # Build the local Docker image.
-docker-build image="cyder-mcp-template:local":
+docker-build image="mcp-atlassian-rs:local":
 	cd '{{justfile_directory()}}' && docker build -t "{{image}}" -f Dockerfile .

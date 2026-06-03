@@ -3,7 +3,7 @@ mod mcp;
 use std::net::SocketAddr;
 
 use axum::Router;
-use mcp::TemplateMcpServer;
+use mcp::AtlassianMcpServer;
 use rmcp::{
     ServiceExt,
     transport::{
@@ -22,8 +22,8 @@ const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8000;
 const USAGE: &str = "\
 Usage:
-  cyder-mcp-template [stdio]
-  cyder-mcp-template streamhttp [--host <host>] [--port <port>]
+  mcp-atlassian-rs [stdio]
+  mcp-atlassian-rs streamhttp [--host <host>] [--port <port>]
 
 Commands:
   stdio       Run the MCP server over standard input/output.
@@ -71,7 +71,7 @@ async fn main() -> AppResult<()> {
 async fn run_stdio() -> AppResult<()> {
     tracing::info!(server = mcp::SERVER_NAME, "starting MCP stdio server");
 
-    let service = TemplateMcpServer::new()
+    let service = AtlassianMcpServer::new()
         .serve(stdio())
         .await
         .inspect_err(|error| {
@@ -86,7 +86,7 @@ async fn run_streamhttp(config: StreamHttpConfig) -> AppResult<()> {
     let address: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     let cancellation = CancellationToken::new();
     let service = StreamableHttpService::new(
-        || Ok(TemplateMcpServer::new()),
+        || Ok(AtlassianMcpServer::new()),
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default().with_cancellation_token(cancellation.child_token()),
     );
