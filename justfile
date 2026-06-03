@@ -12,6 +12,17 @@ dev:
 dev-http host="127.0.0.1" port="8000":
 	cd '{{justfile_directory()}}' && cargo run -- streamhttp --host "{{host}}" --port "{{port}}"
 
+# Run the stdio MCP smoke check.
+smoke-stdio:
+	cd '{{justfile_directory()}}' && bash scripts/smoke-stdio.sh
+
+# Run the streamable HTTP MCP smoke check.
+smoke-http:
+	cd '{{justfile_directory()}}' && bash scripts/smoke-http.sh
+
+# Run all local MCP smoke checks.
+smoke: smoke-stdio smoke-http
+
 # Build the release binary.
 build:
 	cd '{{justfile_directory()}}' && cargo build --release
