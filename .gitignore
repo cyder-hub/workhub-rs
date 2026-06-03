@@ -1,0 +1,15 @@
+/target/
+
+*.log
+
+.env
+.env.*
+
+.DS_Store
+.idea/
+.vscode/
+
+.agents/
+.codex/
+
+task/

@@ -1,0 +1,14 @@
+.git
+.github
+.agents
+.codex
+.editorconfig
+.gitattributes
+.gitignore
+
+target
+
+*.log
+.env
+.env.*
+mcp-atlassian

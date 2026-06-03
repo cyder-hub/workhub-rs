@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  service:
+    name: Service
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust 1.94
+        shell: bash
+        run: |
+          rustup toolchain install 1.94.0 --profile minimal --component rustfmt
+          rustup default 1.94.0
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Check MCP server
+        run: cargo check
+
+      - name: Test MCP server
+        run: cargo test
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    needs: [service]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate compose file
+        run: docker compose -f docker-compose.yml config
+
+      - name: Build image
+        run: docker build -t cyder-mcp-template:ci -f Dockerfile .

@@ -1,0 +1,32 @@
+[package]
+name = "cyder-mcp-template"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "MIT"
+default-run = "cyder-mcp-template"
+
+[[bin]]
+name = "cyder-mcp-template"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8.8"
+rmcp = { version = "1.7.0", default-features = false, features = [
+    "macros",
+    "schemars",
+    "server",
+    "transport-io",
+    "transport-streamable-http-server",
+] }
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.49.0", features = [
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "signal",
+    "sync",
+] }
+tokio-util = "0.7.17"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }

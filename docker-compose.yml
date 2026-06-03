@@ -1,0 +1,8 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cyder-mcp-template:local
+    ports:
+      - "${MCP_PORT:-8000}:8000"
