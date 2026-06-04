@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 
 use crate::tool_registry::{all_toolsets, default_toolsets};
-use crate::{error::ConfigError, jira::config::JiraConfig};
+use crate::{confluence::config::ConfluenceConfig, error::ConfigError, jira::config::JiraConfig};
+
+pub use crate::confluence::config::ENV_CONFLUENCE_URL;
 
 pub const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
 pub const DEFAULT_HTTP_PORT: u16 = 8000;
@@ -10,7 +12,6 @@ pub const DEFAULT_HTTP_PATH: &str = "/mcp";
 pub const ENV_READ_ONLY_MODE: &str = "READ_ONLY_MODE";
 pub const ENV_ENABLED_TOOLS: &str = "ENABLED_TOOLS";
 pub const ENV_TOOLSETS: &str = "TOOLSETS";
-pub const ENV_CONFLUENCE_URL: &str = "CONFLUENCE_URL";
 pub const ENV_ATLASSIAN_OAUTH_CLOUD_ID: &str = "ATLASSIAN_OAUTH_CLOUD_ID";
 pub const ENV_HTTP_HOST: &str = "MCP_HTTP_HOST";
 pub const ENV_HTTP_PORT: &str = "MCP_HTTP_PORT";
@@ -22,7 +23,7 @@ pub struct RuntimeConfig {
     pub enabled_tools: Option<BTreeSet<String>>,
     pub enabled_toolsets: BTreeSet<String>,
     pub jira: Option<JiraConfig>,
-    pub confluence_url: Option<String>,
+    pub confluence: Option<ConfluenceConfig>,
     pub atlassian_oauth_cloud_id: Option<String>,
     pub http: HttpConfig,
 }
@@ -49,7 +50,7 @@ impl RuntimeConfig {
         let enabled_tools = parse_enabled_tools(get_var(ENV_ENABLED_TOOLS).ok().as_deref());
         let enabled_toolsets = parse_toolsets(get_var(ENV_TOOLSETS).ok().as_deref());
         let jira = JiraConfig::from_var_provider(&mut get_var)?;
-        let confluence_url = parse_optional_string(get_var(ENV_CONFLUENCE_URL).ok());
+        let confluence = ConfluenceConfig::from_var_provider(&mut get_var)?;
         let atlassian_oauth_cloud_id =
             parse_optional_string(get_var(ENV_ATLASSIAN_OAUTH_CLOUD_ID).ok());
         let http = HttpConfig::from_var_provider(&mut get_var, http_overrides)?;
@@ -59,7 +60,7 @@ impl RuntimeConfig {
             enabled_tools,
             enabled_toolsets,
             jira,
-            confluence_url,
+            confluence,
             atlassian_oauth_cloud_id,
             http,
         })
@@ -73,7 +74,7 @@ impl Default for RuntimeConfig {
             enabled_tools: None,
             enabled_toolsets: all_toolsets(),
             jira: None,
-            confluence_url: None,
+            confluence: None,
             atlassian_oauth_cloud_id: None,
             http: HttpConfig::default(),
         }
@@ -225,6 +226,10 @@ mod tests {
 
     use crate::{
         atlassian::auth::AtlassianAuth,
+        confluence::config::{
+            ConfluenceDeployment, ENV_CONFLUENCE_API_TOKEN, ENV_CONFLUENCE_PERSONAL_TOKEN,
+            ENV_CONFLUENCE_USERNAME,
+        },
         jira::config::{ENV_JIRA_PERSONAL_TOKEN, ENV_JIRA_URL, JiraDeployment},
     };
 
@@ -250,7 +255,7 @@ mod tests {
         assert_eq!(config.enabled_tools, None);
         assert_eq!(config.enabled_toolsets, all_toolsets());
         assert_eq!(config.jira, None);
-        assert_eq!(config.confluence_url, None);
+        assert_eq!(config.confluence, None);
         assert_eq!(config.atlassian_oauth_cloud_id, None);
         assert_eq!(config.http, HttpConfig::default());
     }
@@ -341,10 +346,44 @@ mod tests {
                 personal_token: "test-pat-value".to_string(),
             }
         );
-        assert_eq!(config.confluence_url, None);
+        assert_eq!(config.confluence, None);
         assert_eq!(
             config.atlassian_oauth_cloud_id.as_deref(),
             Some("cloud-123")
+        );
+    }
+
+    #[test]
+    fn runtime_config_reads_typed_confluence_config() {
+        let config = config_from_pairs(&[
+            (ENV_CONFLUENCE_URL, " https://example.atlassian.net/wiki/ "),
+            (ENV_CONFLUENCE_USERNAME, "user@example.com"),
+            (ENV_CONFLUENCE_API_TOKEN, "test-api-token"),
+        ])
+        .unwrap();
+        let confluence = config.confluence.unwrap();
+
+        assert_eq!(confluence.base_url, "https://example.atlassian.net/wiki");
+        assert_eq!(confluence.deployment, ConfluenceDeployment::Cloud);
+        assert_eq!(
+            confluence.auth,
+            AtlassianAuth::Basic {
+                username: "user@example.com".to_string(),
+                api_token: "test-api-token".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_config_rejects_confluence_credentials_without_url() {
+        let error =
+            config_from_pairs(&[(ENV_CONFLUENCE_PERSONAL_TOKEN, "test-pat-value")]).unwrap_err();
+
+        assert_eq!(
+            error,
+            ConfigError::MissingConfluenceUrl {
+                credential_variables: vec![ENV_CONFLUENCE_PERSONAL_TOKEN],
+            }
         );
     }
 

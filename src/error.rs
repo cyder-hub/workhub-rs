@@ -22,6 +22,22 @@ pub enum ConfigError {
         variable: &'static str,
         value: String,
     },
+    MissingConfluenceUrl {
+        credential_variables: Vec<&'static str>,
+    },
+    InvalidConfluenceUrl {
+        variable: &'static str,
+    },
+    MissingConfluenceCloudCredentials {
+        missing_variables: Vec<&'static str>,
+    },
+    MissingConfluencePersonalToken {
+        variable: &'static str,
+    },
+    InvalidConfluenceTimeout {
+        variable: &'static str,
+        value: String,
+    },
 }
 
 impl Display for ConfigError {
@@ -56,6 +72,34 @@ impl Display for ConfigError {
                 )
             }
             Self::InvalidJiraTimeout { variable, value } => {
+                write!(formatter, "invalid {variable} value `{value}`")
+            }
+            Self::MissingConfluenceUrl {
+                credential_variables,
+            } => {
+                write!(
+                    formatter,
+                    "missing CONFLUENCE_URL while Confluence credential variables are set: {}",
+                    credential_variables.join(", ")
+                )
+            }
+            Self::InvalidConfluenceUrl { variable } => {
+                write!(formatter, "invalid {variable} value")
+            }
+            Self::MissingConfluenceCloudCredentials { missing_variables } => {
+                write!(
+                    formatter,
+                    "missing Confluence Cloud credential variables: {}",
+                    missing_variables.join(", ")
+                )
+            }
+            Self::MissingConfluencePersonalToken { variable } => {
+                write!(
+                    formatter,
+                    "missing Confluence Server/Data Center credential variable: {variable}"
+                )
+            }
+            Self::InvalidConfluenceTimeout { variable, value } => {
                 write!(formatter, "invalid {variable} value `{value}`")
             }
         }

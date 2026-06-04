@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use rmcp::{ErrorData, model::Tool};
 
-use crate::{context::AppContext, jira::tools};
+use crate::{confluence::tools as confluence_tools, context::AppContext, jira::tools};
 
 pub const MIGRATION_STATUS_TOOL_NAME: &str = "migration_status";
 
@@ -71,6 +71,19 @@ macro_rules! jira_metadata {
         pub const $constant: ToolMetadata = ToolMetadata {
             name: $name,
             service: ToolService::Jira,
+            access: ToolAccess::$access,
+            toolset: Some($toolset),
+            title: $title,
+            description: $description,
+        };
+    };
+}
+
+macro_rules! confluence_metadata {
+    ($constant:ident, $name:expr, $access:ident, $toolset:literal, $title:literal, $description:literal) => {
+        pub const $constant: ToolMetadata = ToolMetadata {
+            name: $name,
+            service: ToolService::Confluence,
             access: ToolAccess::$access,
             toolset: Some($toolset),
             title: $title,
@@ -490,6 +503,199 @@ jira_metadata!(
     "Get development information for multiple Jira issues."
 );
 
+confluence_metadata!(
+    CONFLUENCE_SEARCH_METADATA,
+    confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME,
+    Read,
+    "confluence_pages",
+    "Search Confluence content",
+    "Search Confluence content using simple terms or CQL."
+);
+confluence_metadata!(
+    CONFLUENCE_GET_PAGE_METADATA,
+    confluence_tools::CONFLUENCE_GET_PAGE_TOOL_NAME,
+    Read,
+    "confluence_pages",
+    "Get Confluence page",
+    "Get a Confluence page by ID or title and space key."
+);
+confluence_metadata!(
+    CONFLUENCE_GET_PAGE_CHILDREN_METADATA,
+    confluence_tools::CONFLUENCE_GET_PAGE_CHILDREN_TOOL_NAME,
+    Read,
+    "confluence_pages",
+    "Get Confluence page children",
+    "List child pages and folders for a Confluence page."
+);
+confluence_metadata!(
+    CONFLUENCE_GET_SPACE_PAGE_TREE_METADATA,
+    confluence_tools::CONFLUENCE_GET_SPACE_PAGE_TREE_TOOL_NAME,
+    Read,
+    "confluence_pages",
+    "Get Confluence space page tree",
+    "Get a flat page hierarchy for a Confluence space."
+);
+confluence_metadata!(
+    CONFLUENCE_CREATE_PAGE_METADATA,
+    confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME,
+    Write,
+    "confluence_pages",
+    "Create Confluence page",
+    "Create a Confluence page."
+);
+confluence_metadata!(
+    CONFLUENCE_UPDATE_PAGE_METADATA,
+    confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME,
+    Write,
+    "confluence_pages",
+    "Update Confluence page",
+    "Update a Confluence page."
+);
+confluence_metadata!(
+    CONFLUENCE_DELETE_PAGE_METADATA,
+    confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME,
+    Write,
+    "confluence_pages",
+    "Delete Confluence page",
+    "Delete a Confluence page."
+);
+confluence_metadata!(
+    CONFLUENCE_MOVE_PAGE_METADATA,
+    confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME,
+    Write,
+    "confluence_pages",
+    "Move Confluence page",
+    "Move a Confluence page to a new parent or space."
+);
+confluence_metadata!(
+    CONFLUENCE_GET_COMMENTS_METADATA,
+    confluence_tools::CONFLUENCE_GET_COMMENTS_TOOL_NAME,
+    Read,
+    "confluence_comments",
+    "Get Confluence comments",
+    "List comments for a Confluence page."
+);
+confluence_metadata!(
+    CONFLUENCE_ADD_COMMENT_METADATA,
+    confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME,
+    Write,
+    "confluence_comments",
+    "Add Confluence comment",
+    "Add a comment to a Confluence page."
+);
+confluence_metadata!(
+    CONFLUENCE_REPLY_TO_COMMENT_METADATA,
+    confluence_tools::CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME,
+    Write,
+    "confluence_comments",
+    "Reply to Confluence comment",
+    "Reply to a Confluence comment thread."
+);
+confluence_metadata!(
+    CONFLUENCE_GET_LABELS_METADATA,
+    confluence_tools::CONFLUENCE_GET_LABELS_TOOL_NAME,
+    Read,
+    "confluence_labels",
+    "Get Confluence labels",
+    "List labels for Confluence content."
+);
+confluence_metadata!(
+    CONFLUENCE_ADD_LABEL_METADATA,
+    confluence_tools::CONFLUENCE_ADD_LABEL_TOOL_NAME,
+    Write,
+    "confluence_labels",
+    "Add Confluence label",
+    "Add a label to Confluence content."
+);
+confluence_metadata!(
+    CONFLUENCE_SEARCH_USER_METADATA,
+    confluence_tools::CONFLUENCE_SEARCH_USER_TOOL_NAME,
+    Read,
+    "confluence_users",
+    "Search Confluence users",
+    "Search Confluence users."
+);
+confluence_metadata!(
+    CONFLUENCE_GET_PAGE_HISTORY_METADATA,
+    confluence_tools::CONFLUENCE_GET_PAGE_HISTORY_TOOL_NAME,
+    Read,
+    "confluence_pages",
+    "Get Confluence page history",
+    "Get a historical version of a Confluence page."
+);
+confluence_metadata!(
+    CONFLUENCE_GET_PAGE_DIFF_METADATA,
+    confluence_tools::CONFLUENCE_GET_PAGE_DIFF_TOOL_NAME,
+    Read,
+    "confluence_pages",
+    "Get Confluence page diff",
+    "Get a diff between two Confluence page versions."
+);
+confluence_metadata!(
+    CONFLUENCE_GET_PAGE_VIEWS_METADATA,
+    confluence_tools::CONFLUENCE_GET_PAGE_VIEWS_TOOL_NAME,
+    Read,
+    "confluence_analytics",
+    "Get Confluence page views",
+    "Get Confluence Cloud page view analytics."
+);
+confluence_metadata!(
+    CONFLUENCE_UPLOAD_ATTACHMENT_METADATA,
+    confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENT_TOOL_NAME,
+    Write,
+    "confluence_attachments",
+    "Upload Confluence attachment",
+    "Upload an attachment to Confluence content."
+);
+confluence_metadata!(
+    CONFLUENCE_UPLOAD_ATTACHMENTS_METADATA,
+    confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENTS_TOOL_NAME,
+    Write,
+    "confluence_attachments",
+    "Upload Confluence attachments",
+    "Upload multiple attachments to Confluence content."
+);
+confluence_metadata!(
+    CONFLUENCE_GET_ATTACHMENTS_METADATA,
+    confluence_tools::CONFLUENCE_GET_ATTACHMENTS_TOOL_NAME,
+    Read,
+    "confluence_attachments",
+    "Get Confluence attachments",
+    "List attachments for Confluence content."
+);
+confluence_metadata!(
+    CONFLUENCE_DOWNLOAD_ATTACHMENT_METADATA,
+    confluence_tools::CONFLUENCE_DOWNLOAD_ATTACHMENT_TOOL_NAME,
+    Read,
+    "confluence_attachments",
+    "Download Confluence attachment",
+    "Download one Confluence attachment with bounded content output."
+);
+confluence_metadata!(
+    CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_METADATA,
+    confluence_tools::CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_TOOL_NAME,
+    Read,
+    "confluence_attachments",
+    "Download Confluence content attachments",
+    "Download all attachments for Confluence content with bounded output."
+);
+confluence_metadata!(
+    CONFLUENCE_DELETE_ATTACHMENT_METADATA,
+    confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME,
+    Write,
+    "confluence_attachments",
+    "Delete Confluence attachment",
+    "Delete a Confluence attachment."
+);
+confluence_metadata!(
+    CONFLUENCE_GET_PAGE_IMAGES_METADATA,
+    confluence_tools::CONFLUENCE_GET_PAGE_IMAGES_TOOL_NAME,
+    Read,
+    "confluence_attachments",
+    "Get Confluence page images",
+    "Get image attachments for Confluence content."
+);
+
 const REGISTERED_TOOLS: &[ToolMetadata] = &[
     MIGRATION_STATUS_METADATA,
     JIRA_GET_ISSUE_METADATA,
@@ -541,6 +747,30 @@ const REGISTERED_TOOLS: &[ToolMetadata] = &[
     JIRA_GET_ISSUE_SLA_METADATA,
     JIRA_GET_ISSUE_DEVELOPMENT_INFO_METADATA,
     JIRA_GET_ISSUES_DEVELOPMENT_INFO_METADATA,
+    CONFLUENCE_SEARCH_METADATA,
+    CONFLUENCE_GET_PAGE_METADATA,
+    CONFLUENCE_GET_PAGE_CHILDREN_METADATA,
+    CONFLUENCE_GET_SPACE_PAGE_TREE_METADATA,
+    CONFLUENCE_CREATE_PAGE_METADATA,
+    CONFLUENCE_UPDATE_PAGE_METADATA,
+    CONFLUENCE_DELETE_PAGE_METADATA,
+    CONFLUENCE_MOVE_PAGE_METADATA,
+    CONFLUENCE_GET_COMMENTS_METADATA,
+    CONFLUENCE_ADD_COMMENT_METADATA,
+    CONFLUENCE_REPLY_TO_COMMENT_METADATA,
+    CONFLUENCE_GET_LABELS_METADATA,
+    CONFLUENCE_ADD_LABEL_METADATA,
+    CONFLUENCE_SEARCH_USER_METADATA,
+    CONFLUENCE_GET_PAGE_HISTORY_METADATA,
+    CONFLUENCE_GET_PAGE_DIFF_METADATA,
+    CONFLUENCE_GET_PAGE_VIEWS_METADATA,
+    CONFLUENCE_UPLOAD_ATTACHMENT_METADATA,
+    CONFLUENCE_UPLOAD_ATTACHMENTS_METADATA,
+    CONFLUENCE_GET_ATTACHMENTS_METADATA,
+    CONFLUENCE_DOWNLOAD_ATTACHMENT_METADATA,
+    CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_METADATA,
+    CONFLUENCE_DELETE_ATTACHMENT_METADATA,
+    CONFLUENCE_GET_PAGE_IMAGES_METADATA,
 ];
 
 pub fn all_toolsets() -> BTreeSet<String> {
@@ -665,6 +895,7 @@ mod tests {
     use crate::{
         atlassian::auth::AtlassianAuth,
         config::{HttpConfig, RuntimeConfig},
+        confluence::config::{ConfluenceConfig, ConfluenceDeployment},
         context::AppContext,
         jira::config::{JiraConfig, JiraDeployment},
         jira::tools,
@@ -736,6 +967,19 @@ mod tests {
         }
     }
 
+    fn confluence_config() -> ConfluenceConfig {
+        ConfluenceConfig {
+            base_url: "https://confluence.example".to_string(),
+            deployment: ConfluenceDeployment::ServerDataCenter,
+            auth: AtlassianAuth::Pat {
+                personal_token: "test-pat-value".to_string(),
+            },
+            ssl_verify: true,
+            spaces_filter: BTreeSet::new(),
+            timeout_seconds: 75,
+        }
+    }
+
     fn names(tools: Vec<Tool>) -> Vec<String> {
         tools
             .into_iter()
@@ -759,6 +1003,13 @@ mod tests {
 
     fn stage_three_jira_tool_names() -> Vec<String> {
         tools::STAGE3_JIRA_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect()
+    }
+
+    fn stage4_confluence_tool_names() -> Vec<String> {
+        confluence_tools::STAGE4_CONFLUENCE_TOOL_NAMES
             .iter()
             .map(|name| (*name).to_string())
             .collect()
@@ -864,6 +1115,46 @@ mod tests {
     }
 
     #[test]
+    fn stage_four_confluence_metadata_is_registered() {
+        let names = stage4_confluence_tool_names();
+
+        assert_eq!(names.len(), 24);
+        for name in &names {
+            let metadata = metadata_for(name).unwrap_or_else(|| panic!("{name} missing metadata"));
+            assert_eq!(metadata.service, ToolService::Confluence);
+            assert!(metadata.toolset.is_some());
+            assert!(!metadata.title.is_empty());
+            assert!(!metadata.description.is_empty());
+        }
+
+        for name in [
+            confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_ADD_LABEL_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME,
+        ] {
+            assert_eq!(
+                metadata_for(name).unwrap().access,
+                ToolAccess::Write,
+                "{name} should be registered as write"
+            );
+        }
+
+        assert_eq!(
+            metadata_for(confluence_tools::CONFLUENCE_GET_SPACE_PAGE_TREE_TOOL_NAME)
+                .unwrap()
+                .toolset,
+            Some("confluence_pages")
+        );
+    }
+
+    #[test]
     fn visible_tools_keep_migration_status_and_drop_unknown_tools() {
         let context = AppContext::default();
         let tools = visible_tools(
@@ -913,7 +1204,7 @@ mod tests {
         let unavailable = AppContext::default();
         let available = context(RuntimeConfig {
             jira: Some(jira_config()),
-            confluence_url: Some("https://confluence.example".to_string()),
+            confluence: Some(confluence_config()),
             ..runtime_config()
         });
 
@@ -941,6 +1232,334 @@ mod tests {
                 "stage1_synthetic_confluence_read".to_string(),
                 "stage1_synthetic_jira_read".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn real_confluence_tools_require_service_availability_and_obey_read_only() {
+        let unavailable = AppContext::default();
+        let read_write = context(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            ..runtime_config()
+        });
+        let read_only = context(RuntimeConfig {
+            read_only: true,
+            confluence: Some(confluence_config()),
+            ..runtime_config()
+        });
+
+        assert!(
+            guard_tool_call(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME, &unavailable).is_err()
+        );
+        assert!(
+            guard_tool_call(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME, &read_write).is_ok()
+        );
+        assert!(
+            guard_tool_call(
+                confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME,
+                &read_write
+            )
+            .is_ok()
+        );
+        assert!(guard_tool_call(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME, &read_only).is_ok());
+        assert!(
+            guard_tool_call(
+                confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME,
+                &read_only
+            )
+            .unwrap_err()
+            .message
+            .contains(READ_ONLY_BLOCK_MESSAGE)
+        );
+    }
+
+    #[test]
+    fn default_confluence_toolsets_show_reads_and_hide_writes_in_read_only() {
+        let read_write = context(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: default_toolsets(),
+            ..runtime_config()
+        });
+        let read_only = context(RuntimeConfig {
+            read_only: true,
+            confluence: Some(confluence_config()),
+            enabled_toolsets: default_toolsets(),
+            ..runtime_config()
+        });
+        let candidate_tools = [
+            tool(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_GET_COMMENTS_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_GET_LABELS_TOOL_NAME),
+        ];
+
+        assert_eq!(
+            names(visible_tools(candidate_tools.clone(), &read_write)),
+            vec![
+                confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_COMMENTS_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string(),
+            ]
+        );
+        assert_eq!(
+            names(visible_tools(candidate_tools, &read_only)),
+            vec![
+                confluence_tools::CONFLUENCE_GET_COMMENTS_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn c2_confluence_default_toolset_filter_covers_all_specific_and_unknown_cases() {
+        let all_default = context(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: default_toolsets(),
+            ..runtime_config()
+        });
+        let pages_only = context(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from(["confluence_pages".to_string()]),
+            ..runtime_config()
+        });
+        let comments_only = context(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from(["confluence_comments".to_string()]),
+            ..runtime_config()
+        });
+        let unknown_only = context(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from(["confluence_unknown".to_string()]),
+            ..runtime_config()
+        });
+        let candidate_tools = [
+            tool(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_GET_PAGE_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_GET_PAGE_CHILDREN_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_GET_SPACE_PAGE_TREE_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_GET_COMMENTS_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_GET_LABELS_TOOL_NAME),
+        ];
+
+        assert_eq!(
+            names(visible_tools(candidate_tools.clone(), &all_default)),
+            vec![
+                confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_COMMENTS_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_PAGE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_PAGE_CHILDREN_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_SPACE_PAGE_TREE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME.to_string(),
+            ]
+        );
+        assert_eq!(
+            names(visible_tools(candidate_tools.clone(), &pages_only)),
+            vec![
+                confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_PAGE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_PAGE_CHILDREN_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_SPACE_PAGE_TREE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME.to_string(),
+            ]
+        );
+        assert_eq!(
+            names(visible_tools(candidate_tools.clone(), &comments_only)),
+            vec![
+                confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_COMMENTS_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME.to_string(),
+            ]
+        );
+        assert_eq!(
+            names(visible_tools(candidate_tools, &unknown_only)),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn c2_confluence_write_tools_are_direct_call_blocked_in_read_only() {
+        let read_only = context(RuntimeConfig {
+            read_only: true,
+            confluence: Some(confluence_config()),
+            enabled_toolsets: default_toolsets(),
+            ..runtime_config()
+        });
+
+        assert!(guard_tool_call(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME, &read_only).is_ok());
+        for name in [
+            confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME,
+        ] {
+            let error = guard_tool_call(name, &read_only).unwrap_err();
+            assert!(error.message.contains(READ_ONLY_BLOCK_MESSAGE), "{name}");
+        }
+    }
+
+    #[test]
+    fn confluence_labels_toolset_filters_and_blocks_writes_in_read_only() {
+        let read_write = context(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from(["confluence_labels".to_string()]),
+            ..runtime_config()
+        });
+        let read_only = context(RuntimeConfig {
+            read_only: true,
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from(["confluence_labels".to_string()]),
+            ..runtime_config()
+        });
+        let candidate_tools = [
+            tool(confluence_tools::CONFLUENCE_GET_LABELS_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_ADD_LABEL_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME),
+        ];
+
+        assert_eq!(
+            names(visible_tools(candidate_tools.clone(), &read_write)),
+            vec![
+                confluence_tools::CONFLUENCE_ADD_LABEL_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_LABELS_TOOL_NAME.to_string(),
+            ]
+        );
+        assert_eq!(
+            names(visible_tools(candidate_tools, &read_only)),
+            vec![confluence_tools::CONFLUENCE_GET_LABELS_TOOL_NAME.to_string()]
+        );
+        assert!(
+            guard_tool_call(
+                confluence_tools::CONFLUENCE_GET_LABELS_TOOL_NAME,
+                &read_only
+            )
+            .is_ok()
+        );
+        assert!(
+            guard_tool_call(
+                confluence_tools::CONFLUENCE_ADD_LABEL_TOOL_NAME,
+                &read_write
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            guard_tool_call(confluence_tools::CONFLUENCE_ADD_LABEL_TOOL_NAME, &read_only)
+                .unwrap_err()
+                .message,
+            READ_ONLY_BLOCK_MESSAGE
+        );
+    }
+
+    #[test]
+    fn confluence_attachments_toolset_filters_and_blocks_writes_in_read_only() {
+        let read_write = context(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from(["confluence_attachments".to_string()]),
+            ..runtime_config()
+        });
+        let read_only = context(RuntimeConfig {
+            read_only: true,
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from(["confluence_attachments".to_string()]),
+            ..runtime_config()
+        });
+        let candidate_tools = [
+            tool(confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENT_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENTS_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_GET_ATTACHMENTS_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_DOWNLOAD_ATTACHMENT_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_GET_PAGE_IMAGES_TOOL_NAME),
+            tool(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME),
+        ];
+
+        assert_eq!(
+            names(visible_tools(candidate_tools.clone(), &read_write)),
+            vec![
+                confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_DOWNLOAD_ATTACHMENT_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_ATTACHMENTS_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_PAGE_IMAGES_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENT_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENTS_TOOL_NAME.to_string(),
+            ]
+        );
+        assert_eq!(
+            names(visible_tools(candidate_tools, &read_only)),
+            vec![
+                confluence_tools::CONFLUENCE_DOWNLOAD_ATTACHMENT_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_ATTACHMENTS_TOOL_NAME.to_string(),
+                confluence_tools::CONFLUENCE_GET_PAGE_IMAGES_TOOL_NAME.to_string(),
+            ]
+        );
+
+        for read_tool in [
+            confluence_tools::CONFLUENCE_GET_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DOWNLOAD_ATTACHMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_PAGE_IMAGES_TOOL_NAME,
+        ] {
+            assert!(
+                guard_tool_call(read_tool, &read_only).is_ok(),
+                "{read_tool}"
+            );
+        }
+        for write_tool in [
+            confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME,
+        ] {
+            assert!(
+                guard_tool_call(write_tool, &read_write).is_ok(),
+                "{write_tool}"
+            );
+            assert_eq!(
+                guard_tool_call(write_tool, &read_only).unwrap_err().message,
+                READ_ONLY_BLOCK_MESSAGE,
+                "{write_tool}"
+            );
+        }
+    }
+
+    #[test]
+    fn enabled_tools_filter_can_select_single_confluence_tool() {
+        let context = context(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_tools: Some(BTreeSet::from([
+                confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string(),
+            ])),
+            ..runtime_config()
+        });
+
+        assert_eq!(
+            names(visible_tools(
+                [
+                    tool(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME),
+                    tool(confluence_tools::CONFLUENCE_GET_PAGE_TOOL_NAME),
+                ],
+                &context,
+            )),
+            vec![confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string()]
         );
     }
 

@@ -1,5 +1,6 @@
 mod atlassian;
 mod config;
+mod confluence;
 mod context;
 mod error;
 mod jira;

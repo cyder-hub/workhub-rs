@@ -2,7 +2,7 @@
 
 Rust migration workspace for MCP Atlassian.
 
-This repository is migrating the Python `mcp-atlassian` Jira and Confluence MCP server to a Rust-native implementation. The Rust binary currently has the shared MCP runtime/control plane, the Stage 2 Jira core tool loop, and all Stage 3 Jira extension tools implemented with local mock REST coverage. Real Jira validation for product-dependent extensions, Confluence, and production auth/security remain later stages.
+This repository is migrating the Python `mcp-atlassian` Jira and Confluence MCP server to a Rust-native implementation. The Rust binary currently has the shared MCP runtime/control plane, 49 Jira business tools, and 24 Confluence business tools implemented with local mock REST and MCP smoke coverage. Real Jira/Confluence validation and production auth/security remain later stages.
 
 ## Current Status
 
@@ -11,22 +11,25 @@ Implemented in the Rust root project:
 - Package, binary, server name, Docker image, compose service, and CI image identity use `mcp-atlassian-rs`.
 - MCP server runs over `stdio` and streamable HTTP at `/mcp`.
 - Logging is configured to stderr so stdio MCP stdout remains protocol-only.
-- Runtime control-plane config parses `READ_ONLY_MODE`, `ENABLED_TOOLS`, `TOOLSETS`, `CONFLUENCE_URL`, `ATLASSIAN_OAUTH_CLOUD_ID`, `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, and `MCP_HTTP_PATH`.
+- Runtime control-plane config parses `READ_ONLY_MODE`, `ENABLED_TOOLS`, `TOOLSETS`, `ATLASSIAN_OAUTH_CLOUD_ID`, `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, and `MCP_HTTP_PATH`.
 - Jira config parses `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`, `JIRA_PERSONAL_TOKEN`, `JIRA_SSL_VERIFY`, `JIRA_PROJECTS_FILTER`, and `JIRA_TIMEOUT`.
+- Confluence config parses `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_API_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `CONFLUENCE_SSL_VERIFY`, `CONFLUENCE_SPACES_FILTER`, and `CONFLUENCE_TIMEOUT`.
 - Jira Cloud uses username/API token auth for `*.atlassian.net`; Jira Server/Data Center uses PAT auth.
+- Confluence Cloud uses username/API token auth for `*.atlassian.net`; Confluence Server/Data Center uses PAT auth.
 - Shared Atlassian HTTP/auth/error helpers and Jira models/client/tool handlers are implemented for the Stage 2 core tools and the completed Stage 3 Jira extensions.
 - Tool registry metadata, service availability filtering, toolset filtering, enabled-tools filtering, and read-only write guards are in place for migrated tools.
 - Stage 3 Jira extension tools are implemented for local mock validation: create/update/delete issue, batch create, changelog bulk fetch, projects, versions, users, watchers, worklog, links, attachment download, issue image retrieval, agile boards/sprints, service desk queues, Forms/ProForma, metrics/SLA, and development information.
+- Stage 4 Confluence implementation has local mock coverage for config/auth/client/models and all 24 Confluence tools, including pages/comments/labels/users/history/diff/analytics/attachments.
 - Streamable HTTP exposes `GET /healthz`.
-- Local stdio, streamable HTTP, and read-only smoke commands validate MCP initialization, Jira tool discovery, mock Jira read calls, `/healthz`, and write-tool blocking.
+- Local stdio, streamable HTTP, and read-only smoke commands validate MCP initialization, Jira and Confluence tool discovery, mock read calls, `/healthz`, and write-tool blocking.
 - The temporary MCP tool `migration_status` reports the migration state.
 
 Deferred:
 
-- Confluence config, auth, client, models, and MCP tools.
-- Real Jira validation for Stage 3 product-dependent Jira extensions. Local mock coverage is complete, but Jira Software, Jira Service Management, Forms/ProForma, SLA, and dev-status behavior remain Stage 4 validation gates.
+- `confluence_get_page_views` is Cloud-only. Confluence Server/Data Center returns a structured unavailable response; real Cloud analytics validation remains a Stage 5 gate.
+- Real Jira validation for Stage 3 product-dependent Jira extensions. Local mock coverage is complete, but Jira Software, Jira Service Management, Forms/ProForma, SLA, and dev-status behavior remain Stage 5 validation gates.
 - OAuth, BYOT, per-request HTTP header auth, SSRF protections, allowed domains, proxy/custom headers, mTLS, and full production security hardening.
-- Real Jira and Confluence smoke tests. Real Jira validation is a Stage 4 gate.
+- Real Jira and Confluence smoke tests. They are Stage 5 integrated acceptance gates.
 - Release, Docker, compose, Helm, and parity audit gates beyond the local mock checks.
 
 ## Requirements
@@ -99,6 +102,43 @@ Optional Jira variables:
 
 Stage 3 does not implement OAuth, BYOT, or per-request Authorization overrides.
 
+## Confluence Configuration
+
+Confluence tools are discoverable only when Confluence service configuration and authentication are complete.
+
+Confluence Cloud:
+
+```bash
+export CONFLUENCE_URL="https://your-company.atlassian.net/wiki"
+export CONFLUENCE_USERNAME="user@example.com"
+export CONFLUENCE_API_TOKEN="<confluence-api-token>"
+cargo run -- stdio
+```
+
+Confluence Server/Data Center:
+
+```bash
+export CONFLUENCE_URL="https://confluence.example.com"
+export CONFLUENCE_PERSONAL_TOKEN="<confluence-personal-access-token>"
+cargo run -- stdio
+```
+
+Optional Confluence variables:
+
+| Variable | Default | Behavior |
+| --- | --- | --- |
+| `CONFLUENCE_SSL_VERIFY` | `true` | Set `false`, `0`, `no`, or `off` to disable TLS certificate verification for Confluence requests. |
+| `CONFLUENCE_SPACES_FILTER` | unset | Comma-separated space keys. Applies to Confluence search when the tool call does not provide `spaces_filter`; an explicit empty `spaces_filter` disables the env filter. |
+| `CONFLUENCE_TIMEOUT` | `75` | Confluence HTTP request timeout in seconds. Must be a positive integer. |
+
+Stage 4 does not implement OAuth, BYOT, per-request Authorization overrides, proxy/custom headers, mTLS, or SSRF policy. Those production auth/security capabilities are deferred to Stage 6.
+
+## Confluence Content Conversion Boundary
+
+Stage 4 uses a deterministic minimal Markdown to Confluence storage conversion for local mock validation. It covers headings, paragraphs, unordered lists, simple inline links, fenced code blocks, line breaks, and HTML escaping.
+
+The Rust implementation does not claim Python `md2conf` parity in Stage 4. Mermaid rendering, macro rendering, and full heading anchor parity remain outside the current local Confluence loop.
+
 ## Runtime Control Plane
 
 | Variable | Default | Behavior |
@@ -106,7 +146,6 @@ Stage 3 does not implement OAuth, BYOT, or per-request Authorization overrides.
 | `READ_ONLY_MODE` | `false` | Truthy values are `true`, `1`, `yes`, `y`, and `on`. Write tools are hidden from discovery and blocked on direct call when enabled. |
 | `ENABLED_TOOLS` | unset | Comma-separated tool names. Empty or unset means no name filtering. |
 | `TOOLSETS` | all toolsets | Supports `all`, `default`, or comma-separated toolset names. Unknown-only values fail closed. `migration_status` is not part of Jira or Confluence toolsets. |
-| `CONFLUENCE_URL` | unset | Reserved for Confluence service availability filtering in a later stage. |
 | `MCP_HTTP_HOST` | `127.0.0.1` | Streamable HTTP host when not overridden by CLI. |
 | `MCP_HTTP_PORT` | `8000` | Streamable HTTP port when not overridden by CLI. |
 | `MCP_HTTP_PATH` | `/mcp` | Streamable HTTP MCP path when not overridden by CLI. A missing leading slash is normalized. |
@@ -133,7 +172,7 @@ The Rust server exposes these Stage 2 Jira core tools when Jira is configured:
 | `jira_get_transitions` | read | `jira_transitions` |
 | `jira_transition_issue` | write | `jira_transitions` |
 
-The Rust server also exposes these Stage 3 Jira extension tools when Jira is configured. These are locally validated with mock Jira; real Jira acceptance remains deferred to Stage 4.
+The Rust server also exposes these Stage 3 Jira extension tools when Jira is configured. These are locally validated with mock Jira; real Jira acceptance remains deferred to Stage 5.
 
 | Tool | Access | Toolset |
 | --- | --- | --- |
@@ -178,6 +217,37 @@ The Rust server also exposes these Stage 3 Jira extension tools when Jira is con
 | `jira_get_issue_development_info` | read | `jira_development` |
 | `jira_get_issues_development_info` | read | `jira_development` |
 
+The Rust server also exposes these Stage 4 Confluence tools when Confluence is configured. These are locally validated with mock Confluence; real Confluence acceptance remains deferred to Stage 5.
+
+| Tool | Access | Toolset |
+| --- | --- | --- |
+| `confluence_search` | read | `confluence_pages` |
+| `confluence_get_page` | read | `confluence_pages` |
+| `confluence_get_page_children` | read | `confluence_pages` |
+| `confluence_get_space_page_tree` | read | `confluence_pages` |
+| `confluence_create_page` | write | `confluence_pages` |
+| `confluence_update_page` | write | `confluence_pages` |
+| `confluence_delete_page` | write | `confluence_pages` |
+| `confluence_move_page` | write | `confluence_pages` |
+| `confluence_get_comments` | read | `confluence_comments` |
+| `confluence_add_comment` | write | `confluence_comments` |
+| `confluence_reply_to_comment` | write | `confluence_comments` |
+| `confluence_get_labels` | read | `confluence_labels` |
+| `confluence_add_label` | write | `confluence_labels` |
+| `confluence_search_user` | read | `confluence_users` |
+| `confluence_get_page_history` | read | `confluence_pages` |
+| `confluence_get_page_diff` | read | `confluence_pages` |
+| `confluence_get_page_views` | read | `confluence_analytics` |
+| `confluence_upload_attachment` | write | `confluence_attachments` |
+| `confluence_upload_attachments` | write | `confluence_attachments` |
+| `confluence_get_attachments` | read | `confluence_attachments` |
+| `confluence_download_attachment` | read | `confluence_attachments` |
+| `confluence_download_content_attachments` | read | `confluence_attachments` |
+| `confluence_delete_attachment` | write | `confluence_attachments` |
+| `confluence_get_page_images` | read | `confluence_attachments` |
+
+`confluence_get_page_views` is Cloud-only. Attachment download/image tools return bounded structured content; the current inline content limit is 1 MiB per attachment. Attachment upload tools accept explicit local file paths readable by the server process and do not implement directory allowlists or remote URL upload in Stage 4.
+
 The Rust server also exposes one migration utility tool:
 
 - `migration_status`: reports the Rust migration state.
@@ -191,14 +261,15 @@ Run `just --list` to see the local command surface.
 ```bash
 just dev           # run stdio transport
 just dev-http      # run streamable HTTP transport on 127.0.0.1:8000
-just smoke-stdio   # validate stdio MCP initialize, tools/list, and mock Jira jira_get_issue
-just smoke-http    # validate /healthz, HTTP MCP tools/list, and mock Jira jira_get_issue
-just smoke-jira    # validate read-only Jira write-tool hiding and blocking
-just smoke         # run all local smoke checks
-just build         # build the release binary
-just test          # run tests
-just check         # fmt, check, and tests
-just docker-build  # local Docker image build
+just smoke-stdio       # validate stdio MCP initialize, tools/list, and mock Jira jira_get_issue
+just smoke-http        # validate /healthz, HTTP MCP tools/list, and mock Jira jira_get_issue
+just smoke-jira        # validate read-only Jira write-tool hiding and blocking
+just smoke-confluence  # validate mock Confluence stdio, HTTP, and read-only write blocking
+just smoke             # run all local smoke checks
+just build             # build the release binary
+just test              # run tests
+just check             # fmt, check, and tests
+just docker-build      # local Docker image build
 ```
 
 ## Docker And Compose
@@ -247,10 +318,11 @@ just check
 just smoke-stdio
 just smoke-http
 just smoke-jira
+just smoke-confluence
 just smoke
 ```
 
-The smoke commands start a local mock Jira server and do not require real Jira credentials. Real Jira validation is intentionally deferred to the Stage 4 acceptance gate.
+The smoke commands start local mock Jira and Confluence servers and do not require real Atlassian credentials. Real Jira and Confluence validation is intentionally deferred to the Stage 5 integrated acceptance gate.
 
 ## License
 

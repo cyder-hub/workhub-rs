@@ -87,6 +87,23 @@ impl AtlassianHttpClient {
         Ok(self.request(Method::PUT, path)?.json(body))
     }
 
+    pub fn put_body_with_headers(
+        &self,
+        path: &str,
+        body: Vec<u8>,
+        content_type: &str,
+        headers: &[(&'static str, &'static str)],
+    ) -> Result<RequestBuilder, AtlassianError> {
+        let mut builder = self
+            .request(Method::PUT, path)?
+            .header(CONTENT_TYPE, content_type)
+            .body(body);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        Ok(builder)
+    }
+
     pub fn delete(&self, path: &str) -> Result<RequestBuilder, AtlassianError> {
         self.request(Method::DELETE, path)
     }

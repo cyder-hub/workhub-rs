@@ -28,8 +28,12 @@ smoke-http:
 smoke-jira:
 	cd '{{justfile_directory()}}' && bash scripts/smoke-jira.sh
 
+# Run the Confluence MCP smoke check against a local mock Confluence.
+smoke-confluence:
+	cd '{{justfile_directory()}}' && bash scripts/smoke-confluence.sh
+
 # Run all local MCP smoke checks.
-smoke: smoke-stdio smoke-http smoke-jira
+smoke: smoke-stdio smoke-http smoke-jira smoke-confluence
 
 # Build the release binary.
 build:

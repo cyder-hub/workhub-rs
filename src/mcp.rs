@@ -1,7 +1,14 @@
-use std::{sync::Arc, time::Instant};
+use std::{path::Path, sync::Arc, time::Instant};
 
 use crate::{
     atlassian::error::AtlassianError,
+    confluence::{
+        client::ConfluenceClient,
+        config::ConfluenceDeployment,
+        formatting::{ConfluenceContentFormat, content_to_storage},
+        models::{ConfluenceAttachment, ConfluencePage},
+        tools as confluence_tools,
+    },
     context::AppContext,
     jira::{
         client::{
@@ -10,9 +17,9 @@ use crate::{
         },
         config::JiraDeployment,
         formatting::{
-            comment_body_for_deployment, merge_optional_objects, parse_optional_object,
-            parse_optional_string_list, parse_required_object, parse_required_object_list,
-            parse_required_string_list,
+            base64_encode, comment_body_for_deployment, merge_optional_objects,
+            parse_optional_object, parse_optional_string_list, parse_required_object,
+            parse_required_object_list, parse_required_string_list, redact_url_query,
         },
         tools::{
             JiraAddCommentArgs, JiraAddIssuesToSprintArgs, JiraAddWatcherArgs, JiraAddWorklogArgs,
@@ -55,6 +62,21 @@ const MIGRATION_STATUS: &str = "mcp-atlassian-rs Stage 2 Jira core migration is 
 The Stage 1 MCP runtime/control plane and Stage 2 Jira config/auth/client/models/tool handlers are implemented. \
 Jira core tools are available when Jira configuration and authentication are complete. \
 Mock REST tests, MCP smoke checks, README, and the migration ledger are up to date.";
+
+const CONFLUENCE_PAGE_EXPAND: &[&str] = &[
+    "body.storage",
+    "version",
+    "space",
+    "ancestors",
+    "metadata.labels",
+    "history",
+    "children.attachment",
+];
+const CONFLUENCE_CHILDREN_DEFAULT_LIMIT: u64 = 25;
+const CONFLUENCE_CHILDREN_MAX_LIMIT: u64 = 50;
+const CONFLUENCE_TREE_DEFAULT_LIMIT: u64 = 500;
+const CONFLUENCE_TREE_MAX_LIMIT: u64 = 1_000;
+const CONFLUENCE_TREE_PAGE_SIZE: u64 = 200;
 
 #[derive(Clone)]
 pub struct AtlassianMcpServer {
@@ -102,6 +124,18 @@ impl AtlassianMcpServer {
         JiraClient::new(config.clone()).map_err(jira_error)
     }
 
+    #[allow(dead_code)]
+    fn confluence_client(&self) -> Result<ConfluenceClient, ErrorData> {
+        let Some(config) = self.context.confluence_config() else {
+            return Err(ErrorData::invalid_params(
+                "Confluence is not configured",
+                None,
+            ));
+        };
+
+        ConfluenceClient::new(config.clone()).map_err(jira_error)
+    }
+
     #[cfg(test)]
     fn guard_tool_call_with_metadata<F>(
         &self,
@@ -140,6 +174,850 @@ impl AtlassianMcpServer {
     #[tool(description = "Report the current Rust migration status for MCP Atlassian")]
     fn migration_status(&self) -> String {
         MIGRATION_STATUS.to_string()
+    }
+
+    #[tool(description = "Search Confluence content using simple terms or CQL")]
+    async fn confluence_search(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceSearchArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let query = required_non_empty_arg(args.query, "query")?;
+        let limit = optional_confluence_search_limit_arg(args.limit)?;
+        let value = self
+            .confluence_client()?
+            .search_content(&query, limit, args.spaces_filter.as_deref())
+            .await
+            .map_err(jira_error)?
+            .to_simplified_value();
+
+        Ok(CallToolResult::structured(value))
+    }
+
+    #[tool(description = "Get a Confluence page by ID or title and space key")]
+    async fn confluence_get_page(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceGetPageArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let include_metadata = args.include_metadata.unwrap_or(true);
+        let convert_to_markdown = args.convert_to_markdown.unwrap_or(true);
+        let client = self.confluence_client()?;
+
+        if let Some(page_id) = optional_non_empty_arg(args.page_id) {
+            let page = match client
+                .get_page_by_id(&page_id, CONFLUENCE_PAGE_EXPAND)
+                .await
+            {
+                Ok(page) => page,
+                Err(AtlassianError::HttpStatus { status: 404, .. }) => {
+                    return Ok(CallToolResult::structured(json!({
+                        "error": format!("Failed to retrieve page by ID '{page_id}': page not found")
+                    })));
+                }
+                Err(error) => return Err(jira_error(error)),
+            };
+
+            return Ok(CallToolResult::structured(confluence_page_tool_value(
+                &page,
+                include_metadata,
+                convert_to_markdown,
+            )));
+        }
+
+        let title = optional_non_empty_arg(args.title);
+        let space_key = optional_non_empty_arg(args.space_key);
+        let (Some(title), Some(space_key)) = (title, space_key) else {
+            return Err(jira_error(AtlassianError::invalid_input(
+                "Either page_id OR both title and space_key must be provided",
+            )));
+        };
+
+        let Some(page) = client
+            .get_page_by_title(&space_key, &title, CONFLUENCE_PAGE_EXPAND)
+            .await
+            .map_err(jira_error)?
+        else {
+            return Ok(CallToolResult::structured(json!({
+                "error": format!("Page with title '{title}' not found in space '{space_key}'.")
+            })));
+        };
+
+        Ok(CallToolResult::structured(confluence_page_tool_value(
+            &page,
+            include_metadata,
+            convert_to_markdown,
+        )))
+    }
+
+    #[tool(description = "List child pages and folders for a Confluence page")]
+    async fn confluence_get_page_children(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceGetPageChildrenArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let parent_id = required_non_empty_arg(args.parent_id, "parent_id")?;
+        let limit = optional_u64_range_arg(
+            args.limit,
+            CONFLUENCE_CHILDREN_DEFAULT_LIMIT,
+            CONFLUENCE_CHILDREN_MAX_LIMIT,
+            "limit",
+        )?;
+        let start = args.start.unwrap_or(0);
+        let include_content = args.include_content.unwrap_or(false);
+        let include_folders = args.include_folders.unwrap_or(true);
+        let convert_to_markdown = args.convert_to_markdown.unwrap_or(true);
+        let expand = confluence_expand_list(args.expand, include_content);
+        let expand_refs = expand.iter().map(String::as_str).collect::<Vec<_>>();
+        let children = self
+            .confluence_client()?
+            .get_page_children(
+                &parent_id,
+                Some(start),
+                Some(limit),
+                &expand_refs,
+                include_folders,
+            )
+            .await
+            .map_err(jira_error)?;
+        let results = children
+            .iter()
+            .map(|page| confluence_child_page_value(page, include_content, convert_to_markdown))
+            .collect::<Vec<_>>();
+
+        Ok(CallToolResult::structured(json!({
+            "parent_id": parent_id,
+            "count": results.len(),
+            "limit_requested": limit,
+            "start_requested": start,
+            "results": results,
+        })))
+    }
+
+    #[tool(description = "Get a flat page hierarchy for a Confluence space")]
+    async fn confluence_get_space_page_tree(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceGetSpacePageTreeArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let space_key = required_non_empty_arg(args.space_key, "space_key")?;
+        let limit = optional_u64_range_arg(
+            args.limit,
+            CONFLUENCE_TREE_DEFAULT_LIMIT,
+            CONFLUENCE_TREE_MAX_LIMIT,
+            "limit",
+        )?;
+        let client = self.confluence_client()?;
+        let mut pages = Vec::new();
+        let mut start = 0;
+        let mut next_link_exists = false;
+
+        while pages.len() < limit as usize {
+            let fetch_limit = CONFLUENCE_TREE_PAGE_SIZE.min(limit - pages.len() as u64);
+            let response = client
+                .get_space_pages(&space_key, Some(start), Some(fetch_limit), &["ancestors"])
+                .await
+                .map_err(jira_error)?;
+            let batch_len = response.results.len() as u64;
+            next_link_exists = response.links.get("next").and_then(Value::as_str).is_some();
+            pages.extend(response.results);
+
+            if batch_len == 0 || !next_link_exists {
+                break;
+            }
+            start += batch_len;
+        }
+
+        let has_more = pages.len() >= limit as usize && next_link_exists;
+        let mut tree_pages = pages
+            .iter()
+            .map(confluence_tree_page_sort_value)
+            .collect::<Vec<_>>();
+        tree_pages.sort_by(|left, right| {
+            left.depth
+                .cmp(&right.depth)
+                .then(left.position_sort.cmp(&right.position_sort))
+                .then(left.title.cmp(&right.title))
+        });
+        let result_pages = tree_pages
+            .into_iter()
+            .map(|page| page.value)
+            .collect::<Vec<_>>();
+        let mut result = json!({
+            "space_key": space_key,
+            "total_pages": result_pages.len(),
+            "has_more": has_more,
+            "pages": result_pages,
+        });
+        if has_more {
+            result["next_start"] = Value::from(start);
+        }
+
+        Ok(CallToolResult::structured(result))
+    }
+
+    #[tool(description = "Create a Confluence page")]
+    async fn confluence_create_page(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceCreatePageArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let space_key = required_non_empty_arg(args.space_key, "space_key")?;
+        let title = required_non_empty_arg(args.title, "title")?;
+        let content = required_non_empty_arg(args.content, "content")?;
+        let format = parse_confluence_write_content_format(args.content_format.as_deref())?;
+        let storage_body = content_to_storage(&content, format);
+        let parent_id = optional_non_empty_arg(args.parent_id);
+        let client = self.confluence_client()?;
+        let page = client
+            .create_page(&space_key, &title, &storage_body, parent_id.as_deref())
+            .await
+            .map_err(jira_error)?;
+        if let Some(page_id) = page.id.as_deref() {
+            client
+                .set_page_emoji_best_effort(page_id, args.emoji.as_deref())
+                .await;
+        }
+
+        Ok(CallToolResult::structured(json!({
+            "message": "Page created successfully",
+            "page": confluence_write_page_value(&page, args.include_content.unwrap_or(false)),
+        })))
+    }
+
+    #[tool(description = "Update a Confluence page")]
+    async fn confluence_update_page(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceUpdatePageArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let page_id = required_non_empty_arg(args.page_id, "page_id")?;
+        let title = required_non_empty_arg(args.title, "title")?;
+        let content = required_non_empty_arg(args.content, "content")?;
+        let format = parse_confluence_write_content_format(args.content_format.as_deref())?;
+        let storage_body = content_to_storage(&content, format);
+        let parent_id = optional_non_empty_arg(args.parent_id);
+        let client = self.confluence_client()?;
+        let page = client
+            .update_page(
+                &page_id,
+                &title,
+                &storage_body,
+                parent_id.as_deref(),
+                args.is_minor_edit.unwrap_or(false),
+                args.version_comment.as_deref(),
+            )
+            .await
+            .map_err(jira_error)?;
+        if let Some(page_id) = page.id.as_deref() {
+            client
+                .set_page_emoji_best_effort(page_id, args.emoji.as_deref())
+                .await;
+        }
+
+        Ok(CallToolResult::structured(json!({
+            "message": "Page updated successfully",
+            "page": confluence_write_page_value(&page, args.include_content.unwrap_or(false)),
+        })))
+    }
+
+    #[tool(description = "Delete a Confluence page")]
+    async fn confluence_delete_page(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceDeletePageArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let page_id = required_non_empty_arg(args.page_id, "page_id")?;
+        match self.confluence_client()?.delete_page(&page_id).await {
+            Ok(_) => Ok(CallToolResult::structured(json!({
+                "success": true,
+                "message": format!("Page {page_id} deleted successfully"),
+            }))),
+            Err(error) => Ok(CallToolResult::structured(json!({
+                "success": false,
+                "message": format!("Error deleting page {page_id}"),
+                "error": error.to_string(),
+            }))),
+        }
+    }
+
+    #[tool(description = "Move a Confluence page to a new parent or space")]
+    async fn confluence_move_page(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceMovePageArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let page_id = required_non_empty_arg(args.page_id, "page_id")?;
+        let target_parent_id = optional_non_empty_arg(args.target_parent_id);
+        let page = self
+            .confluence_client()?
+            .move_page(
+                &page_id,
+                target_parent_id.as_deref(),
+                args.target_space_key.as_deref(),
+                args.position.as_deref(),
+            )
+            .await
+            .map_err(jira_error)?;
+
+        Ok(CallToolResult::structured(json!({
+            "message": "Page moved successfully",
+            "page": confluence_write_page_value(&page, true),
+        })))
+    }
+
+    #[tool(description = "List comments for a Confluence page")]
+    async fn confluence_get_comments(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceGetCommentsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let page_id = required_non_empty_arg(args.page_id, "page_id")?;
+        let comments = self
+            .confluence_client()?
+            .get_page_comments(&page_id)
+            .await
+            .map_err(jira_error)?;
+        let values = comments
+            .results
+            .iter()
+            .map(|comment| comment.to_simplified_value())
+            .collect::<Vec<_>>();
+
+        Ok(CallToolResult::structured(json!({
+            "page_id": page_id,
+            "count": values.len(),
+            "comments": values,
+            "start": comments.start,
+            "limit": comments.limit,
+            "size": comments.size,
+            "links": comments.links,
+        })))
+    }
+
+    #[tool(description = "Add a comment to a Confluence page")]
+    async fn confluence_add_comment(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceAddCommentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let page_id = required_non_empty_arg(args.page_id, "page_id")?;
+        let body = required_non_empty_arg(args.body, "body")?;
+        let storage_body = content_to_storage(&body, ConfluenceContentFormat::Markdown);
+
+        match self
+            .confluence_client()?
+            .add_comment(&page_id, &storage_body)
+            .await
+        {
+            Ok(comment) => Ok(CallToolResult::structured(json!({
+                "success": true,
+                "message": "Comment added successfully",
+                "comment": comment.to_simplified_value(),
+            }))),
+            Err(error) => Ok(CallToolResult::structured(json!({
+                "success": false,
+                "message": format!("Error adding comment to page {page_id}"),
+                "error": error.to_string(),
+            }))),
+        }
+    }
+
+    #[tool(description = "Reply to a Confluence comment thread")]
+    async fn confluence_reply_to_comment(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceReplyToCommentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let comment_id = required_non_empty_arg(args.comment_id, "comment_id")?;
+        let body = required_non_empty_arg(args.body, "body")?;
+        let storage_body = content_to_storage(&body, ConfluenceContentFormat::Markdown);
+
+        match self
+            .confluence_client()?
+            .reply_to_comment(&comment_id, &storage_body)
+            .await
+        {
+            Ok(comment) => Ok(CallToolResult::structured(json!({
+                "success": true,
+                "message": "Reply added successfully",
+                "comment": comment.to_simplified_value(),
+            }))),
+            Err(error) => Ok(CallToolResult::structured(json!({
+                "success": false,
+                "message": format!("Error replying to comment {comment_id}"),
+                "error": error.to_string(),
+            }))),
+        }
+    }
+
+    #[tool(description = "List labels for Confluence content")]
+    async fn confluence_get_labels(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceGetLabelsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let content_id = required_non_empty_arg(args.page_id, "page_id")?;
+        let labels = self
+            .confluence_client()?
+            .get_labels(&content_id)
+            .await
+            .map_err(jira_error)?;
+        let values = labels
+            .results
+            .iter()
+            .map(|label| label.to_simplified_value())
+            .collect::<Vec<_>>();
+
+        Ok(CallToolResult::structured(json!({
+            "content_id": content_id,
+            "count": values.len(),
+            "labels": values,
+            "start": labels.start,
+            "limit": labels.limit,
+            "size": labels.size,
+            "links": labels.links,
+        })))
+    }
+
+    #[tool(description = "Add a label to Confluence content")]
+    async fn confluence_add_label(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceAddLabelArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let content_id = required_non_empty_arg(args.page_id, "page_id")?;
+        let name = required_non_empty_arg(args.name, "name")?;
+        let labels = self
+            .confluence_client()?
+            .add_label(&content_id, &name)
+            .await
+            .map_err(jira_error)?;
+        let values = labels
+            .results
+            .iter()
+            .map(|label| label.to_simplified_value())
+            .collect::<Vec<_>>();
+
+        Ok(CallToolResult::structured(json!({
+            "message": "Label added successfully",
+            "content_id": content_id,
+            "count": values.len(),
+            "labels": values,
+            "start": labels.start,
+            "limit": labels.limit,
+            "size": labels.size,
+            "links": labels.links,
+        })))
+    }
+
+    #[tool(description = "Search Confluence users")]
+    async fn confluence_search_user(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceSearchUserArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let query = required_non_empty_arg(args.query, "query")?;
+        let limit = confluence_user_search_limit(args.limit)?;
+        let group_name = optional_non_empty_arg(args.group_name)
+            .unwrap_or_else(|| "confluence-users".to_string());
+        let cql = normalize_confluence_user_search_query(&query);
+
+        match self
+            .confluence_client()?
+            .search_user(&cql, Some(limit), Some(&group_name))
+            .await
+        {
+            Ok(response) => {
+                let results = response.to_simplified_value()["results"].clone();
+                let cql_query = response.cql_query.clone().unwrap_or_else(|| cql.clone());
+                Ok(CallToolResult::structured(json!({
+                    "group_name": group_name,
+                    "count": response.results.len(),
+                    "results": results,
+                    "start": response.start,
+                    "limit": response.limit,
+                    "size": response.size,
+                    "total_size": response.total_size,
+                    "cql_query": cql_query,
+                    "search_duration": response.search_duration,
+                    "links": response.links,
+                })))
+            }
+            Err(AtlassianError::HttpStatus {
+                status, message, ..
+            }) if matches!(status, 401 | 403) => Ok(CallToolResult::structured(json!({
+                "success": false,
+                "error": "Authentication failed. Please check your credentials.",
+                "status": status,
+                "details": message,
+            }))),
+            Err(error) => Err(jira_error(error)),
+        }
+    }
+
+    #[tool(description = "Get a historical version of a Confluence page")]
+    async fn confluence_get_page_history(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceGetPageHistoryArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let page_id = required_non_empty_arg(args.page_id, "page_id")?;
+        let version = confluence_positive_version_arg(args.version, "version")?;
+        let convert_to_markdown = args.convert_to_markdown.unwrap_or(true);
+        let page = self
+            .confluence_client()?
+            .get_page_history(&page_id, version, CONFLUENCE_PAGE_EXPAND)
+            .await
+            .map_err(jira_error)?;
+
+        Ok(CallToolResult::structured(
+            page.to_simplified_value(convert_to_markdown),
+        ))
+    }
+
+    #[tool(description = "Get a diff between two Confluence page versions")]
+    async fn confluence_get_page_diff(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceGetPageDiffArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let page_id = required_non_empty_arg(args.page_id, "page_id")?;
+        let from_version = confluence_positive_version_arg(args.from_version, "from_version")?;
+        let to_version = confluence_positive_version_arg(args.to_version, "to_version")?;
+        if from_version > to_version {
+            return Err(jira_error(AtlassianError::invalid_input(
+                "from_version must be less than or equal to to_version",
+            )));
+        }
+        let client = self.confluence_client()?;
+        let from_page = client
+            .get_page_history(&page_id, from_version, CONFLUENCE_PAGE_EXPAND)
+            .await
+            .map_err(jira_error)?;
+        let to_page = if from_version == to_version {
+            from_page.clone()
+        } else {
+            client
+                .get_page_history(&page_id, to_version, CONFLUENCE_PAGE_EXPAND)
+                .await
+                .map_err(jira_error)?
+        };
+        let from_content = confluence_page_markdown_content(&from_page);
+        let to_content = confluence_page_markdown_content(&to_page);
+        let diff = confluence_unified_diff(&from_content, &to_content, from_version, to_version);
+
+        Ok(CallToolResult::structured(json!({
+            "page_id": page_id,
+            "title": to_page.title,
+            "from_version": from_version,
+            "to_version": to_version,
+            "diff": diff,
+            "has_changes": from_content != to_content,
+        })))
+    }
+
+    #[tool(description = "Get Confluence Cloud page view analytics")]
+    async fn confluence_get_page_views(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceGetPageViewsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let page_id = required_non_empty_arg(args.page_id, "page_id")?;
+        let include_title = args.include_title.unwrap_or(true);
+        let client = self.confluence_client()?;
+        if client.config().deployment != ConfluenceDeployment::Cloud {
+            return Ok(CallToolResult::structured(json!({
+                "success": false,
+                "available": false,
+                "page_id": page_id,
+                "error": "Page view analytics is only available for Confluence Cloud. Server/Data Center instances do not support the Analytics API.",
+            })));
+        }
+
+        match client.get_page_views(&page_id, include_title).await {
+            Ok(views) => Ok(CallToolResult::structured(views.to_simplified_value())),
+            Err(AtlassianError::HttpStatus {
+                status, message, ..
+            }) if matches!(status, 401 | 403) => Ok(CallToolResult::structured(json!({
+                "success": false,
+                "error": "Authentication failed. Please check your credentials.",
+                "status": status,
+                "details": message,
+            }))),
+            Err(error) => Err(jira_error(error)),
+        }
+    }
+
+    #[tool(description = "Upload an attachment to Confluence content")]
+    async fn confluence_upload_attachment(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceUploadAttachmentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let content_id = required_non_empty_arg(args.content_id, "content_id")?;
+        let file_path = required_non_empty_arg(args.file_path, "file_path")?;
+        let filename = confluence_file_path_display(&file_path);
+        let comment = optional_non_empty_arg(args.comment);
+        let minor_edit = args.minor_edit.unwrap_or(false);
+        let client = self.confluence_client()?;
+
+        match client
+            .upload_attachment(&content_id, &file_path, comment.as_deref(), minor_edit)
+            .await
+        {
+            Ok(attachment) => Ok(CallToolResult::structured(json!({
+                "success": true,
+                "content_id": content_id,
+                "filename": filename,
+                "minor_edit": minor_edit,
+                "attachment": attachment.to_simplified_value(),
+            }))),
+            Err(error) => Ok(CallToolResult::structured(json!({
+                "success": false,
+                "content_id": content_id,
+                "filename": filename,
+                "minor_edit": minor_edit,
+                "error": error.to_string(),
+            }))),
+        }
+    }
+
+    #[tool(description = "Upload multiple attachments to Confluence content")]
+    async fn confluence_upload_attachments(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceUploadAttachmentsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let content_id = required_non_empty_arg(args.content_id, "content_id")?;
+        let file_paths = confluence_split_file_paths(&args.file_paths)?;
+        let comment = optional_non_empty_arg(args.comment);
+        let minor_edit = args.minor_edit.unwrap_or(false);
+        let client = self.confluence_client()?;
+        let mut uploaded = Vec::new();
+        let mut failed = Vec::new();
+
+        for (index, file_path) in file_paths.iter().enumerate() {
+            let filename = confluence_file_path_display(file_path);
+            match client
+                .upload_attachment(&content_id, file_path, comment.as_deref(), minor_edit)
+                .await
+            {
+                Ok(attachment) => uploaded.push(json!({
+                    "index": index,
+                    "filename": filename,
+                    "attachment": attachment.to_simplified_value(),
+                })),
+                Err(error) => failed.push(json!({
+                    "index": index,
+                    "filename": filename,
+                    "error": error.to_string(),
+                })),
+            }
+        }
+
+        Ok(CallToolResult::structured(json!({
+            "success": failed.is_empty(),
+            "partial_success": !uploaded.is_empty() && !failed.is_empty(),
+            "content_id": content_id,
+            "minor_edit": minor_edit,
+            "summary": {
+                "total": uploaded.len() + failed.len(),
+                "uploaded": uploaded.len(),
+                "failed": failed.len(),
+            },
+            "attachments": uploaded,
+            "failed": failed,
+        })))
+    }
+
+    #[tool(description = "List attachments for Confluence content")]
+    async fn confluence_get_attachments(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceGetAttachmentsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let content_id = required_non_empty_arg(args.content_id, "content_id")?;
+        let start = args.start.unwrap_or(0);
+        let limit = optional_u64_range_arg(
+            args.limit,
+            crate::confluence::client::DEFAULT_ATTACHMENT_LIST_LIMIT,
+            crate::confluence::client::MAX_ATTACHMENT_LIST_LIMIT,
+            "limit",
+        )?;
+        let filename = optional_non_empty_arg(args.filename);
+        let media_type = optional_non_empty_arg(args.media_type);
+        let response = self
+            .confluence_client()?
+            .get_attachments(
+                &content_id,
+                Some(start),
+                Some(limit),
+                filename.as_deref(),
+                media_type.as_deref(),
+            )
+            .await
+            .map_err(jira_error)?;
+        let attachments = response
+            .results
+            .iter()
+            .map(|attachment| attachment.to_simplified_value())
+            .collect::<Vec<_>>();
+
+        Ok(CallToolResult::structured(json!({
+            "success": true,
+            "content_id": content_id,
+            "count": attachments.len(),
+            "total": response.size.unwrap_or(attachments.len() as u64),
+            "start": response.start.unwrap_or(start),
+            "limit": response.limit.unwrap_or(limit),
+            "filters": {
+                "filename": filename,
+                "media_type": media_type,
+            },
+            "attachments": attachments,
+            "links": response.links,
+        })))
+    }
+
+    #[tool(description = "Download one Confluence attachment with bounded content output")]
+    async fn confluence_download_attachment(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceDownloadAttachmentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let attachment_id = required_non_empty_arg(args.attachment_id, "attachment_id")?;
+        let client = self.confluence_client()?;
+        let attachment = client
+            .get_attachment_by_id(&attachment_id)
+            .await
+            .map_err(jira_error)?;
+
+        match confluence_attachment_with_content_value(
+            &client,
+            &attachment,
+            &attachment_id,
+            crate::confluence::client::DEFAULT_ATTACHMENT_MAX_BYTES,
+        )
+        .await
+        {
+            Ok(attachment) => Ok(CallToolResult::structured(json!({
+                "success": true,
+                "attachment": attachment,
+            }))),
+            Err(error) => Ok(CallToolResult::structured(error)),
+        }
+    }
+
+    #[tool(description = "Download all attachments for Confluence content with bounded output")]
+    async fn confluence_download_content_attachments(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceDownloadContentAttachmentsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let content_id = required_non_empty_arg(args.content_id, "content_id")?;
+        let client = self.confluence_client()?;
+        let response = client
+            .get_attachments(
+                &content_id,
+                Some(0),
+                Some(crate::confluence::client::MAX_ATTACHMENT_LIST_LIMIT),
+                None,
+                None,
+            )
+            .await
+            .map_err(jira_error)?;
+        let mut attachments = Vec::new();
+        let mut failed = Vec::new();
+
+        for attachment in &response.results {
+            let attachment_id = confluence_attachment_id(attachment);
+            match confluence_attachment_with_content_value(
+                &client,
+                attachment,
+                &attachment_id,
+                crate::confluence::client::DEFAULT_ATTACHMENT_MAX_BYTES,
+            )
+            .await
+            {
+                Ok(value) => attachments.push(value),
+                Err(error) => failed.push(error),
+            }
+        }
+
+        Ok(CallToolResult::structured(json!({
+            "success": true,
+            "summary": {
+                "content_id": content_id,
+                "total": response.results.len(),
+                "downloaded": attachments.len(),
+                "failed": failed.len(),
+            },
+            "attachments": attachments,
+            "failed": failed,
+        })))
+    }
+
+    #[tool(description = "Delete a Confluence attachment")]
+    async fn confluence_delete_attachment(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceDeleteAttachmentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let attachment_id = required_non_empty_arg(args.attachment_id, "attachment_id")?;
+        match self
+            .confluence_client()?
+            .delete_attachment(&attachment_id)
+            .await
+        {
+            Ok(value) => Ok(CallToolResult::structured(json!({
+                "success": true,
+                "attachment_id": attachment_id,
+                "result": value,
+            }))),
+            Err(error) => Ok(CallToolResult::structured(json!({
+                "success": false,
+                "attachment_id": attachment_id,
+                "error": error.to_string(),
+            }))),
+        }
+    }
+
+    #[tool(description = "Get image attachments for Confluence content")]
+    async fn confluence_get_page_images(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceGetPageImagesArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let content_id = required_non_empty_arg(args.content_id, "content_id")?;
+        let client = self.confluence_client()?;
+        let response = client
+            .get_attachments(
+                &content_id,
+                Some(0),
+                Some(crate::confluence::client::MAX_ATTACHMENT_LIST_LIMIT),
+                None,
+                None,
+            )
+            .await
+            .map_err(jira_error)?;
+        let mut images = Vec::new();
+        let mut failed = Vec::new();
+        let mut skipped_non_images = 0usize;
+
+        for attachment in &response.results {
+            let filename =
+                confluence_attachment_filename(attachment, &confluence_attachment_id(attachment));
+            let (is_image, resolved_mime_type) =
+                confluence_is_image_attachment(attachment.media_type(), &filename);
+            if !is_image {
+                skipped_non_images += 1;
+                continue;
+            }
+
+            let attachment_id = confluence_attachment_id(attachment);
+            match confluence_attachment_with_content_value(
+                &client,
+                attachment,
+                &attachment_id,
+                crate::confluence::client::DEFAULT_ATTACHMENT_MAX_BYTES,
+            )
+            .await
+            {
+                Ok(mut value) => {
+                    value["is_image"] = Value::Bool(true);
+                    value["resolved_mime_type"] = Value::String(resolved_mime_type);
+                    images.push(value);
+                }
+                Err(error) => failed.push(error),
+            }
+        }
+
+        Ok(CallToolResult::structured(json!({
+            "success": true,
+            "content_id": content_id,
+            "images_only": true,
+            "count": images.len(),
+            "skipped_non_images": skipped_non_images,
+            "images": images,
+            "failed": failed,
+        })))
     }
 
     #[tool(description = "Get a Jira issue by key")]
@@ -1486,6 +2364,399 @@ fn optional_positive_u64_arg(
     }
 }
 
+fn optional_confluence_search_limit_arg(value: Option<u64>) -> Result<Option<u64>, ErrorData> {
+    match value {
+        Some(0) => Err(jira_error(AtlassianError::invalid_input(
+            "limit must be positive",
+        ))),
+        Some(value) if value > crate::confluence::client::MAX_SEARCH_LIMIT => {
+            Err(jira_error(AtlassianError::invalid_input(format!(
+                "limit must be less than or equal to {}",
+                crate::confluence::client::MAX_SEARCH_LIMIT
+            ))))
+        }
+        value => Ok(value),
+    }
+}
+
+fn optional_u64_range_arg(
+    value: Option<u64>,
+    default: u64,
+    max: u64,
+    field_name: &'static str,
+) -> Result<u64, ErrorData> {
+    match value.unwrap_or(default) {
+        0 => Err(jira_error(AtlassianError::invalid_input(format!(
+            "{field_name} must be positive"
+        )))),
+        value if value > max => Err(jira_error(AtlassianError::invalid_input(format!(
+            "{field_name} must be less than or equal to {max}"
+        )))),
+        value => Ok(value),
+    }
+}
+
+fn confluence_page_tool_value(
+    page: &ConfluencePage,
+    include_metadata: bool,
+    convert_to_markdown: bool,
+) -> Value {
+    let simplified = page.to_simplified_value(convert_to_markdown);
+    if include_metadata {
+        json!({ "metadata": simplified })
+    } else {
+        json!({ "content": { "value": simplified.get("content").cloned().unwrap_or(Value::Null) } })
+    }
+}
+
+fn parse_confluence_write_content_format(
+    value: Option<&str>,
+) -> Result<ConfluenceContentFormat, ErrorData> {
+    let format = ConfluenceContentFormat::parse(value).map_err(jira_error)?;
+    if format == ConfluenceContentFormat::Html {
+        return Err(jira_error(AtlassianError::invalid_input(
+            "content_format must be markdown, wiki, or storage",
+        )));
+    }
+    Ok(format)
+}
+
+fn confluence_user_search_limit(value: Option<u64>) -> Result<u64, ErrorData> {
+    match value.unwrap_or(10) {
+        0 => Err(jira_error(AtlassianError::invalid_input(
+            "limit must be positive",
+        ))),
+        value if value > 50 => Err(jira_error(AtlassianError::invalid_input(
+            "limit must be less than or equal to 50",
+        ))),
+        value => Ok(value),
+    }
+}
+
+fn confluence_positive_version_arg(value: u64, field_name: &'static str) -> Result<u64, ErrorData> {
+    if value == 0 {
+        Err(jira_error(AtlassianError::invalid_input(format!(
+            "{field_name} must be positive"
+        ))))
+    } else {
+        Ok(value)
+    }
+}
+
+fn normalize_confluence_user_search_query(query: &str) -> String {
+    if ["=", "~", ">", "<", " AND ", " OR ", "user."]
+        .iter()
+        .any(|token| query.contains(token))
+    {
+        query.to_string()
+    } else {
+        format!(
+            "user.fullname ~ \"{}\"",
+            query.replace('\\', "\\\\").replace('"', "\\\"")
+        )
+    }
+}
+
+fn confluence_page_markdown_content(page: &ConfluencePage) -> String {
+    page.to_simplified_value(true)
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn confluence_unified_diff(
+    from_content: &str,
+    to_content: &str,
+    from_version: u64,
+    to_version: u64,
+) -> String {
+    if from_content == to_content {
+        return String::new();
+    }
+
+    let from_lines = from_content.lines().collect::<Vec<_>>();
+    let to_lines = to_content.lines().collect::<Vec<_>>();
+    let mut output = vec![
+        format!("--- v{from_version}"),
+        format!("+++ v{to_version}"),
+        format!(
+            "@@ -{} +{} @@",
+            confluence_diff_range(from_lines.len()),
+            confluence_diff_range(to_lines.len())
+        ),
+    ];
+    let max_len = from_lines.len().max(to_lines.len());
+
+    for index in 0..max_len {
+        match (from_lines.get(index), to_lines.get(index)) {
+            (Some(left), Some(right)) if left == right => output.push(format!(" {left}")),
+            (Some(left), Some(right)) => {
+                output.push(format!("-{left}"));
+                output.push(format!("+{right}"));
+            }
+            (Some(left), None) => output.push(format!("-{left}")),
+            (None, Some(right)) => output.push(format!("+{right}")),
+            (None, None) => {}
+        }
+    }
+
+    output.join("\n")
+}
+
+fn confluence_diff_range(line_count: usize) -> String {
+    match line_count {
+        0 => "0,0".to_string(),
+        1 => "1".to_string(),
+        value => format!("1,{value}"),
+    }
+}
+
+async fn confluence_attachment_with_content_value(
+    client: &ConfluenceClient,
+    attachment: &ConfluenceAttachment,
+    fallback_id: &str,
+    max_bytes: u64,
+) -> Result<Value, Value> {
+    let attachment_id = confluence_attachment_id_with_fallback(attachment, fallback_id);
+    let filename = confluence_attachment_filename(attachment, &attachment_id);
+    let mut value = attachment.to_simplified_value();
+
+    if let Some(file_size) = attachment.file_size()
+        && file_size > max_bytes
+    {
+        return Err(json!({
+            "success": false,
+            "attachment_id": attachment_id,
+            "filename": filename,
+            "file_size": file_size,
+            "max_bytes": max_bytes,
+            "error": format!("Attachment '{filename}' is {file_size} bytes which exceeds the inline limit of {max_bytes} bytes."),
+        }));
+    }
+
+    let Some(download_url) = attachment
+        .links
+        .get("download")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Err(json!({
+            "success": false,
+            "attachment_id": attachment_id,
+            "filename": filename,
+            "error": "download URL is missing",
+        }));
+    };
+
+    let content = client
+        .download_relative_or_same_origin(download_url, max_bytes)
+        .await
+        .map_err(|error| {
+            json!({
+                "success": false,
+                "attachment_id": attachment_id,
+                "filename": filename,
+                "error": redact_url_query(&error.to_string()),
+            })
+        })?;
+    let content_type = content
+        .content_type
+        .clone()
+        .filter(|content_type| !confluence_is_ambiguous_mime_type(Some(content_type.as_str())))
+        .or_else(|| attachment.media_type().map(ToString::to_string))
+        .or_else(|| confluence_guess_mime_from_filename(&filename).map(ToString::to_string))
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    value["content"] = json!({
+        "encoding": "base64",
+        "content_type": content_type,
+        "size": content.bytes.len(),
+        "data": base64_encode(&content.bytes),
+    });
+
+    Ok(value)
+}
+
+fn confluence_split_file_paths(value: &str) -> Result<Vec<String>, ErrorData> {
+    let file_paths = value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if file_paths.is_empty() {
+        Err(jira_error(AtlassianError::invalid_input(
+            "file_paths must contain at least one local file path",
+        )))
+    } else {
+        Ok(file_paths)
+    }
+}
+
+fn confluence_file_path_display(value: &str) -> String {
+    Path::new(value)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("attachment")
+        .to_string()
+}
+
+fn confluence_attachment_id(attachment: &ConfluenceAttachment) -> String {
+    confluence_attachment_id_with_fallback(attachment, "unknown")
+}
+
+fn confluence_attachment_id_with_fallback(
+    attachment: &ConfluenceAttachment,
+    fallback_id: &str,
+) -> String {
+    attachment
+        .id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| fallback_id.to_string())
+}
+
+fn confluence_attachment_filename(attachment: &ConfluenceAttachment, fallback_id: &str) -> String {
+    attachment
+        .title
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| fallback_id.to_string())
+}
+
+fn confluence_is_image_attachment(media_type: Option<&str>, filename: &str) -> (bool, String) {
+    if let Some(media_type) = media_type
+        && matches!(
+            media_type,
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/svg+xml" | "image/bmp"
+        )
+    {
+        return (true, media_type.to_string());
+    }
+
+    if media_type.is_none() || confluence_is_ambiguous_mime_type(media_type) {
+        if let Some(guessed) = confluence_guess_mime_from_filename(filename)
+            && guessed.starts_with("image/")
+        {
+            return (true, guessed.to_string());
+        }
+    }
+
+    (
+        false,
+        media_type.unwrap_or("application/octet-stream").to_string(),
+    )
+}
+
+fn confluence_is_ambiguous_mime_type(media_type: Option<&str>) -> bool {
+    matches!(
+        media_type,
+        Some("application/octet-stream" | "application/binary")
+    )
+}
+
+fn confluence_guess_mime_from_filename(filename: &str) -> Option<&'static str> {
+    let filename = filename.to_ascii_lowercase();
+    if filename.ends_with(".png") {
+        Some("image/png")
+    } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+        Some("image/jpeg")
+    } else if filename.ends_with(".gif") {
+        Some("image/gif")
+    } else if filename.ends_with(".webp") {
+        Some("image/webp")
+    } else if filename.ends_with(".svg") {
+        Some("image/svg+xml")
+    } else if filename.ends_with(".bmp") {
+        Some("image/bmp")
+    } else if filename.ends_with(".txt") {
+        Some("text/plain")
+    } else if filename.ends_with(".pdf") {
+        Some("application/pdf")
+    } else {
+        None
+    }
+}
+
+fn confluence_write_page_value(page: &ConfluencePage, include_content: bool) -> Value {
+    let mut value = page.to_simplified_value(false);
+    if !include_content && let Some(object) = value.as_object_mut() {
+        object.remove("content");
+    }
+    value
+}
+
+fn confluence_expand_list(expand: Option<String>, include_content: bool) -> Vec<String> {
+    let mut values = expand
+        .unwrap_or_else(|| "version".to_string())
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+    if values.is_empty() {
+        values.push("version".to_string());
+    }
+    if include_content && !values.iter().any(|value| value.contains("body")) {
+        values.push("body.storage".to_string());
+    }
+
+    values
+}
+
+fn confluence_child_page_value(
+    page: &ConfluencePage,
+    include_content: bool,
+    convert_to_markdown: bool,
+) -> Value {
+    let mut value = page.to_simplified_value(convert_to_markdown);
+    if !include_content && let Some(object) = value.as_object_mut() {
+        object.remove("content");
+    }
+    value
+}
+
+#[derive(Debug)]
+struct ConfluenceTreePageSortValue {
+    depth: usize,
+    position_sort: i64,
+    title: String,
+    value: Value,
+}
+
+fn confluence_tree_page_sort_value(page: &ConfluencePage) -> ConfluenceTreePageSortValue {
+    let depth = page.ancestors.len();
+    let parent_id = page
+        .ancestors
+        .last()
+        .and_then(|ancestor| ancestor.id.clone());
+    let position = page.extensions.get("position").and_then(Value::as_i64);
+    let title = page
+        .title
+        .clone()
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| "Untitled".to_string());
+    let value = json!({
+        "id": page.id.clone(),
+        "title": title,
+        "parent_id": parent_id,
+        "position": position,
+        "depth": depth,
+    });
+
+    ConfluenceTreePageSortValue {
+        depth,
+        position_sort: position.unwrap_or(999_999),
+        title,
+        value,
+    }
+}
+
 fn jira_error(error: AtlassianError) -> ErrorData {
     match error {
         AtlassianError::InvalidInput { .. } => ErrorData::invalid_params(error.to_string(), None),
@@ -1758,6 +3029,7 @@ mod tests {
     use crate::{
         atlassian::auth::AtlassianAuth,
         config::{HttpConfig, RuntimeConfig},
+        confluence::config::{ConfluenceConfig, ConfluenceDeployment},
         context::AppContext,
         jira::config::{JiraConfig, JiraDeployment},
         jira::tools,
@@ -1829,6 +3101,37 @@ mod tests {
         jira_config_with_base_url("https://jira.example".to_string())
     }
 
+    fn confluence_config() -> ConfluenceConfig {
+        confluence_config_with_base_url("https://confluence.example".to_string())
+    }
+
+    fn confluence_cloud_config_with_base_url(base_url: String) -> ConfluenceConfig {
+        ConfluenceConfig {
+            base_url,
+            deployment: ConfluenceDeployment::Cloud,
+            auth: AtlassianAuth::Basic {
+                username: "test-user".to_string(),
+                api_token: "test-api-token".to_string(),
+            },
+            ssl_verify: true,
+            spaces_filter: BTreeSet::new(),
+            timeout_seconds: 75,
+        }
+    }
+
+    fn confluence_config_with_base_url(base_url: String) -> ConfluenceConfig {
+        ConfluenceConfig {
+            base_url,
+            deployment: ConfluenceDeployment::ServerDataCenter,
+            auth: AtlassianAuth::Pat {
+                personal_token: "test-pat-value".to_string(),
+            },
+            ssl_verify: true,
+            spaces_filter: BTreeSet::new(),
+            timeout_seconds: 75,
+        }
+    }
+
     #[test]
     fn tool_log_arguments_redact_sensitive_fields_and_truncate_large_values() {
         let long_value = "x".repeat(TOOL_LOG_MAX_STRING_CHARS + 1);
@@ -1879,6 +3182,13 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect()
+    }
+
+    fn query_value(path: &str, key: &str) -> Option<String> {
+        let url = reqwest::Url::parse(&format!("http://example{path}")).unwrap();
+        url.query_pairs()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.into_owned())
     }
 
     fn assert_client_compatible_tool_schemas(tools: &[Tool]) {
@@ -2058,6 +3368,11 @@ mod tests {
         requests: Arc<Mutex<Vec<RecordedRequest>>>,
     }
 
+    #[derive(Clone)]
+    struct MockConfluenceState {
+        requests: Arc<Mutex<Vec<RecordedRequest>>>,
+    }
+
     async fn mock_jira_handler(
         State(state): State<MockJiraState>,
         method: Method,
@@ -2068,7 +3383,8 @@ mod tests {
         let parsed_body = if body.is_empty() {
             Value::Null
         } else {
-            serde_json::from_slice(&body).unwrap()
+            serde_json::from_slice(&body)
+                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).to_string()))
         };
         let path = uri
             .path_and_query()
@@ -2630,11 +3946,760 @@ mod tests {
             .into_response()
     }
 
+    async fn mock_confluence_handler(
+        State(state): State<MockConfluenceState>,
+        method: Method,
+        headers: HeaderMap,
+        uri: axum::http::Uri,
+        body: Bytes,
+    ) -> Response {
+        let parsed_body = if body.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&body)
+                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).to_string()))
+        };
+        let path = uri
+            .path_and_query()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| uri.path().to_string());
+        state.requests.lock().await.push(RecordedRequest {
+            method: method.clone(),
+            path: path.clone(),
+            body: parsed_body.clone(),
+        });
+
+        let authorization = headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok());
+        let expected_pat_header = format!("Bearer {}", "test-pat-value");
+        if authorization != Some(expected_pat_header.as_str())
+            && !authorization.is_some_and(|value| value.starts_with("Basic "))
+        {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"errorMessages": ["auth"]})),
+            )
+                .into_response();
+        }
+
+        let path_only = uri.path();
+        if method == Method::GET && path_only == "/rest/api/content/123" {
+            if let Some(version) = query_value(&path, "version") {
+                let (title, storage_value) = match version.as_str() {
+                    "1" => ("Roadmap", "<h1>Roadmap</h1><p>Hello team</p>"),
+                    "2" => ("Roadmap", "<h1>Roadmap</h1><p>Hello team and partners</p>"),
+                    _ => {
+                        return (
+                            StatusCode::NOT_FOUND,
+                            Json(json!({"errorMessages": ["historical version not found"]})),
+                        )
+                            .into_response();
+                    }
+                };
+                return (
+                    StatusCode::OK,
+                    Json(json!({
+                        "id": "123",
+                        "title": title,
+                        "type": "page",
+                        "status": "historical",
+                        "space": {"key": "ENG", "name": "Engineering"},
+                        "body": {"storage": {"value": storage_value}},
+                        "version": {"number": version.parse::<u64>().unwrap()},
+                        "ancestors": [{"id": "100", "title": "Home"}],
+                        "_links": {"webui": "/spaces/ENG/pages/123/Roadmap"}
+                    })),
+                )
+                    .into_response();
+            }
+
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "123",
+                    "title": "Roadmap",
+                    "type": "page",
+                    "status": "current",
+                    "space": {"key": "ENG", "name": "Engineering"},
+                    "body": {"storage": {"value": "<h1>Roadmap</h1><p>Hello &amp; welcome</p>"}},
+                    "version": {"number": 7, "message": "Updated"},
+                    "ancestors": [{"id": "100", "title": "Home"}],
+                    "metadata": {"labels": {"results": [{"name": "planning"}]}},
+                    "_links": {"webui": "/spaces/ENG/pages/123/Roadmap"}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/123/child/comment" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [
+                        {
+                            "id": "c-1",
+                            "title": "Roadmap",
+                            "type": "comment",
+                            "body": {"storage": {"value": "<p>First comment</p>"}},
+                            "version": {"number": 2, "by": {"displayName": "Ada"}},
+                            "container": {"id": "123", "type": "page", "title": "Roadmap"},
+                            "extensions": {"location": "footer"},
+                            "_links": {"webui": "/spaces/ENG/pages/123?focusedCommentId=c-1"}
+                        },
+                        {
+                            "id": "c-2",
+                            "type": "comment",
+                            "body": {"storage": {"value": "<p>Reply</p>"}},
+                            "version": {"number": 1, "by": {"displayName": "Lin"}},
+                            "container": {"id": "c-1", "type": "comment", "title": "Roadmap"}
+                        }
+                    ],
+                    "start": 0,
+                    "limit": 25,
+                    "size": 2,
+                    "_links": {}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/empty/child/comment" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [],
+                    "start": 0,
+                    "limit": 25,
+                    "size": 0,
+                    "_links": {}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/123/label" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [
+                        {"id": "label-1", "name": "draft", "prefix": "global", "label": "draft", "type": "label"},
+                        {"id": "label-2", "name": "team", "prefix": "my", "label": "team", "type": "label"}
+                    ],
+                    "start": 0,
+                    "limit": 200,
+                    "size": 2,
+                    "_links": {}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/empty-labels/label" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [],
+                    "start": 0,
+                    "limit": 200,
+                    "size": 0,
+                    "_links": {}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::POST && path_only == "/rest/api/content/123/label" {
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        if method == Method::POST && path_only == "/rest/api/content/label-error/label" {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"errorMessages": ["label failed"]})),
+            )
+                .into_response();
+        }
+        if method == Method::POST && path_only == "/rest/api/content" {
+            if parsed_body["type"] == json!("comment") {
+                let container_id = parsed_body["container"]["id"].as_str().unwrap_or("");
+                if container_id == "comment-error" || container_id == "reply-error" {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"errorMessages": ["comment failed"]})),
+                    )
+                        .into_response();
+                }
+                let is_reply = parsed_body["container"]["type"] == json!("comment");
+                let comment_id = if is_reply { "c-2" } else { "c-1" };
+                let display_name = if is_reply { "Lin" } else { "Ada" };
+                return (
+                    StatusCode::OK,
+                    Json(json!({
+                        "id": comment_id,
+                        "title": "Roadmap",
+                        "type": "comment",
+                        "body": parsed_body["body"],
+                        "version": {"number": 1, "by": {"displayName": display_name}},
+                        "container": parsed_body["container"],
+                        "extensions": {"location": "footer"},
+                        "_links": {"webui": "/spaces/ENG/pages/123?focusedCommentId=c-1"}
+                    })),
+                )
+                    .into_response();
+            }
+
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "900",
+                    "title": parsed_body["title"],
+                    "type": "page",
+                    "status": "current",
+                    "space": parsed_body["space"],
+                    "body": parsed_body["body"],
+                    "version": {"number": 1},
+                    "ancestors": parsed_body.get("ancestors").cloned().unwrap_or(Value::Array(vec![]))
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::PUT
+            && (path_only == "/rest/api/content/900/property/emoji-title-published"
+                || path_only == "/rest/api/content/123/property/emoji-title-published")
+        {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "key": "emoji-title-published",
+                    "value": parsed_body["value"]
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::PUT && path_only == "/rest/api/content/123" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "123",
+                    "title": parsed_body["title"],
+                    "type": "page",
+                    "status": "current",
+                    "space": parsed_body["space"],
+                    "body": parsed_body["body"],
+                    "version": parsed_body["version"],
+                    "ancestors": parsed_body.get("ancestors").cloned().unwrap_or(Value::Array(vec![]))
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::PUT && path_only == "/rest/api/content/123/move/above/999" {
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        if method == Method::DELETE && path_only == "/rest/api/content/123" {
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        if method == Method::DELETE && path_only == "/rest/api/content/delete-error" {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"errorMessages": ["delete failed"]})),
+            )
+                .into_response();
+        }
+        if method == Method::PUT && path_only == "/rest/api/content/123/child/attachment" {
+            if headers
+                .get("x-atlassian-token")
+                .and_then(|value| value.to_str().ok())
+                != Some("nocheck")
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"errorMessages": ["missing attachment upload token"]})),
+                )
+                    .into_response();
+            }
+
+            let body_text = parsed_body.as_str().unwrap_or("");
+            let title = if body_text.contains("batch-1.txt") {
+                "batch-1.txt"
+            } else if body_text.contains("upload.txt") {
+                "upload.txt"
+            } else {
+                "uploaded.bin"
+            };
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [{
+                        "id": format!("uploaded-{title}"),
+                        "type": "attachment",
+                        "title": title,
+                        "status": "current",
+                        "extensions": {"mediaType": "application/octet-stream", "fileSize": 5},
+                        "_links": {"download": format!("/download/attachments/uploaded/{title}")}
+                    }]
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::PUT && path_only == "/rest/api/content/upload-error/child/attachment" {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"errorMessages": ["upload failed"]})),
+            )
+                .into_response();
+        }
+        if method == Method::DELETE && path_only == "/rest/api/content/att-1" {
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        if method == Method::DELETE && path_only == "/rest/api/content/att-delete-error" {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"errorMessages": ["delete attachment failed"]})),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/missing" {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"errorMessages": ["page not found"]})),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/att-1" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "att-1",
+                    "type": "attachment",
+                    "title": "file.png",
+                    "status": "current",
+                    "extensions": {"mediaType": "image/png", "fileSize": 11},
+                    "_links": {"download": "/download/attachments/att-1/file.png?token=secret"}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/att-no-url" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "att-no-url",
+                    "type": "attachment",
+                    "title": "missing.bin",
+                    "extensions": {"mediaType": "application/octet-stream", "fileSize": 12}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/att-large" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "att-large",
+                    "type": "attachment",
+                    "title": "large.bin",
+                    "extensions": {
+                        "mediaType": "application/octet-stream",
+                        "fileSize": crate::confluence::client::DEFAULT_ATTACHMENT_MAX_BYTES + 1
+                    },
+                    "_links": {"download": "/download/attachments/att-large/large.bin"}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/att-stream-large" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "att-stream-large",
+                    "type": "attachment",
+                    "title": "large-stream.bin",
+                    "extensions": {"mediaType": "application/octet-stream"},
+                    "_links": {"download": "/download/attachments/att-stream-large/large.bin"}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/att-cross" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "att-cross",
+                    "type": "attachment",
+                    "title": "cross.png",
+                    "extensions": {"mediaType": "image/png", "fileSize": 11},
+                    "_links": {"download": "https://other.example/download/cross.png?token=secret"}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/download/attachments/att-1/file.png" {
+            return Bytes::from_static(b"image-bytes").into_response();
+        }
+        if method == Method::GET && path_only == "/download/attachments/att-octet-image/photo.jpg" {
+            return Bytes::from_static(b"photo-bytes").into_response();
+        }
+        if method == Method::GET && path_only == "/download/attachments/att-stream-large/large.bin"
+        {
+            let bytes =
+                vec![b'x'; crate::confluence::client::DEFAULT_ATTACHMENT_MAX_BYTES as usize + 1];
+            return bytes.into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/123/child/page" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [{
+                        "id": "201",
+                        "title": "Child page",
+                        "type": "page",
+                        "status": "current",
+                        "space": {"key": "ENG", "name": "Engineering"},
+                        "body": {"storage": {"value": "<p>Child body</p>"}},
+                        "version": {"number": 1}
+                    }],
+                    "start": 0,
+                    "limit": 2,
+                    "size": 1
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/123/child/folder" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [{
+                        "id": "301",
+                        "title": "Folder",
+                        "type": "folder",
+                        "status": "current",
+                        "space": {"key": "ENG", "name": "Engineering"}
+                    }],
+                    "start": 0,
+                    "limit": 2,
+                    "size": 1
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/123/child/attachment" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [
+                        {
+                            "id": "att-1",
+                            "type": "attachment",
+                            "title": "file.png",
+                            "status": "current",
+                            "extensions": {"mediaType": "image/png", "fileSize": 42},
+                            "_links": {"download": "/download/attachments/att-1/file.png"}
+                        },
+                        {
+                            "id": "att-2",
+                            "type": "attachment",
+                            "title": "notes.txt",
+                            "metadata": {"mediaType": "text/plain", "fileSize": 12},
+                            "_links": {"download": "/download/attachments/att-2/notes.txt"}
+                        }
+                    ],
+                    "start": query_value(&path, "start").and_then(|value| value.parse::<u64>().ok()).unwrap_or(0),
+                    "limit": query_value(&path, "limit").and_then(|value| value.parse::<u64>().ok()).unwrap_or(50),
+                    "size": 2,
+                    "_links": {"next": "/rest/api/content/123/child/attachment?start=2"}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET
+            && path_only == "/rest/api/content/empty-attachments/child/attachment"
+        {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [],
+                    "start": 0,
+                    "limit": 50,
+                    "size": 0,
+                    "_links": {}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET
+            && path_only == "/rest/api/content/missing-attachment-fields/child/attachment"
+        {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [{"id": "att-min"}],
+                    "start": 0,
+                    "limit": 50,
+                    "size": 1,
+                    "_links": {}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/download-batch/child/attachment"
+        {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [
+                        {
+                            "id": "att-1",
+                            "type": "attachment",
+                            "title": "file.png",
+                            "extensions": {"mediaType": "image/png", "fileSize": 11},
+                            "_links": {"download": "/download/attachments/att-1/file.png?token=secret"}
+                        },
+                        {
+                            "id": "att-no-url",
+                            "type": "attachment",
+                            "title": "missing.bin",
+                            "extensions": {"mediaType": "application/octet-stream", "fileSize": 12}
+                        },
+                        {
+                            "id": "att-large",
+                            "type": "attachment",
+                            "title": "large.bin",
+                            "extensions": {
+                                "mediaType": "application/octet-stream",
+                                "fileSize": crate::confluence::client::DEFAULT_ATTACHMENT_MAX_BYTES + 1
+                            },
+                            "_links": {"download": "/download/attachments/att-large/large.bin"}
+                        }
+                    ],
+                    "start": 0,
+                    "limit": 100,
+                    "size": 3,
+                    "_links": {}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content/images/child/attachment" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [
+                        {
+                            "id": "att-1",
+                            "type": "attachment",
+                            "title": "file.png",
+                            "extensions": {"mediaType": "image/png", "fileSize": 11},
+                            "_links": {"download": "/download/attachments/att-1/file.png?token=secret"}
+                        },
+                        {
+                            "id": "att-octet-image",
+                            "type": "attachment",
+                            "title": "photo.jpg",
+                            "extensions": {"mediaType": "application/octet-stream", "fileSize": 11},
+                            "_links": {"download": "/download/attachments/att-octet-image/photo.jpg"}
+                        },
+                        {
+                            "id": "att-2",
+                            "type": "attachment",
+                            "title": "notes.txt",
+                            "metadata": {"mediaType": "text/plain", "fileSize": 12},
+                            "_links": {"download": "/download/attachments/att-2/notes.txt"}
+                        }
+                    ],
+                    "start": 0,
+                    "limit": 100,
+                    "size": 3,
+                    "_links": {}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/content" {
+            if query_value(&path, "type").as_deref() == Some("page") {
+                let limit = query_value(&path, "limit");
+                if limit.as_deref() == Some("1") {
+                    return (
+                        StatusCode::OK,
+                        Json(json!({
+                            "results": [{
+                                "id": "100",
+                                "title": "Home",
+                                "type": "page",
+                                "ancestors": [],
+                                "extensions": {"position": 0}
+                            }],
+                            "start": 0,
+                            "limit": 1,
+                            "size": 1,
+                            "_links": {"next": "/rest/api/content?start=1"}
+                        })),
+                    )
+                        .into_response();
+                }
+
+                return (
+                    StatusCode::OK,
+                    Json(json!({
+                        "results": [
+                            {
+                                "id": "200",
+                                "title": "Child",
+                                "type": "page",
+                                "ancestors": [{"id": "100", "title": "Home"}],
+                                "extensions": {"position": 1}
+                            },
+                            {
+                                "id": "100",
+                                "title": "Home",
+                                "type": "page",
+                                "ancestors": [],
+                                "extensions": {"position": 0}
+                            }
+                        ],
+                        "start": 0,
+                        "limit": 2,
+                        "size": 2,
+                        "_links": {}
+                    })),
+                )
+                    .into_response();
+            }
+
+            let title = query_value(&path, "title");
+            let space_key = query_value(&path, "spaceKey");
+            if title.as_deref() == Some("Roadmap") && space_key.as_deref() == Some("ENG") {
+                return (
+                    StatusCode::OK,
+                    Json(json!({
+                        "results": [{
+                            "id": "123",
+                            "title": "Roadmap",
+                            "type": "page",
+                            "status": "current",
+                            "space": {"key": "ENG", "name": "Engineering"},
+                            "body": {"storage": {"value": "<p>Raw storage</p>"}},
+                            "version": {"number": 7}
+                        }],
+                        "start": 0,
+                        "limit": 1,
+                        "size": 1
+                    })),
+                )
+                    .into_response();
+            }
+
+            return (
+                StatusCode::OK,
+                Json(json!({"results": [], "start": 0, "limit": 1, "size": 0})),
+            )
+                .into_response();
+        }
+
+        if method == Method::GET && path.starts_with("/rest/api/content/search?") {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [
+                        {
+                            "id": "123",
+                            "title": "Roadmap",
+                            "excerpt": "<p>Planning</p>",
+                            "content": {
+                                "id": "123",
+                                "title": "Roadmap",
+                                "type": "page",
+                                "space": {"key": "ENG", "name": "Engineering"}
+                            },
+                            "space": {"key": "ENG", "name": "Engineering"}
+                        }
+                    ],
+                    "start": 0,
+                    "limit": 10,
+                    "size": 1
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path.starts_with("/rest/api/search/user?") {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [{
+                        "title": "Ada Lovelace",
+                        "entityType": "user",
+                        "score": 0.9,
+                        "user": {
+                            "accountId": "abc",
+                            "displayName": "Ada Lovelace",
+                            "email": "ada@example.com",
+                            "accountStatus": "active",
+                            "profilePicture": {"path": "/avatar/ada.png"}
+                        }
+                    }],
+                    "start": 0,
+                    "limit": 5,
+                    "totalSize": 1,
+                    "cqlQuery": query_value(&path, "cql").unwrap_or_default(),
+                    "searchDuration": 7
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET
+            && (path_only == "/rest/api/group/confluence-users/member"
+                || path_only == "/rest/api/group/confluence%20users/member")
+        {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "results": [
+                        {"username": "ada", "displayName": "Ada Lovelace", "email": "ada@example.com"},
+                        {"username": "grace", "displayName": "Grace Hopper", "email": "grace@example.com"}
+                    ],
+                    "start": 0,
+                    "limit": 200,
+                    "size": 2,
+                    "_links": {}
+                })),
+            )
+                .into_response();
+        }
+        if method == Method::GET && path_only == "/rest/api/analytics/content/123/views" {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "count": 42,
+                    "lastSeen": "2026-06-04T12:00:00Z",
+                    "uniqueViewers": 7
+                })),
+            )
+                .into_response();
+        }
+
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"errorMessages": ["missing"]})),
+        )
+            .into_response()
+    }
+
     async fn mock_jira_server() -> (String, Arc<Mutex<Vec<RecordedRequest>>>) {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let app = Router::new()
             .fallback(any(mock_jira_handler))
             .with_state(MockJiraState {
+                requests: requests.clone(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address: SocketAddr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        (format!("http://{address}"), requests)
+    }
+
+    async fn mock_confluence_server() -> (String, Arc<Mutex<Vec<RecordedRequest>>>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new()
+            .fallback(any(mock_confluence_handler))
+            .with_state(MockConfluenceState {
                 requests: requests.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -4950,6 +7015,2126 @@ mod tests {
     }
 
     #[test]
+    fn confluence_scaffold_routes_are_discoverable_with_registered_metadata() {
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            ..runtime_config()
+        });
+        let names = current_tool_names(&server);
+
+        assert!(names.contains(&confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string()));
+        assert!(names.contains(&confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME.to_string()));
+        assert!(
+            server
+                .get_tool(confluence_tools::CONFLUENCE_GET_SPACE_PAGE_TREE_TOOL_NAME)
+                .is_some()
+        );
+        for name in confluence_tools::STAGE4_CONFLUENCE_TOOL_NAMES {
+            assert!(
+                tool_registry::metadata_for(name).is_some(),
+                "{name} should have registered metadata"
+            );
+        }
+    }
+
+    #[test]
+    fn confluence_default_toolsets_obey_read_only_and_have_client_compatible_schemas() {
+        let read_write = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from([
+                "confluence_pages".to_string(),
+                "confluence_comments".to_string(),
+            ]),
+            ..runtime_config()
+        });
+        let read_only = server_with_config(RuntimeConfig {
+            read_only: true,
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from([
+                "confluence_pages".to_string(),
+                "confluence_comments".to_string(),
+            ]),
+            ..runtime_config()
+        });
+        let read_write_tools = read_write.current_tools_result().tools;
+        let read_write_names = tool_names(read_write_tools.clone());
+        let read_only_names = current_tool_names(&read_only);
+
+        assert!(
+            read_write_names.contains(&confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string())
+        );
+        assert!(
+            read_write_names
+                .contains(&confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME.to_string())
+        );
+        assert!(
+            read_write_names
+                .contains(&confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME.to_string())
+        );
+        assert!(
+            read_only_names.contains(&confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string())
+        );
+        assert!(
+            !read_only_names
+                .contains(&confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME.to_string())
+        );
+        assert!(
+            !read_only_names
+                .contains(&confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME.to_string())
+        );
+        assert_client_compatible_tool_schemas(&read_write_tools);
+    }
+
+    #[test]
+    fn confluence_c2_toolsets_are_exact_at_mcp_boundary() {
+        let read_write = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from([
+                "confluence_pages".to_string(),
+                "confluence_comments".to_string(),
+            ]),
+            ..runtime_config()
+        });
+        let read_only = server_with_config(RuntimeConfig {
+            read_only: true,
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from([
+                "confluence_pages".to_string(),
+                "confluence_comments".to_string(),
+            ]),
+            ..runtime_config()
+        });
+        let unknown_only = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from(["confluence_unknown".to_string()]),
+            ..runtime_config()
+        });
+        let read_write_names = current_tool_names(&read_write);
+        let read_only_names = current_tool_names(&read_only);
+
+        for expected in [
+            confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_PAGE_CHILDREN_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_SPACE_PAGE_TREE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_COMMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME,
+        ] {
+            assert!(
+                read_write_names.contains(&expected.to_string()),
+                "{expected} should be visible in C2 read/write"
+            );
+        }
+        assert!(
+            !read_write_names
+                .contains(&confluence_tools::CONFLUENCE_GET_LABELS_TOOL_NAME.to_string())
+        );
+        for expected in [
+            confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_PAGE_CHILDREN_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_SPACE_PAGE_TREE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_COMMENTS_TOOL_NAME,
+        ] {
+            assert!(
+                read_only_names.contains(&expected.to_string()),
+                "{expected} should remain visible in C2 read-only"
+            );
+        }
+        for blocked in [
+            confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME,
+        ] {
+            assert!(
+                !read_only_names.contains(&blocked.to_string()),
+                "{blocked} should be hidden in C2 read-only"
+            );
+            assert_eq!(
+                read_only
+                    .guard_registered_tool_call(blocked)
+                    .unwrap_err()
+                    .message,
+                "tool is disabled in read-only mode"
+            );
+        }
+        assert_eq!(
+            current_tool_names(&unknown_only),
+            vec![MIGRATION_STATUS_TOOL_NAME.to_string()]
+        );
+        assert!(
+            unknown_only
+                .guard_registered_tool_call(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn confluence_attachments_toolset_obeys_read_only_at_mcp_boundary() {
+        let read_write = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from(["confluence_attachments".to_string()]),
+            ..runtime_config()
+        });
+        let read_only = server_with_config(RuntimeConfig {
+            read_only: true,
+            confluence: Some(confluence_config()),
+            enabled_toolsets: BTreeSet::from(["confluence_attachments".to_string()]),
+            ..runtime_config()
+        });
+        let read_write_tools = read_write.current_tools_result().tools;
+        let read_write_names = tool_names(read_write_tools.clone());
+        let read_only_names = current_tool_names(&read_only);
+
+        for expected in [
+            confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DOWNLOAD_ATTACHMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_PAGE_IMAGES_TOOL_NAME,
+        ] {
+            assert!(
+                read_write_names.contains(&expected.to_string()),
+                "{expected} should be visible for confluence_attachments"
+            );
+        }
+        assert!(
+            !read_write_names.contains(&confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string())
+        );
+
+        for expected in [
+            confluence_tools::CONFLUENCE_GET_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DOWNLOAD_ATTACHMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_GET_PAGE_IMAGES_TOOL_NAME,
+        ] {
+            assert!(
+                read_only_names.contains(&expected.to_string()),
+                "{expected} should remain visible in read-only"
+            );
+        }
+        for blocked in [
+            confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME,
+        ] {
+            assert!(
+                !read_only_names.contains(&blocked.to_string()),
+                "{blocked} should be hidden in read-only"
+            );
+            assert_eq!(
+                read_only
+                    .guard_registered_tool_call(blocked)
+                    .unwrap_err()
+                    .message,
+                "tool is disabled in read-only mode"
+            );
+        }
+        assert_client_compatible_tool_schemas(&read_write_tools);
+    }
+
+    #[test]
+    fn confluence_enabled_tools_filter_and_direct_call_guard_use_registered_metadata() {
+        let unavailable = AtlassianMcpServer::default();
+        let search_only = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config()),
+            enabled_tools: Some(BTreeSet::from([
+                confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string(),
+            ])),
+            ..runtime_config()
+        });
+        let read_only = server_with_config(RuntimeConfig {
+            read_only: true,
+            confluence: Some(confluence_config()),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+
+        assert_eq!(
+            current_tool_names(&search_only),
+            vec![confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string()]
+        );
+        assert!(
+            unavailable
+                .guard_registered_tool_call(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME)
+                .is_err()
+        );
+        assert!(
+            search_only
+                .guard_registered_tool_call(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME)
+                .is_ok()
+        );
+        assert_eq!(
+            read_only
+                .guard_registered_tool_call(confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME)
+                .unwrap_err()
+                .message,
+            "tool is disabled in read-only mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_search_handler_returns_structured_content_from_mock_rest() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_search(Parameters(confluence_tools::ConfluenceSearchArgs {
+                query: "project docs".to_string(),
+                limit: Some(10),
+                spaces_filter: Some("ENG".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["results"][0]["title"], json!("Roadmap"));
+        assert_eq!(structured["results"][0]["space"]["key"], json!("ENG"));
+        assert_eq!(structured["start"], json!(0));
+        assert_eq!(structured["limit"], json!(10));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, Method::GET);
+        assert_eq!(
+            query_value(&requests[0].path, "limit").as_deref(),
+            Some("10")
+        );
+        assert_eq!(
+            query_value(&requests[0].path, "cql").as_deref(),
+            Some(r#"(siteSearch ~ "project docs") AND (space = ENG)"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_search_handler_rejects_invalid_limit_before_http_request() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_search(Parameters(confluence_tools::ConfluenceSearchArgs {
+                query: "project docs".to_string(),
+                limit: Some(51),
+                spaces_filter: None,
+            }))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .message
+                .contains("limit must be less than or equal to 50")
+        );
+        assert_eq!(requests.lock().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_handler_returns_metadata_by_page_id() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page(Parameters(confluence_tools::ConfluenceGetPageArgs {
+                page_id: Some("123".to_string()),
+                title: Some("Ignored".to_string()),
+                space_key: Some("IGN".to_string()),
+                include_metadata: Some(true),
+                convert_to_markdown: Some(true),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["metadata"]["id"], json!("123"));
+        assert_eq!(structured["metadata"]["title"], json!("Roadmap"));
+        assert_eq!(
+            structured["metadata"]["content"],
+            json!("Roadmap Hello & welcome")
+        );
+        assert_eq!(structured["metadata"]["version"]["number"], json!(7));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].path.starts_with("/rest/api/content/123?"));
+        assert!(
+            query_value(&requests[0].path, "expand")
+                .unwrap()
+                .contains("body.storage")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_handler_can_lookup_by_title_and_return_raw_content_only() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page(Parameters(confluence_tools::ConfluenceGetPageArgs {
+                page_id: None,
+                title: Some("Roadmap".to_string()),
+                space_key: Some("ENG".to_string()),
+                include_metadata: Some(false),
+                convert_to_markdown: Some(false),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["content"]["value"], json!("<p>Raw storage</p>"));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].path.starts_with("/rest/api/content?"));
+        assert_eq!(
+            query_value(&requests[0].path, "title").as_deref(),
+            Some("Roadmap")
+        );
+        assert_eq!(
+            query_value(&requests[0].path, "spaceKey").as_deref(),
+            Some("ENG")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_handler_requires_page_id_or_title_and_space_key() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_get_page(Parameters(confluence_tools::ConfluenceGetPageArgs {
+                page_id: None,
+                title: Some("Roadmap".to_string()),
+                space_key: None,
+                include_metadata: None,
+                convert_to_markdown: None,
+            }))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .message
+                .contains("Either page_id OR both title and space_key must be provided")
+        );
+        assert_eq!(requests.lock().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_handler_returns_structured_error_for_missing_page() {
+        let (base_url, _requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let by_id = server
+            .confluence_get_page(Parameters(confluence_tools::ConfluenceGetPageArgs {
+                page_id: Some("missing".to_string()),
+                title: None,
+                space_key: None,
+                include_metadata: None,
+                convert_to_markdown: None,
+            }))
+            .await
+            .unwrap();
+        let by_title = server
+            .confluence_get_page(Parameters(confluence_tools::ConfluenceGetPageArgs {
+                page_id: None,
+                title: Some("Missing".to_string()),
+                space_key: Some("ENG".to_string()),
+                include_metadata: None,
+                convert_to_markdown: None,
+            }))
+            .await
+            .unwrap();
+
+        assert!(
+            by_id.structured_content.as_ref().unwrap()["error"]
+                .as_str()
+                .unwrap()
+                .contains("page not found")
+        );
+        assert!(
+            by_title.structured_content.as_ref().unwrap()["error"]
+                .as_str()
+                .unwrap()
+                .contains("Page with title 'Missing' not found")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_children_handler_returns_pages_and_folders() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page_children(Parameters(
+                confluence_tools::ConfluenceGetPageChildrenArgs {
+                    parent_id: "123".to_string(),
+                    expand: Some("version".to_string()),
+                    limit: Some(2),
+                    include_content: Some(true),
+                    convert_to_markdown: Some(true),
+                    start: Some(0),
+                    include_folders: Some(true),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["parent_id"], json!("123"));
+        assert_eq!(structured["count"], json!(2));
+        assert_eq!(structured["results"][0]["title"], json!("Child page"));
+        assert_eq!(structured["results"][0]["content"], json!("Child body"));
+        assert_eq!(structured["results"][1]["type"], json!("folder"));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert!(
+            requests[0]
+                .path
+                .starts_with("/rest/api/content/123/child/page?")
+        );
+        assert!(
+            requests[1]
+                .path
+                .starts_with("/rest/api/content/123/child/folder?")
+        );
+        assert!(
+            query_value(&requests[0].path, "expand")
+                .unwrap()
+                .contains("body.storage")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_children_handler_rejects_invalid_limit_before_http_request() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_get_page_children(Parameters(
+                confluence_tools::ConfluenceGetPageChildrenArgs {
+                    parent_id: "123".to_string(),
+                    expand: None,
+                    limit: Some(51),
+                    include_content: None,
+                    convert_to_markdown: None,
+                    start: None,
+                    include_folders: None,
+                },
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .message
+                .contains("limit must be less than or equal to 50")
+        );
+        assert_eq!(requests.lock().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn confluence_get_space_page_tree_handler_returns_sorted_flat_tree() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_space_page_tree(Parameters(
+                confluence_tools::ConfluenceGetSpacePageTreeArgs {
+                    space_key: "ENG".to_string(),
+                    limit: Some(2),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["space_key"], json!("ENG"));
+        assert_eq!(structured["total_pages"], json!(2));
+        assert_eq!(structured["has_more"], json!(false));
+        assert_eq!(structured["pages"][0]["id"], json!("100"));
+        assert_eq!(structured["pages"][0]["parent_id"], Value::Null);
+        assert_eq!(structured["pages"][0]["depth"], json!(0));
+        assert_eq!(structured["pages"][1]["parent_id"], json!("100"));
+        assert_eq!(structured["pages"][1]["depth"], json!(1));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            query_value(&requests[0].path, "expand").as_deref(),
+            Some("ancestors")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_space_page_tree_handler_reports_truncation_hint() {
+        let (base_url, _requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_space_page_tree(Parameters(
+                confluence_tools::ConfluenceGetSpacePageTreeArgs {
+                    space_key: "ENG".to_string(),
+                    limit: Some(1),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["total_pages"], json!(1));
+        assert_eq!(structured["has_more"], json!(true));
+        assert_eq!(structured["next_start"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn confluence_get_space_page_tree_handler_rejects_invalid_limit_before_http_request() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_get_space_page_tree(Parameters(
+                confluence_tools::ConfluenceGetSpacePageTreeArgs {
+                    space_key: "ENG".to_string(),
+                    limit: Some(1001),
+                },
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .message
+                .contains("limit must be less than or equal to 1000")
+        );
+        assert_eq!(requests.lock().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn confluence_create_page_handler_posts_storage_payload() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_create_page(Parameters(confluence_tools::ConfluenceCreatePageArgs {
+                space_key: "ENG".to_string(),
+                title: "New page".to_string(),
+                content: "# Heading".to_string(),
+                parent_id: Some("123".to_string()),
+                content_format: Some("markdown".to_string()),
+                enable_heading_anchors: Some(true),
+                include_content: Some(false),
+                emoji: Some("note".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["message"], json!("Page created successfully"));
+        assert_eq!(structured["page"]["id"], json!("900"));
+        assert!(structured["page"].get("content").is_none());
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, Method::POST);
+        assert_eq!(requests[0].path, "/rest/api/content");
+        assert_eq!(requests[0].body["space"]["key"], json!("ENG"));
+        assert_eq!(requests[0].body["ancestors"][0]["id"], json!("123"));
+        assert_eq!(
+            requests[0].body["body"]["storage"]["value"],
+            json!("<h1>Heading</h1>")
+        );
+        assert_eq!(requests[1].method, Method::PUT);
+        assert_eq!(
+            requests[1].path,
+            "/rest/api/content/900/property/emoji-title-published"
+        );
+        assert_eq!(requests[1].body["value"], json!("note"));
+    }
+
+    #[tokio::test]
+    async fn confluence_update_page_handler_increments_version_and_preserves_write_options() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_update_page(Parameters(confluence_tools::ConfluenceUpdatePageArgs {
+                page_id: "123".to_string(),
+                title: "Updated".to_string(),
+                content: "<p>Storage</p>".to_string(),
+                is_minor_edit: Some(true),
+                version_comment: Some("minor update".to_string()),
+                parent_id: Some("100".to_string()),
+                content_format: Some("storage".to_string()),
+                enable_heading_anchors: None,
+                include_content: Some(true),
+                emoji: None,
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["message"], json!("Page updated successfully"));
+        assert_eq!(structured["page"]["title"], json!("Updated"));
+        assert_eq!(structured["page"]["content"], json!("<p>Storage</p>"));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, Method::GET);
+        assert_eq!(requests[1].method, Method::PUT);
+        assert_eq!(requests[1].body["version"]["number"], json!(8));
+        assert_eq!(requests[1].body["version"]["minorEdit"], json!(true));
+        assert_eq!(
+            requests[1].body["version"]["message"],
+            json!("minor update")
+        );
+        assert_eq!(requests[1].body["ancestors"][0]["id"], json!("100"));
+    }
+
+    #[tokio::test]
+    async fn confluence_write_handlers_reject_invalid_content_format_before_http_request() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_create_page(Parameters(confluence_tools::ConfluenceCreatePageArgs {
+                space_key: "ENG".to_string(),
+                title: "New page".to_string(),
+                content: "body".to_string(),
+                parent_id: None,
+                content_format: Some("html".to_string()),
+                enable_heading_anchors: None,
+                include_content: None,
+                emoji: None,
+            }))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .message
+                .contains("content_format must be markdown, wiki, or storage")
+        );
+        assert_eq!(requests.lock().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn confluence_delete_page_handler_returns_success_and_structured_failure() {
+        let (base_url, _requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let success = server
+            .confluence_delete_page(Parameters(confluence_tools::ConfluenceDeletePageArgs {
+                page_id: "123".to_string(),
+            }))
+            .await
+            .unwrap();
+        let failure = server
+            .confluence_delete_page(Parameters(confluence_tools::ConfluenceDeletePageArgs {
+                page_id: "delete-error".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            success.structured_content.as_ref().unwrap()["success"],
+            json!(true)
+        );
+        assert_eq!(
+            failure.structured_content.as_ref().unwrap()["success"],
+            json!(false)
+        );
+        assert!(
+            failure.structured_content.as_ref().unwrap()["error"]
+                .as_str()
+                .unwrap()
+                .contains("delete failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_move_page_handler_updates_parent_or_calls_position_endpoint() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let appended = server
+            .confluence_move_page(Parameters(confluence_tools::ConfluenceMovePageArgs {
+                page_id: "123".to_string(),
+                target_parent_id: Some("100".to_string()),
+                target_space_key: None,
+                position: Some("append".to_string()),
+            }))
+            .await
+            .unwrap();
+        let positioned = server
+            .confluence_move_page(Parameters(confluence_tools::ConfluenceMovePageArgs {
+                page_id: "123".to_string(),
+                target_parent_id: Some("999".to_string()),
+                target_space_key: None,
+                position: Some("above".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            appended.structured_content.as_ref().unwrap()["message"],
+            json!("Page moved successfully")
+        );
+        assert_eq!(
+            positioned.structured_content.as_ref().unwrap()["page"]["id"],
+            json!("123")
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests[1].method, Method::PUT);
+        assert_eq!(requests[1].body["ancestors"][0]["id"], json!("100"));
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.path == "/rest/api/content/123/move/above/999")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_move_page_handler_rejects_invalid_position_before_http_request() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_move_page(Parameters(confluence_tools::ConfluenceMovePageArgs {
+                page_id: "123".to_string(),
+                target_parent_id: Some("100".to_string()),
+                target_space_key: None,
+                position: Some("sideways".to_string()),
+            }))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .message
+                .contains("position must be append, above, or below")
+        );
+        assert_eq!(requests.lock().await.len(), 0);
+    }
+
+    #[test]
+    fn confluence_write_tools_are_blocked_by_read_only_guard() {
+        let read_only = server_with_config(RuntimeConfig {
+            read_only: true,
+            confluence: Some(confluence_config()),
+            ..runtime_config()
+        });
+
+        for name in [
+            confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_ADD_COMMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_ADD_LABEL_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPLOAD_ATTACHMENTS_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME,
+        ] {
+            assert_eq!(
+                read_only
+                    .guard_registered_tool_call(name)
+                    .unwrap_err()
+                    .message,
+                "tool is disabled in read-only mode",
+                "{name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn confluence_get_comments_handler_returns_comment_list_and_empty_list() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_comments(Parameters(confluence_tools::ConfluenceGetCommentsArgs {
+                page_id: "123".to_string(),
+            }))
+            .await
+            .unwrap();
+        let empty = server
+            .confluence_get_comments(Parameters(confluence_tools::ConfluenceGetCommentsArgs {
+                page_id: "empty".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["page_id"], json!("123"));
+        assert_eq!(structured["count"], json!(2));
+        assert_eq!(structured["comments"][0]["body"], json!("First comment"));
+        assert_eq!(
+            structured["comments"][0]["author"]["display_name"],
+            json!("Ada")
+        );
+        assert_eq!(structured["comments"][1]["parent_comment_id"], json!("c-1"));
+        assert_eq!(
+            empty.structured_content.as_ref().unwrap()["count"],
+            json!(0)
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert!(
+            requests[0]
+                .path
+                .starts_with("/rest/api/content/123/child/comment?")
+        );
+        assert!(
+            query_value(&requests[0].path, "expand")
+                .unwrap()
+                .contains("body.storage")
+        );
+        assert_eq!(
+            query_value(&requests[0].path, "depth").as_deref(),
+            Some("all")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_add_and_reply_comment_handlers_post_storage_payloads() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let added = server
+            .confluence_add_comment(Parameters(confluence_tools::ConfluenceAddCommentArgs {
+                page_id: "123".to_string(),
+                body: "# Comment".to_string(),
+            }))
+            .await
+            .unwrap();
+        let replied = server
+            .confluence_reply_to_comment(Parameters(
+                confluence_tools::ConfluenceReplyToCommentArgs {
+                    comment_id: "c-1".to_string(),
+                    body: "Reply body".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let added_structured = added.structured_content.as_ref().unwrap();
+        let replied_structured = replied.structured_content.as_ref().unwrap();
+        assert_eq!(added_structured["success"], json!(true));
+        assert_eq!(added_structured["comment"]["id"], json!("c-1"));
+        assert_eq!(added_structured["comment"]["body"], json!("Comment"));
+        assert_eq!(replied_structured["success"], json!(true));
+        assert_eq!(
+            replied_structured["comment"]["parent_comment_id"],
+            json!("c-1")
+        );
+        assert_eq!(replied_structured["comment"]["body"], json!("Reply body"));
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, Method::POST);
+        assert_eq!(requests[0].path, "/rest/api/content");
+        assert_eq!(requests[0].body["type"], json!("comment"));
+        assert_eq!(requests[0].body["container"]["id"], json!("123"));
+        assert_eq!(requests[0].body["container"]["type"], json!("page"));
+        assert_eq!(
+            requests[0].body["body"]["storage"]["value"],
+            json!("<h1>Comment</h1>")
+        );
+        assert_eq!(requests[1].body["container"]["id"], json!("c-1"));
+        assert_eq!(requests[1].body["container"]["type"], json!("comment"));
+        assert_eq!(
+            requests[1].body["body"]["storage"]["value"],
+            json!("<p>Reply body</p>")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_comment_write_handlers_return_structured_failure() {
+        let (base_url, _requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            ..runtime_config()
+        });
+        let add_failure = server
+            .confluence_add_comment(Parameters(confluence_tools::ConfluenceAddCommentArgs {
+                page_id: "comment-error".to_string(),
+                body: "Comment".to_string(),
+            }))
+            .await
+            .unwrap();
+        let reply_failure = server
+            .confluence_reply_to_comment(Parameters(
+                confluence_tools::ConfluenceReplyToCommentArgs {
+                    comment_id: "reply-error".to_string(),
+                    body: "Reply".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        for result in [add_failure, reply_failure] {
+            let structured = result.structured_content.as_ref().unwrap();
+            assert_eq!(structured["success"], json!(false));
+            assert!(
+                structured["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("comment failed")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn confluence_get_labels_handler_returns_label_list_and_empty_list() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_labels(Parameters(confluence_tools::ConfluenceGetLabelsArgs {
+                page_id: "123".to_string(),
+            }))
+            .await
+            .unwrap();
+        let empty = server
+            .confluence_get_labels(Parameters(confluence_tools::ConfluenceGetLabelsArgs {
+                page_id: "empty-labels".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["content_id"], json!("123"));
+        assert_eq!(structured["count"], json!(2));
+        assert_eq!(structured["labels"][0]["name"], json!("draft"));
+        assert_eq!(structured["labels"][1]["prefix"], json!("my"));
+        assert_eq!(
+            empty.structured_content.as_ref().unwrap()["count"],
+            json!(0)
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, Method::GET);
+        assert_eq!(requests[0].path, "/rest/api/content/123/label");
+        assert_eq!(requests[1].path, "/rest/api/content/empty-labels/label");
+    }
+
+    #[tokio::test]
+    async fn confluence_add_label_handler_posts_label_and_refreshes_list() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_add_label(Parameters(confluence_tools::ConfluenceAddLabelArgs {
+                page_id: "123".to_string(),
+                name: "draft".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["message"], json!("Label added successfully"));
+        assert_eq!(structured["content_id"], json!("123"));
+        assert_eq!(structured["count"], json!(2));
+        assert_eq!(structured["labels"][0]["name"], json!("draft"));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, Method::POST);
+        assert_eq!(requests[0].path, "/rest/api/content/123/label");
+        assert_eq!(requests[0].body[0]["prefix"], json!("global"));
+        assert_eq!(requests[0].body[0]["name"], json!("draft"));
+        assert_eq!(requests[1].method, Method::GET);
+        assert_eq!(requests[1].path, "/rest/api/content/123/label");
+    }
+
+    #[tokio::test]
+    async fn confluence_add_label_handler_returns_error_on_api_failure() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_add_label(Parameters(confluence_tools::ConfluenceAddLabelArgs {
+                page_id: "label-error".to_string(),
+                name: "draft".to_string(),
+            }))
+            .await
+            .unwrap_err();
+
+        assert!(error.message.contains("label failed"));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/rest/api/content/label-error/label");
+    }
+
+    #[tokio::test]
+    async fn confluence_search_user_handler_wraps_simple_query_for_cloud() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_cloud_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_search_user(Parameters(confluence_tools::ConfluenceSearchUserArgs {
+                query: "Ada".to_string(),
+                limit: Some(5),
+                group_name: None,
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["cql_query"], json!("user.fullname ~ \"Ada\""));
+        assert_eq!(structured["count"], json!(1));
+        assert_eq!(structured["results"][0]["title"], json!("Ada Lovelace"));
+        assert_eq!(structured["results"][0]["user"]["active"], json!(true));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].path.starts_with("/rest/api/search/user?"));
+        assert_eq!(
+            query_value(&requests[0].path, "cql").as_deref(),
+            Some("user.fullname ~ \"Ada\"")
+        );
+        assert_eq!(
+            query_value(&requests[0].path, "limit").as_deref(),
+            Some("5")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_search_user_handler_uses_group_member_fallback_on_server() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_search_user(Parameters(confluence_tools::ConfluenceSearchUserArgs {
+                query: "Ada".to_string(),
+                limit: Some(10),
+                group_name: None,
+            }))
+            .await
+            .unwrap();
+        let empty = server
+            .confluence_search_user(Parameters(confluence_tools::ConfluenceSearchUserArgs {
+                query: "Nobody".to_string(),
+                limit: Some(10),
+                group_name: None,
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["group_name"], json!("confluence-users"));
+        assert_eq!(structured["count"], json!(1));
+        assert_eq!(structured["results"][0]["title"], json!("Ada Lovelace"));
+        assert_eq!(
+            empty.structured_content.as_ref().unwrap()["count"],
+            json!(0)
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert!(
+            requests[0]
+                .path
+                .starts_with("/rest/api/group/confluence-users/member?")
+        );
+        assert_eq!(
+            query_value(&requests[0].path, "limit").as_deref(),
+            Some("200")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_search_user_handler_returns_structured_auth_error() {
+        let (base_url, _requests) = mock_confluence_server().await;
+        let mut config = confluence_config_with_base_url(base_url);
+        config.auth = AtlassianAuth::Pat {
+            personal_token: "wrong-token".to_string(),
+        };
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(config),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_search_user(Parameters(confluence_tools::ConfluenceSearchUserArgs {
+                query: "Ada".to_string(),
+                limit: Some(10),
+                group_name: None,
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["success"], json!(false));
+        assert_eq!(structured["status"], json!(401));
+        assert!(
+            structured["error"]
+                .as_str()
+                .unwrap()
+                .contains("Authentication failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_search_user_handler_rejects_invalid_limit_before_http_request() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_search_user(Parameters(confluence_tools::ConfluenceSearchUserArgs {
+                query: "Ada".to_string(),
+                limit: Some(51),
+                group_name: None,
+            }))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .message
+                .contains("limit must be less than or equal to 50")
+        );
+        assert_eq!(requests.lock().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_history_handler_returns_specific_version() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page_history(Parameters(
+                confluence_tools::ConfluenceGetPageHistoryArgs {
+                    page_id: "123".to_string(),
+                    version: 1,
+                    convert_to_markdown: Some(false),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["id"], json!("123"));
+        assert_eq!(structured["status"], json!("historical"));
+        assert_eq!(structured["version"]["number"], json!(1));
+        assert_eq!(
+            structured["content"],
+            json!("<h1>Roadmap</h1><p>Hello team</p>")
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].path.starts_with("/rest/api/content/123?"));
+        assert_eq!(
+            query_value(&requests[0].path, "status").as_deref(),
+            Some("historical")
+        );
+        assert_eq!(
+            query_value(&requests[0].path, "version").as_deref(),
+            Some("1")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_history_handler_rejects_zero_version_before_http_request() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_get_page_history(Parameters(
+                confluence_tools::ConfluenceGetPageHistoryArgs {
+                    page_id: "123".to_string(),
+                    version: 0,
+                    convert_to_markdown: None,
+                },
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(error.message.contains("version must be positive"));
+        assert!(requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_history_handler_surfaces_missing_version_error() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_get_page_history(Parameters(
+                confluence_tools::ConfluenceGetPageHistoryArgs {
+                    page_id: "123".to_string(),
+                    version: 99,
+                    convert_to_markdown: None,
+                },
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(error.message.contains("historical version not found"));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            query_value(&requests[0].path, "version").as_deref(),
+            Some("99")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_diff_handler_returns_deterministic_diff() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page_diff(Parameters(confluence_tools::ConfluenceGetPageDiffArgs {
+                page_id: "123".to_string(),
+                from_version: 1,
+                to_version: 2,
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["page_id"], json!("123"));
+        assert_eq!(structured["title"], json!("Roadmap"));
+        assert_eq!(structured["has_changes"], json!(true));
+        assert_eq!(
+            structured["diff"],
+            json!(
+                "--- v1\n+++ v2\n@@ -1 +1 @@\n-Roadmap Hello team\n+Roadmap Hello team and partners"
+            )
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            query_value(&requests[0].path, "version").as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            query_value(&requests[1].path, "version").as_deref(),
+            Some("2")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_diff_handler_returns_empty_diff_for_same_version() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page_diff(Parameters(confluence_tools::ConfluenceGetPageDiffArgs {
+                page_id: "123".to_string(),
+                from_version: 2,
+                to_version: 2,
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["from_version"], json!(2));
+        assert_eq!(structured["to_version"], json!(2));
+        assert_eq!(structured["diff"], json!(""));
+        assert_eq!(structured["has_changes"], json!(false));
+        assert_eq!(requests.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_diff_handler_rejects_invalid_order_before_http_request() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_get_page_diff(Parameters(confluence_tools::ConfluenceGetPageDiffArgs {
+                page_id: "123".to_string(),
+                from_version: 3,
+                to_version: 2,
+            }))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .message
+                .contains("from_version must be less than or equal to to_version")
+        );
+        assert!(requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_views_handler_returns_cloud_analytics_with_title() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_cloud_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page_views(Parameters(confluence_tools::ConfluenceGetPageViewsArgs {
+                page_id: "123".to_string(),
+                include_title: Some(true),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["page_id"], json!("123"));
+        assert_eq!(structured["page_title"], json!("Roadmap"));
+        assert_eq!(structured["total_views"], json!(42));
+        assert_eq!(structured["unique_viewers"], json!(7));
+        assert_eq!(structured["last_viewed"], json!("2026-06-04T12:00:00Z"));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].path.starts_with("/rest/api/content/123?"));
+        assert_eq!(requests[1].path, "/rest/api/analytics/content/123/views");
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_views_handler_skips_title_lookup_when_disabled() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_cloud_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page_views(Parameters(confluence_tools::ConfluenceGetPageViewsArgs {
+                page_id: "123".to_string(),
+                include_title: Some(false),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert!(structured["page_title"].is_null());
+        assert_eq!(structured["total_views"], json!(42));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/rest/api/analytics/content/123/views");
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_views_handler_returns_unavailable_on_server_without_http() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page_views(Parameters(confluence_tools::ConfluenceGetPageViewsArgs {
+                page_id: "123".to_string(),
+                include_title: Some(true),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["success"], json!(false));
+        assert_eq!(structured["available"], json!(false));
+        assert!(
+            structured["error"]
+                .as_str()
+                .unwrap()
+                .contains("only available for Confluence Cloud")
+        );
+        assert!(requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_views_handler_returns_structured_auth_error() {
+        let (base_url, _requests) = mock_confluence_server().await;
+        let mut config = confluence_cloud_config_with_base_url(base_url);
+        config.auth = AtlassianAuth::Pat {
+            personal_token: "wrong-token".to_string(),
+        };
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(config),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page_views(Parameters(confluence_tools::ConfluenceGetPageViewsArgs {
+                page_id: "123".to_string(),
+                include_title: Some(false),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["success"], json!(false));
+        assert_eq!(structured["status"], json!(401));
+        assert!(
+            structured["error"]
+                .as_str()
+                .unwrap()
+                .contains("Authentication failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_views_handler_rejects_empty_page_id_before_http() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_cloud_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_get_page_views(Parameters(confluence_tools::ConfluenceGetPageViewsArgs {
+                page_id: " ".to_string(),
+                include_title: None,
+            }))
+            .await
+            .unwrap_err();
+
+        assert!(error.message.contains("page_id must not be empty"));
+        assert!(requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn confluence_get_attachments_handler_returns_metadata_page() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_attachments(Parameters(
+                confluence_tools::ConfluenceGetAttachmentsArgs {
+                    content_id: "123".to_string(),
+                    start: Some(0),
+                    limit: Some(2),
+                    filename: None,
+                    media_type: None,
+                },
+            ))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["success"], json!(true));
+        assert_eq!(structured["content_id"], json!("123"));
+        assert_eq!(structured["count"], json!(2));
+        assert_eq!(structured["attachments"][0]["id"], json!("att-1"));
+        assert_eq!(
+            structured["attachments"][0]["media_type"],
+            json!("image/png")
+        );
+        assert_eq!(structured["attachments"][0]["file_size"], json!(42));
+        assert_eq!(
+            structured["attachments"][1]["media_type"],
+            json!("text/plain")
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0]
+                .path
+                .starts_with("/rest/api/content/123/child/attachment?")
+        );
+        assert_eq!(
+            query_value(&requests[0].path, "start").as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            query_value(&requests[0].path, "limit").as_deref(),
+            Some("2")
+        );
+        assert_eq!(
+            query_value(&requests[0].path, "expand").as_deref(),
+            Some("metadata,extensions,version")
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_attachments_handler_handles_empty_and_missing_fields() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let empty = server
+            .confluence_get_attachments(Parameters(
+                confluence_tools::ConfluenceGetAttachmentsArgs {
+                    content_id: "empty-attachments".to_string(),
+                    start: None,
+                    limit: None,
+                    filename: None,
+                    media_type: None,
+                },
+            ))
+            .await
+            .unwrap();
+        let missing_fields = server
+            .confluence_get_attachments(Parameters(
+                confluence_tools::ConfluenceGetAttachmentsArgs {
+                    content_id: "missing-attachment-fields".to_string(),
+                    start: None,
+                    limit: None,
+                    filename: None,
+                    media_type: None,
+                },
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            empty.structured_content.as_ref().unwrap()["count"],
+            json!(0)
+        );
+        let missing = missing_fields.structured_content.as_ref().unwrap();
+        assert_eq!(missing["count"], json!(1));
+        assert_eq!(missing["attachments"][0]["id"], json!("att-min"));
+        assert!(missing["attachments"][0]["title"].is_null());
+        assert!(missing["attachments"][0]["media_type"].is_null());
+        assert_eq!(requests.lock().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn confluence_get_attachments_handler_filters_filename_and_media_type() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let by_filename = server
+            .confluence_get_attachments(Parameters(
+                confluence_tools::ConfluenceGetAttachmentsArgs {
+                    content_id: "123".to_string(),
+                    start: None,
+                    limit: None,
+                    filename: Some("file.png".to_string()),
+                    media_type: None,
+                },
+            ))
+            .await
+            .unwrap();
+        let by_media_type = server
+            .confluence_get_attachments(Parameters(
+                confluence_tools::ConfluenceGetAttachmentsArgs {
+                    content_id: "123".to_string(),
+                    start: None,
+                    limit: None,
+                    filename: None,
+                    media_type: Some("text/plain".to_string()),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let filename = by_filename.structured_content.as_ref().unwrap();
+        assert_eq!(filename["count"], json!(1));
+        assert_eq!(filename["attachments"][0]["title"], json!("file.png"));
+        let media_type = by_media_type.structured_content.as_ref().unwrap();
+        assert_eq!(media_type["count"], json!(1));
+        assert_eq!(media_type["attachments"][0]["title"], json!("notes.txt"));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert!(query_value(&requests[0].path, "filename").is_none());
+        assert!(query_value(&requests[1].path, "media-type").is_none());
+    }
+
+    #[tokio::test]
+    async fn confluence_get_attachments_handler_rejects_invalid_limit_before_http() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let error = server
+            .confluence_get_attachments(Parameters(
+                confluence_tools::ConfluenceGetAttachmentsArgs {
+                    content_id: "123".to_string(),
+                    start: None,
+                    limit: Some(101),
+                    filename: None,
+                    media_type: None,
+                },
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .message
+                .contains("limit must be less than or equal to 100")
+        );
+        assert!(requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn confluence_download_attachment_handler_returns_bounded_base64_content() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_download_attachment(Parameters(
+                confluence_tools::ConfluenceDownloadAttachmentArgs {
+                    attachment_id: "att-1".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["success"], json!(true));
+        assert_eq!(structured["attachment"]["id"], json!("att-1"));
+        assert_eq!(
+            structured["attachment"]["content"],
+            json!({
+                "encoding": "base64",
+                "content_type": "image/png",
+                "size": 11,
+                "data": "aW1hZ2UtYnl0ZXM="
+            })
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].path.starts_with("/rest/api/content/att-1?"));
+        assert_eq!(
+            requests[1].path,
+            "/download/attachments/att-1/file.png?token=secret"
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_download_attachment_handler_reports_metadata_errors_without_fetching() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let no_url = server
+            .confluence_download_attachment(Parameters(
+                confluence_tools::ConfluenceDownloadAttachmentArgs {
+                    attachment_id: "att-no-url".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+        let too_large = server
+            .confluence_download_attachment(Parameters(
+                confluence_tools::ConfluenceDownloadAttachmentArgs {
+                    attachment_id: "att-large".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let no_url = no_url.structured_content.as_ref().unwrap();
+        assert_eq!(no_url["success"], json!(false));
+        assert!(no_url["error"].as_str().unwrap().contains("download URL"));
+        let too_large = too_large.structured_content.as_ref().unwrap();
+        assert_eq!(too_large["success"], json!(false));
+        assert!(
+            too_large["error"]
+                .as_str()
+                .unwrap()
+                .contains("exceeds the inline limit")
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.path.contains("/download/"))
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_download_attachment_handler_rejects_stream_limit_and_cross_origin_url() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let stream_too_large = server
+            .confluence_download_attachment(Parameters(
+                confluence_tools::ConfluenceDownloadAttachmentArgs {
+                    attachment_id: "att-stream-large".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+        let cross_origin = server
+            .confluence_download_attachment(Parameters(
+                confluence_tools::ConfluenceDownloadAttachmentArgs {
+                    attachment_id: "att-cross".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let stream_too_large = stream_too_large.structured_content.as_ref().unwrap();
+        assert_eq!(stream_too_large["success"], json!(false));
+        assert!(
+            stream_too_large["error"]
+                .as_str()
+                .unwrap()
+                .contains("exceeds configured limit")
+        );
+        let cross_origin = cross_origin.structured_content.as_ref().unwrap();
+        assert_eq!(cross_origin["success"], json!(false));
+        assert!(
+            cross_origin["error"]
+                .as_str()
+                .unwrap()
+                .contains("configured Atlassian base origin")
+        );
+        assert!(
+            !cross_origin["error"]
+                .as_str()
+                .unwrap()
+                .contains("token=secret")
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 3);
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.path == "/download/attachments/att-stream-large/large.bin")
+        );
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.path.contains("other.example"))
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_download_content_attachments_handler_returns_partial_failure_summary() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_download_content_attachments(Parameters(
+                confluence_tools::ConfluenceDownloadContentAttachmentsArgs {
+                    content_id: "download-batch".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["success"], json!(true));
+        assert_eq!(structured["summary"]["total"], json!(3));
+        assert_eq!(structured["summary"]["downloaded"], json!(1));
+        assert_eq!(structured["summary"]["failed"], json!(2));
+        assert_eq!(structured["attachments"][0]["id"], json!("att-1"));
+        assert_eq!(structured["failed"].as_array().unwrap().len(), 2);
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert!(
+            requests[0]
+                .path
+                .starts_with("/rest/api/content/download-batch/child/attachment?")
+        );
+        assert_eq!(
+            requests[1].path,
+            "/download/attachments/att-1/file.png?token=secret"
+        );
+    }
+
+    #[tokio::test]
+    async fn confluence_get_page_images_handler_filters_non_images_and_uses_extension_fallback() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let result = server
+            .confluence_get_page_images(Parameters(confluence_tools::ConfluenceGetPageImagesArgs {
+                content_id: "images".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["success"], json!(true));
+        assert_eq!(structured["images_only"], json!(true));
+        assert_eq!(structured["count"], json!(2));
+        assert_eq!(structured["skipped_non_images"], json!(1));
+        assert_eq!(structured["images"][0]["id"], json!("att-1"));
+        assert_eq!(
+            structured["images"][0]["resolved_mime_type"],
+            json!("image/png")
+        );
+        assert_eq!(structured["images"][1]["id"], json!("att-octet-image"));
+        assert_eq!(
+            structured["images"][1]["resolved_mime_type"],
+            json!("image/jpeg")
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 3);
+        assert!(
+            requests[0]
+                .path
+                .starts_with("/rest/api/content/images/child/attachment?")
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.path == "/download/attachments/att-1/file.png?token=secret")
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.path == "/download/attachments/att-octet-image/photo.jpg")
+        );
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.path.contains("notes.txt"))
+        );
+    }
+
+    fn temp_confluence_upload_file(filename: &str, content: &[u8]) -> String {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("mcp-atlassian-rs-{nonce}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(filename);
+        std::fs::write(&path, content).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn remove_temp_confluence_upload_file(file_path: &str) {
+        let path = std::path::Path::new(file_path);
+        let parent = path.parent().map(ToOwned::to_owned);
+        let _ = std::fs::remove_file(path);
+        if let Some(parent) = parent {
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+
+    #[tokio::test]
+    async fn confluence_upload_attachment_handler_sends_local_file_as_multipart() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let file_path = temp_confluence_upload_file("upload.txt", b"hello");
+        let result = server
+            .confluence_upload_attachment(Parameters(
+                confluence_tools::ConfluenceUploadAttachmentArgs {
+                    content_id: "123".to_string(),
+                    file_path: file_path.clone(),
+                    comment: Some("Initial upload".to_string()),
+                    minor_edit: Some(true),
+                },
+            ))
+            .await
+            .unwrap();
+        remove_temp_confluence_upload_file(&file_path);
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["success"], json!(true));
+        assert_eq!(structured["filename"], json!("upload.txt"));
+        assert_eq!(structured["minor_edit"], json!(true));
+        assert_eq!(structured["attachment"]["title"], json!("upload.txt"));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, Method::PUT);
+        assert_eq!(requests[0].path, "/rest/api/content/123/child/attachment");
+        let body = requests[0].body.as_str().unwrap();
+        assert!(body.contains("name=\"file\"; filename=\"upload.txt\""));
+        assert!(body.contains("hello"));
+        assert!(body.contains("name=\"comment\""));
+        assert!(body.contains("Initial upload"));
+        assert!(body.contains("name=\"minorEdit\""));
+        assert!(body.contains("true"));
+        assert!(!body.contains(&file_path));
+    }
+
+    #[tokio::test]
+    async fn confluence_upload_attachments_handler_returns_partial_success_summary() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let ok_path = temp_confluence_upload_file("batch-1.txt", b"batch");
+        let missing_path = std::env::temp_dir()
+            .join("mcp-atlassian-rs-missing-upload.txt")
+            .to_string_lossy()
+            .into_owned();
+        let result = server
+            .confluence_upload_attachments(Parameters(
+                confluence_tools::ConfluenceUploadAttachmentsArgs {
+                    content_id: "123".to_string(),
+                    file_paths: format!("{ok_path}, {missing_path}"),
+                    comment: Some("Batch upload".to_string()),
+                    minor_edit: Some(false),
+                },
+            ))
+            .await
+            .unwrap();
+        remove_temp_confluence_upload_file(&ok_path);
+
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["success"], json!(false));
+        assert_eq!(structured["partial_success"], json!(true));
+        assert_eq!(structured["summary"]["total"], json!(2));
+        assert_eq!(structured["summary"]["uploaded"], json!(1));
+        assert_eq!(structured["summary"]["failed"], json!(1));
+        assert_eq!(
+            structured["attachments"][0]["filename"],
+            json!("batch-1.txt")
+        );
+        assert_eq!(
+            structured["failed"][0]["filename"],
+            json!("mcp-atlassian-rs-missing-upload.txt")
+        );
+        assert!(
+            structured["failed"][0]["error"]
+                .as_str()
+                .unwrap()
+                .contains("failed to read local file")
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/rest/api/content/123/child/attachment");
+    }
+
+    #[tokio::test]
+    async fn confluence_delete_attachment_handler_returns_structured_success_and_failure() {
+        let (base_url, requests) = mock_confluence_server().await;
+        let server = server_with_config(RuntimeConfig {
+            confluence: Some(confluence_config_with_base_url(base_url)),
+            enabled_toolsets: tool_registry::all_toolsets(),
+            ..runtime_config()
+        });
+        let success = server
+            .confluence_delete_attachment(Parameters(
+                confluence_tools::ConfluenceDeleteAttachmentArgs {
+                    attachment_id: "att-1".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+        let failure = server
+            .confluence_delete_attachment(Parameters(
+                confluence_tools::ConfluenceDeleteAttachmentArgs {
+                    attachment_id: "att-delete-error".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let success = success.structured_content.as_ref().unwrap();
+        assert_eq!(success["success"], json!(true));
+        assert_eq!(success["attachment_id"], json!("att-1"));
+        let failure = failure.structured_content.as_ref().unwrap();
+        assert_eq!(failure["success"], json!(false));
+        assert_eq!(failure["attachment_id"], json!("att-delete-error"));
+        assert!(
+            failure["error"]
+                .as_str()
+                .unwrap()
+                .contains("delete attachment failed")
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, Method::DELETE);
+        assert_eq!(requests[0].path, "/rest/api/content/att-1");
+        assert_eq!(requests[1].method, Method::DELETE);
+        assert_eq!(requests[1].path, "/rest/api/content/att-delete-error");
+    }
+
+    #[test]
     fn tool_discovery_applies_enabled_tools_filter_to_migration_status() {
         let server = server_with_config(RuntimeConfig {
             enabled_tools: Some(BTreeSet::from(["some_other_tool".to_string()])),
@@ -4996,7 +9181,7 @@ mod tests {
         let unavailable = AtlassianMcpServer::default();
         let available = server_with_config(RuntimeConfig {
             jira: Some(jira_config()),
-            confluence_url: Some("https://confluence.example".to_string()),
+            confluence: Some(confluence_config()),
             ..runtime_config()
         });
         let jira_fields_only = server_with_config(RuntimeConfig {
