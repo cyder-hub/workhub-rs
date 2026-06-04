@@ -35,6 +35,18 @@ smoke-confluence:
 # Run all local MCP smoke checks.
 smoke: smoke-stdio smoke-http smoke-jira smoke-confluence
 
+# Run real Jira acceptance checks.
+acceptance-jira:
+	cd '{{justfile_directory()}}' && bash scripts/acceptance-jira.sh
+
+# Run real Confluence acceptance checks.
+acceptance-confluence:
+	cd '{{justfile_directory()}}' && bash scripts/acceptance-confluence.sh
+
+# Run real dual-service MCP acceptance checks.
+acceptance-mcp:
+	cd '{{justfile_directory()}}' && bash scripts/acceptance-mcp.sh
+
 # Build the release binary.
 build:
 	cd '{{justfile_directory()}}' && cargo build --release

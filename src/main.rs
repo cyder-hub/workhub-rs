@@ -1,3 +1,4 @@
+mod acceptance;
 mod atlassian;
 mod config;
 mod confluence;
@@ -31,10 +32,12 @@ const USAGE: &str = "\
 Usage:
   mcp-atlassian-rs [stdio]
   mcp-atlassian-rs streamhttp [--host <host>] [--port <port>] [--path <path>]
+  mcp-atlassian-rs acceptance <jira|confluence|mcp> (--preflight | --run <binary>) [--env-file <path>]
 
 Commands:
   stdio       Run the MCP server over standard input/output.
   streamhttp  Run the MCP server over streamable HTTP.
+  acceptance  Run Stage 5 acceptance checks from the Rust binary.
 
 Defaults:
   host  127.0.0.1
@@ -46,6 +49,7 @@ Defaults:
 enum RunMode {
     Stdio,
     StreamHttp(HttpConfigOverrides),
+    Acceptance(acceptance::AcceptanceCommand),
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -69,6 +73,14 @@ async fn main() -> AppResult<()> {
         }
     };
 
+    if let RunMode::Acceptance(command) = mode {
+        let exit_code = acceptance::run(command).await?;
+        if exit_code != 0 {
+            std::process::exit(exit_code);
+        }
+        return Ok(());
+    }
+
     let runtime_config = match mode.http_overrides() {
         Some(overrides) => config::RuntimeConfig::from_env_with_http_overrides(overrides)?,
         None => config::RuntimeConfig::from_env()?,
@@ -81,6 +93,7 @@ async fn main() -> AppResult<()> {
     match mode {
         RunMode::Stdio => run_stdio(context).await?,
         RunMode::StreamHttp(_) => run_streamhttp(runtime_config.http, context).await?,
+        RunMode::Acceptance(_) => unreachable!("acceptance mode returns before runtime startup"),
     }
 
     Ok(())
@@ -105,6 +118,7 @@ impl RunMode {
         match self {
             Self::Stdio => None,
             Self::StreamHttp(overrides) => Some(overrides.clone()),
+            Self::Acceptance(_) => None,
         }
     }
 }
@@ -183,6 +197,9 @@ where
         Some("stdio") if args.len() <= 1 => Ok(RunMode::Stdio),
         Some("stdio") => Err(format!("unexpected argument for stdio: `{}`", args[1])),
         Some("streamhttp") => parse_streamhttp_args(&args[1..]).map(RunMode::StreamHttp),
+        Some("acceptance") => {
+            acceptance::parse_acceptance_args(&args[1..]).map(RunMode::Acceptance)
+        }
         Some(command) => Err(format!("unknown command `{command}`")),
     }
 }
@@ -306,6 +323,7 @@ mod tests {
             merge_http(match mode {
                 RunMode::StreamHttp(overrides) => overrides,
                 RunMode::Stdio => unreachable!("test parsed streamhttp"),
+                RunMode::Acceptance(_) => unreachable!("test parsed streamhttp"),
             }),
             config::HttpConfig {
                 host: "0.0.0.0".to_string(),

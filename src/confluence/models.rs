@@ -1,11 +1,24 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 use serde_json::{Value, json};
 
 use crate::confluence::formatting::{body_value_as_markdown, body_value_as_storage};
 
+fn optional_string_or_number<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Option::<Value>::deserialize(deserializer)? {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value)),
+        Some(Value::Number(value)) => Ok(Some(value.to_string())),
+        _ => Err(D::Error::custom("expected string, number, or null")),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfluencePage {
+    #[serde(default, deserialize_with = "optional_string_or_number")]
     pub id: Option<String>,
     pub title: Option<String>,
     #[serde(rename = "type")]
@@ -55,6 +68,7 @@ impl ConfluencePage {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfluencePageSummary {
+    #[serde(default, deserialize_with = "optional_string_or_number")]
     pub id: Option<String>,
     pub title: Option<String>,
     #[serde(rename = "type")]
@@ -98,6 +112,7 @@ pub struct ConfluencePageListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfluenceSpace {
+    #[serde(default, deserialize_with = "optional_string_or_number")]
     pub id: Option<String>,
     pub key: Option<String>,
     pub name: Option<String>,
@@ -180,6 +195,7 @@ impl ConfluenceSearchResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfluenceSearchResult {
+    #[serde(default, deserialize_with = "optional_string_or_number")]
     pub id: Option<String>,
     pub title: Option<String>,
     pub excerpt: Option<String>,
@@ -208,6 +224,7 @@ impl ConfluenceSearchResult {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfluenceComment {
+    #[serde(default, deserialize_with = "optional_string_or_number")]
     pub id: Option<String>,
     pub title: Option<String>,
     #[serde(rename = "type")]
@@ -220,6 +237,7 @@ pub struct ConfluenceComment {
     pub author: Value,
     pub created: Option<String>,
     pub updated: Option<String>,
+    #[serde(default, deserialize_with = "optional_string_or_number")]
     pub parent_comment_id: Option<String>,
     #[serde(default)]
     pub ancestors: Vec<ConfluencePageSummary>,
@@ -285,6 +303,7 @@ pub struct ConfluenceCommentListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfluenceLabel {
+    #[serde(default, deserialize_with = "optional_string_or_number")]
     pub id: Option<String>,
     pub name: Option<String>,
     pub prefix: Option<String>,
@@ -450,6 +469,7 @@ pub struct ConfluenceUserListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfluenceAttachment {
+    #[serde(default, deserialize_with = "optional_string_or_number")]
     pub id: Option<String>,
     pub title: Option<String>,
     #[serde(rename = "type")]
@@ -517,6 +537,7 @@ pub struct ConfluencePageViews {
     pub count: Option<u64>,
     pub last_seen: Option<String>,
     pub unique_viewers: Option<u64>,
+    #[serde(default, deserialize_with = "optional_string_or_number")]
     pub page_id: Option<String>,
     pub title: Option<String>,
     #[serde(flatten)]
@@ -579,6 +600,42 @@ mod tests {
         assert_eq!(simplified["space"]["key"], "ENG");
         assert_eq!(simplified["version"]["number"], 2);
         assert_eq!(simplified["content"], "Hello");
+    }
+
+    #[test]
+    fn confluence_ids_accept_numbers_from_cloud_responses() {
+        let page: ConfluencePage = serde_json::from_value(json!({
+            "id": 123,
+            "title": "Numeric ids",
+            "space": {"id": 10, "key": "ENG"},
+            "ancestors": [{"id": 99, "title": "Parent"}]
+        }))
+        .unwrap();
+        let page = page.to_simplified_value(false);
+
+        assert_eq!(page["id"], "123");
+        assert_eq!(page["space"]["id"], "10");
+        assert_eq!(page["ancestors"][0]["id"], "99");
+
+        let comment: ConfluenceComment = serde_json::from_value(json!({
+            "id": 456,
+            "parentCommentId": 455,
+            "container": {"id": 123, "type": "page"}
+        }))
+        .unwrap();
+        let comment = comment.to_simplified_value();
+
+        assert_eq!(comment["id"], "456");
+        assert_eq!(comment["parent_comment_id"], "455");
+
+        let attachment: ConfluenceAttachment = serde_json::from_value(json!({
+            "id": 789,
+            "title": "probe.txt"
+        }))
+        .unwrap();
+        let attachment = attachment.to_simplified_value();
+
+        assert_eq!(attachment["id"], "789");
     }
 
     #[test]

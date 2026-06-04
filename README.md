@@ -2,7 +2,7 @@
 
 Rust migration workspace for MCP Atlassian.
 
-This repository is migrating the Python `mcp-atlassian` Jira and Confluence MCP server to a Rust-native implementation. The Rust binary currently has the shared MCP runtime/control plane, 49 Jira business tools, and 24 Confluence business tools implemented with local mock REST and MCP smoke coverage. Real Jira/Confluence validation and production auth/security remain later stages.
+This repository is migrating the Python `mcp-atlassian` Jira and Confluence MCP server to a Rust-native implementation. The Rust binary currently has the shared MCP runtime/control plane, 49 Jira business tools, and 24 Confluence business tools implemented with local mock REST and MCP smoke coverage. Stage 5 integrated acceptance has also validated representative real Jira, real Confluence, dual-service MCP, release, Docker, and compose paths; production auth/security remains a later stage.
 
 ## Current Status
 
@@ -22,15 +22,28 @@ Implemented in the Rust root project:
 - Stage 4 Confluence implementation has local mock coverage for config/auth/client/models and all 24 Confluence tools, including pages/comments/labels/users/history/diff/analytics/attachments.
 - Streamable HTTP exposes `GET /healthz`.
 - Local stdio, streamable HTTP, and read-only smoke commands validate MCP initialization, Jira and Confluence tool discovery, mock read calls, `/healthz`, and write-tool blocking.
+- Stage 5 local gate passed `cargo fmt --check`, `cargo check`, `cargo test`, local stdio/HTTP/Jira/Confluence smokes, release build, Docker build, compose config, and compose `/healthz` smoke.
+- Stage 5 real acceptance passed Jira core read paths, Jira Agile board lookup, SLA read, development-info single/batch paths, Confluence page/comment/label/analytics/attachment representative paths, and dual-service MCP stdio/HTTP representative calls.
 - The temporary MCP tool `migration_status` reports the migration state.
 
 Deferred:
 
-- `confluence_get_page_views` is Cloud-only. Confluence Server/Data Center returns a structured unavailable response; real Cloud analytics validation remains a Stage 5 gate.
-- Real Jira validation for Stage 3 product-dependent Jira extensions. Local mock coverage is complete, but Jira Software, Jira Service Management, Forms/ProForma, SLA, and dev-status behavior remain Stage 5 validation gates.
+- `confluence_get_page_views` is Cloud-only. Confluence Server/Data Center returns a structured unavailable response; Stage 5 validated the Cloud representative path.
+- Jira Service Management and Forms/ProForma remain objectively blocked in the Stage 5 test tenant: JSM service desk lookup returned 403, and the current Forms client path did not receive an effective Forms API response. These toolsets are implemented with local mock/product-dependency coverage but are not documented as real-accepted.
+- `confluence_search_user` is implemented with local mock coverage. Stage 5 did not include a dedicated real user-search row, so it remains local-validated only.
 - OAuth, BYOT, per-request HTTP header auth, SSRF protections, allowed domains, proxy/custom headers, mTLS, and full production security hardening.
-- Real Jira and Confluence smoke tests. They are Stage 5 integrated acceptance gates.
-- Release, Docker, compose, Helm, and parity audit gates beyond the local mock checks.
+- Release pipeline, Helm, production deployment docs, parity audit, and long-term support matrix finalization remain Stage 7 work. Stage 5 only validated the local release binary, local Docker build, compose config, and a compose `/healthz` smoke.
+
+## Stage 5 Gate Result
+
+| Area | Stage 5 result |
+| --- | --- |
+| Local Rust regression | Passed: format, check, tests, local stdio/HTTP smoke, Jira read-only smoke, Confluence smoke, aggregate smoke. |
+| Release/container | Passed: release build, Docker image build, compose config, compose startup, and `/healthz` smoke. |
+| Real Jira core | Passed: issue read, JQL search, project issue search, field search/options, watchers read, and read-only write guards. |
+| Real Jira product paths | Passed for Agile board lookup, SLA read, and development single/batch reads. JSM is blocked by 403 in the test tenant; Forms/ProForma is blocked by product/interface availability. |
+| Real Confluence | Passed for search, page read, children/tree, comments, test-object create/update, add/reply comment, labels, Cloud page views, attachments list/download/content/images/upload/batch upload, and read-only delete/move/delete-attachment guards. `confluence_search_user` was not separately real-executed. |
+| Dual-service MCP | Passed for stdio and streamable HTTP discovery and representative Jira/Confluence read calls, including `TOOLSETS=default` and `READ_ONLY_MODE=true` samples. |
 
 ## Requirements
 
@@ -79,7 +92,8 @@ Jira Cloud:
 ```bash
 export JIRA_URL="https://your-company.atlassian.net"
 export JIRA_USERNAME="user@example.com"
-export JIRA_API_TOKEN="<jira-api-token>"
+# Set JIRA_API_TOKEN in your local shell, secret manager, or uncommitted dotenv file.
+export JIRA_API_TOKEN
 cargo run -- stdio
 ```
 
@@ -87,7 +101,8 @@ Jira Server/Data Center:
 
 ```bash
 export JIRA_URL="https://jira.example.com"
-export JIRA_PERSONAL_TOKEN="<jira-personal-access-token>"
+# Set JIRA_PERSONAL_TOKEN in your local shell, secret manager, or uncommitted dotenv file.
+export JIRA_PERSONAL_TOKEN
 cargo run -- stdio
 ```
 
@@ -100,7 +115,7 @@ Optional Jira variables:
 | `JIRA_TIMEOUT` | `75` | Jira HTTP request timeout in seconds. Must be a positive integer. |
 | `ATLASSIAN_OAUTH_CLOUD_ID` | unset | Optional Cloud ID used by Jira Forms/ProForma helpers. Missing values return a structured product-dependency response. |
 
-Stage 3 does not implement OAuth, BYOT, or per-request Authorization overrides.
+The current Rust implementation does not implement OAuth, BYOT, or per-request Authorization overrides. Those production auth/security capabilities are deferred to Stage 6.
 
 ## Confluence Configuration
 
@@ -111,7 +126,8 @@ Confluence Cloud:
 ```bash
 export CONFLUENCE_URL="https://your-company.atlassian.net/wiki"
 export CONFLUENCE_USERNAME="user@example.com"
-export CONFLUENCE_API_TOKEN="<confluence-api-token>"
+# Set CONFLUENCE_API_TOKEN in your local shell, secret manager, or uncommitted dotenv file.
+export CONFLUENCE_API_TOKEN
 cargo run -- stdio
 ```
 
@@ -119,7 +135,8 @@ Confluence Server/Data Center:
 
 ```bash
 export CONFLUENCE_URL="https://confluence.example.com"
-export CONFLUENCE_PERSONAL_TOKEN="<confluence-personal-access-token>"
+# Set CONFLUENCE_PERSONAL_TOKEN in your local shell, secret manager, or uncommitted dotenv file.
+export CONFLUENCE_PERSONAL_TOKEN
 cargo run -- stdio
 ```
 
@@ -131,7 +148,7 @@ Optional Confluence variables:
 | `CONFLUENCE_SPACES_FILTER` | unset | Comma-separated space keys. Applies to Confluence search when the tool call does not provide `spaces_filter`; an explicit empty `spaces_filter` disables the env filter. |
 | `CONFLUENCE_TIMEOUT` | `75` | Confluence HTTP request timeout in seconds. Must be a positive integer. |
 
-Stage 4 does not implement OAuth, BYOT, per-request Authorization overrides, proxy/custom headers, mTLS, or SSRF policy. Those production auth/security capabilities are deferred to Stage 6.
+The current Rust implementation does not implement OAuth, BYOT, per-request Authorization overrides, proxy/custom headers, mTLS, or SSRF policy. Those production auth/security capabilities are deferred to Stage 6.
 
 ## Confluence Content Conversion Boundary
 
@@ -172,7 +189,7 @@ The Rust server exposes these Stage 2 Jira core tools when Jira is configured:
 | `jira_get_transitions` | read | `jira_transitions` |
 | `jira_transition_issue` | write | `jira_transitions` |
 
-The Rust server also exposes these Stage 3 Jira extension tools when Jira is configured. These are locally validated with mock Jira; real Jira acceptance remains deferred to Stage 5.
+The Rust server also exposes these Stage 3 Jira extension tools when Jira is configured. These are locally validated with mock Jira. Stage 5 real acceptance passed representative Jira core, Agile, SLA, and development paths; Jira Service Management and Forms/ProForma remain objectively blocked as described above.
 
 | Tool | Access | Toolset |
 | --- | --- | --- |
@@ -217,7 +234,7 @@ The Rust server also exposes these Stage 3 Jira extension tools when Jira is con
 | `jira_get_issue_development_info` | read | `jira_development` |
 | `jira_get_issues_development_info` | read | `jira_development` |
 
-The Rust server also exposes these Stage 4 Confluence tools when Confluence is configured. These are locally validated with mock Confluence; real Confluence acceptance remains deferred to Stage 5.
+The Rust server also exposes these Stage 4 Confluence tools when Confluence is configured. These are locally validated with mock Confluence. Stage 5 real acceptance passed representative pages, comments, labels, analytics, and attachments paths on test objects; `confluence_search_user` remains local-validated only.
 
 | Tool | Access | Toolset |
 | --- | --- | --- |
@@ -266,6 +283,9 @@ just smoke-http        # validate /healthz, HTTP MCP tools/list, and mock Jira j
 just smoke-jira        # validate read-only Jira write-tool hiding and blocking
 just smoke-confluence  # validate mock Confluence stdio, HTTP, and read-only write blocking
 just smoke             # run all local smoke checks
+just acceptance-jira        # run real Jira acceptance using .env.dev by default
+just acceptance-confluence  # run real Confluence acceptance using .env.dev by default
+just acceptance-mcp         # run real dual-service MCP acceptance using .env.dev by default
 just build             # build the release binary
 just test              # run tests
 just check             # fmt, check, and tests
@@ -306,6 +326,8 @@ docker compose up --build
 
 Set `MCP_PORT` to change the host port used by compose.
 
+Stage 5 validated `just docker-build`, compose config, compose startup, and `GET /healthz` with `MCP_PORT=18080`. Stage 7 still owns release-grade image tags, publishing, Helm, and long-term deployment documentation.
+
 ## Verification
 
 Local checks:
@@ -320,9 +342,14 @@ just smoke-http
 just smoke-jira
 just smoke-confluence
 just smoke
+just acceptance-jira
+just acceptance-confluence
+just acceptance-mcp
 ```
 
-The smoke commands start local mock Jira and Confluence servers and do not require real Atlassian credentials. Real Jira and Confluence validation is intentionally deferred to the Stage 5 integrated acceptance gate.
+The smoke commands start local mock Jira and Confluence servers and do not require real Atlassian credentials.
+
+Real acceptance wrappers read `.env.dev` by default; set `ACCEPTANCE_ENV_FILE` to use another dotenv file. Do not store real token values in committed files or task records. Real acceptance requires only test objects, not production business objects. Common test-object variables include `JIRA_READ_ISSUE`, `JIRA_PROJECT_KEY`, `JIRA_FIELD_ID`, `JIRA_FIELD_CONTEXT_ID`, `JIRA_SERVICE_DESK_ID`, `JIRA_QUEUE_ID`, `JIRA_FORM_ID`, `CONFLUENCE_SEARCH_QUERY`, `CONFLUENCE_PAGE_ID`, `CONFLUENCE_SPACE_KEY`, `CONFLUENCE_TEST_PAGE_PREFIX`, `CONFLUENCE_MUTATION_PAGE_ID`, `CONFLUENCE_COMMENT_ID`, `CONFLUENCE_ATTACHMENT_ID`, `CONFLUENCE_ATTACHMENT_FILE`, and `CONFLUENCE_LABEL_NAME`.
 
 ## License
 
