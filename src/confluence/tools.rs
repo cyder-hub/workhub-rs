@@ -51,6 +51,7 @@ pub const CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_TOOL_NAME: &str =
 pub const CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME: &str = "confluence_delete_attachment";
 pub const CONFLUENCE_GET_PAGE_IMAGES_TOOL_NAME: &str = "confluence_get_page_images";
 
+#[cfg(test)]
 pub const STAGE4_CONFLUENCE_TOOL_NAMES: &[&str] = &[
     CONFLUENCE_SEARCH_TOOL_NAME,
     CONFLUENCE_GET_PAGE_TOOL_NAME,

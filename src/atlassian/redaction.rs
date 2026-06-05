@@ -1,10 +1,13 @@
+#[cfg(test)]
 use std::collections::BTreeMap;
 
+#[cfg(test)]
 use reqwest::{Url, header::HeaderMap};
 
 pub const REDACTED: &str = "<redacted>";
 const MIN_SECRET_LENGTH: usize = 4;
 
+#[cfg(test)]
 pub const SENSITIVE_HEADER_NAMES: &[&str] = &[
     "authorization",
     "cookie",
@@ -49,6 +52,7 @@ where
     redacted
 }
 
+#[cfg(test)]
 pub fn redact_url(value: &str) -> String {
     let Ok(mut url) = Url::parse(value) else {
         return redact_text(value);
@@ -81,6 +85,7 @@ pub fn redact_url(value: &str) -> String {
     url.to_string()
 }
 
+#[cfg(test)]
 pub fn redact_header_map(headers: &HeaderMap) -> BTreeMap<String, String> {
     headers
         .iter()
@@ -94,6 +99,7 @@ pub fn redact_header_map(headers: &HeaderMap) -> BTreeMap<String, String> {
         .collect()
 }
 
+#[cfg(test)]
 pub fn redact_header_value(name: &str, value: &str) -> String {
     let name = name.trim().to_ascii_lowercase();
     if !is_sensitive_header_name(&name) {
@@ -127,6 +133,7 @@ pub fn current_env_secret_values() -> Vec<String> {
     env_secret_values_from_pairs(std::env::vars())
 }
 
+#[cfg(test)]
 pub fn is_sensitive_header_name(name: &str) -> bool {
     let name = name.trim().to_ascii_lowercase();
     SENSITIVE_HEADER_NAMES.contains(&name.as_str())
@@ -148,6 +155,7 @@ fn is_redactable_secret_value(value: &str) -> bool {
     value.trim().chars().count() >= MIN_SECRET_LENGTH
 }
 
+#[cfg(test)]
 fn redact_authorization_value(value: &str) -> String {
     for scheme in ["Bearer", "Token", "Basic"] {
         if value

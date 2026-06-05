@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the leading v, matching Cargo.toml"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  artifact:
+    name: Linux release artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust 1.94
+        shell: bash
+        run: |
+          rustup toolchain install 1.94.0 --profile minimal --component rustfmt
+          rustup default 1.94.0
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-release-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-cargo-
+
+      - name: Verify release version
+        shell: bash
+        run: |
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [[ -z "$cargo_version" ]]; then
+            echo "Cargo.toml package.version not found" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            release_version="${GITHUB_REF_NAME#v}"
+          else
+            release_version="${{ github.event.inputs.version }}"
+          fi
+
+          if [[ "$release_version" != "$cargo_version" ]]; then
+            echo "release version $release_version does not match Cargo.toml version $cargo_version" >&2
+            exit 1
+          fi
+
+          if ! grep -q "^## ${cargo_version}" CHANGELOG.md; then
+            echo "CHANGELOG.md is missing ## ${cargo_version}" >&2
+            exit 1
+          fi
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Check MCP server without warnings
+        run: RUSTFLAGS="-Dwarnings" cargo check
+
+      - name: Test MCP server
+        run: cargo test
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package release binary
+        shell: bash
+        run: |
+          mkdir -p dist/package
+          cp target/release/mcp-atlassian-rs dist/package/mcp-atlassian-rs
+          tar -C dist/package -czf dist/mcp-atlassian-rs-linux-x86_64.tar.gz mcp-atlassian-rs
+          sha256sum dist/mcp-atlassian-rs-linux-x86_64.tar.gz > dist/mcp-atlassian-rs-linux-x86_64.tar.gz.sha256
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-atlassian-rs-linux-x86_64
+          path: |
+            dist/mcp-atlassian-rs-linux-x86_64.tar.gz
+            dist/mcp-atlassian-rs-linux-x86_64.tar.gz.sha256

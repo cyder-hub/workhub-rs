@@ -53,6 +53,7 @@ pub struct ServiceAuthOverride {
 pub struct RequestAuthFingerprint(String);
 
 impl RequestAuthFingerprint {
+    #[cfg(test)]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -117,20 +118,6 @@ impl Display for RequestAuthError {
 
 impl std::error::Error for RequestAuthError {}
 
-pub fn parse_request_auth_headers(
-    headers: &HeaderMap,
-    ignore_header_auth: bool,
-    allowed_domains: Option<&[String]>,
-) -> Result<RequestAuthContext, RequestAuthError> {
-    parse_request_auth_headers_with_resolver_and_oauth_bearer(
-        headers,
-        ignore_header_auth,
-        allowed_domains,
-        false,
-        resolve_hostname,
-    )
-}
-
 pub fn parse_request_auth_headers_with_oauth_bearer(
     headers: &HeaderMap,
     ignore_header_auth: bool,
@@ -146,6 +133,7 @@ pub fn parse_request_auth_headers_with_oauth_bearer(
     )
 }
 
+#[cfg(test)]
 pub fn parse_request_auth_headers_with_resolver<F>(
     headers: &HeaderMap,
     ignore_header_auth: bool,

@@ -311,7 +311,6 @@ def run_stdio(confluence_url):
         initialize_stdio(proc, "stage4-confluence-stdio-smoke")
         names = list_stdio_tools(proc)
         required_tools = {
-            "migration_status",
             "confluence_search",
             "confluence_get_page",
             "confluence_create_page",
@@ -468,7 +467,6 @@ def run_http(confluence_url):
                     for tool in tools_message.get("result", {}).get("tools", [])
                 }
                 required_tools = {
-                    "migration_status",
                     "confluence_search",
                     "confluence_get_page",
                     "confluence_create_page",

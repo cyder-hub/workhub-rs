@@ -4,5 +4,22 @@ services:
       context: .
       dockerfile: Dockerfile
     image: mcp-atlassian-rs:local
+    restart: unless-stopped
+    environment:
+      MCP_HTTP_PATH: "${MCP_HTTP_PATH:-/mcp}"
+      READ_ONLY_MODE: "${READ_ONLY_MODE:-false}"
+      TOOLSETS: "${TOOLSETS:-}"
+      ENABLED_TOOLS: "${ENABLED_TOOLS:-}"
+      MCP_ALLOWED_URL_DOMAINS: "${MCP_ALLOWED_URL_DOMAINS:-}"
     ports:
       - "${MCP_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:8000/healthz | grep -q '\"status\":\"ok\"'",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -84,6 +84,7 @@ pub const JIRA_GET_ISSUE_SLA_TOOL_NAME: &str = "jira_get_issue_sla";
 pub const JIRA_GET_ISSUE_DEVELOPMENT_INFO_TOOL_NAME: &str = "jira_get_issue_development_info";
 pub const JIRA_GET_ISSUES_DEVELOPMENT_INFO_TOOL_NAME: &str = "jira_get_issues_development_info";
 
+#[cfg(test)]
 pub const STAGE3_JIRA_TOOL_NAMES: &[&str] = &[
     JIRA_CREATE_ISSUE_TOOL_NAME,
     JIRA_BATCH_CREATE_ISSUES_TOOL_NAME,

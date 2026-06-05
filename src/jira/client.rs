@@ -724,7 +724,7 @@ impl JiraClient {
                     .is_some_and(|key| self.config.projects_filter.contains(key))
             });
         }
-        Ok(json!({"projects": projects}))
+        Ok(Value::Array(projects))
     }
 
     pub async fn get_project_versions(&self, project_key: String) -> Result<Value, AtlassianError> {

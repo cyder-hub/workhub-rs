@@ -1,0 +1,149 @@
+# Backlog
+
+This backlog records fixed future work that is outside the current Rust release. Each item has a fixed status, reason, current release behavior, unblock condition, and validation method.
+
+## Auth And Token Flows
+
+### OAuth Cloud 3LO Authorization-Code Flow
+
+- Status: backlog.
+- Reason: Stage 7 implemented BYOT access-token compatibility, not a browser authorization-code flow.
+- Current Rust release behavior: Cloud Basic/API token, PAT-compatible request auth, and BYOT access tokens are supported; OAuth Cloud 3LO is not implemented.
+- Unblock condition: define an OAuth app registration model, callback/listener behavior, consent flow, secure token handling, and user-facing setup docs.
+- Required validation after implementation: run unit tests for callback parsing and token exchange, local integration tests with redaction, and real Cloud OAuth acceptance using disposable credentials.
+
+### OAuth Proxy And DCR
+
+- Status: backlog.
+- Reason: dynamic client registration and OAuth proxy behavior were not implemented in Stage 7.
+- Current Rust release behavior: no OAuth proxy endpoint or DCR flow is exposed.
+- Unblock condition: define proxy ownership, supported issuer behavior, client registration persistence, transport security, and failure handling.
+- Required validation after implementation: run local proxy/DCR tests, reject unsafe redirect/client inputs, and verify tokens/secrets are redacted from logs and errors.
+
+### OAuth Refresh And Token Storage
+
+- Status: backlog.
+- Reason: the current Rust release accepts provided access tokens but does not refresh or persist tokens.
+- Current Rust release behavior: BYOT access tokens are loaded from env or request headers for the current process/request only.
+- Unblock condition: define refresh-token storage, encryption or secret-manager integration, rotation behavior, expiry handling, and logout/revoke semantics.
+- Required validation after implementation: run token refresh/expiry tests, storage redaction tests, and real refresh acceptance with disposable test credentials.
+
+### Data Center OAuth Authorization-Code/Refresh
+
+- Status: backlog.
+- Reason: Stage 7 kept Server/Data Center auth to PAT or BYOT access-token fallback.
+- Current Rust release behavior: Server/Data Center PAT is supported; Data Center OAuth authorization-code and refresh flows are not implemented.
+- Unblock condition: define supported Data Center OAuth versions, app registration requirements, callback behavior, refresh semantics, and tenant compatibility matrix.
+- Required validation after implementation: run unit/integration tests against a Data Center-compatible OAuth test service and record real acceptance on a disposable instance.
+
+## Transport And Network
+
+### SSE Transport
+
+- Status: backlog.
+- Reason: the Rust server currently supports stdio and streamable HTTP only.
+- Current Rust release behavior: no SSE endpoint is exposed.
+- Unblock condition: define whether SSE remains needed for target MCP clients, add server routing, lifecycle handling, auth behavior, and smoke scripts.
+- Required validation after implementation: run local SSE initialize/tools/list/call smoke, request-auth regression tests if HTTP auth applies, and compatibility tests with the target MCP client.
+
+### SOCKS Proxy
+
+- Status: backlog.
+- Reason: SOCKS proxy support is not compiled into the current HTTP client stack.
+- Current Rust release behavior: `JIRA_SOCKS_PROXY`, `CONFLUENCE_SOCKS_PROXY`, and `SOCKS_PROXY` return configuration errors.
+- Unblock condition: choose a SOCKS-capable HTTP/TLS implementation path, define precedence with HTTP/HTTPS proxy and NO_PROXY, and preserve redaction of proxy credentials.
+- Required validation after implementation: run proxy parsing tests, NO_PROXY tests, redaction tests, and mock outbound requests through a local SOCKS proxy.
+
+### System Truststore Injection
+
+- Status: backlog.
+- Reason: Stage 7 did not implement `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE`.
+- Current Rust release behavior: setting `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE` is unsupported; service-specific TLS verification toggles and mTLS cert/key are supported.
+- Unblock condition: choose a cross-platform truststore crate or OS-specific implementation and define interaction with custom TLS/mTLS settings.
+- Required validation after implementation: run Linux truststore tests, failure-mode tests, and certificate-chain integration tests without leaking private key material.
+
+### Encrypted mTLS Private Key Passwords
+
+- Status: backlog.
+- Reason: current mTLS support accepts PEM cert/key paths but not encrypted private key password envs.
+- Current Rust release behavior: `JIRA_CLIENT_KEY_PASSWORD` and `CONFLUENCE_CLIENT_KEY_PASSWORD` return configuration errors.
+- Unblock condition: define encrypted key parsing, password sourcing, redaction, and error behavior.
+- Required validation after implementation: run encrypted-key unit tests, invalid-password tests, and redaction audits for password values.
+
+## Release And Distribution
+
+### Helm Chart
+
+- Status: backlog.
+- Reason: the Python reference chart is tied to Python server assumptions and cannot be copied as a Rust release artifact.
+- Current Rust release behavior: no Helm chart is published or generated.
+- Unblock condition: create a dedicated Helm execution document that defines the Rust image registry target, Kubernetes deployment contract, env and secret mapping, probes, ingress, HPA, RBAC, chart values, and validation commands.
+- Required validation after implementation: render the chart, run chart lint, deploy to a test Kubernetes environment, confirm `/healthz`, confirm MCP streamable HTTP startup, and verify secret values do not appear in rendered public manifests.
+
+### External Container Registry Publishing
+
+- Status: backlog.
+- Reason: Stage 8 fixes reproducible local/CI Docker builds but does not publish to GHCR, Docker Hub, or another external registry.
+- Current Rust release behavior: Docker image build is supported locally and in CI; no external image push is configured.
+- Unblock condition: choose registry target, image naming, authentication, release tag policy, provenance/SBOM requirements, and retention policy.
+- Required validation after implementation: build and push a release image from CI, pull it in a clean environment, run `/healthz`, and verify no secrets are embedded in image layers or logs.
+
+### crates.io Publishing
+
+- Status: backlog.
+- Reason: Stage 8 release artifacts are GitHub Actions binary archives and checksums, not crates.io publication.
+- Current Rust release behavior: no crates.io publish workflow is configured.
+- Unblock condition: define crate ownership, package metadata, license/docs/readme readiness, semver policy, publish dry-run, and credential handling.
+- Required validation after implementation: run `cargo package --locked`, inspect package contents, run publish dry-run where supported, and publish only from a protected release workflow.
+
+## Real Acceptance Follow-Up
+
+### Jira Service Management Real Acceptance
+
+- Status: backlog.
+- Reason: Stage 5 service desk lookup returned 403 in the test tenant, so the implemented `jira_service_desk` toolset is local/product-dependency validated but not real-accepted.
+- Current Rust release behavior: `jira_get_service_desk_for_project`, `jira_get_service_desk_queues`, and `jira_get_queue_issues` are implemented with local mock coverage and documented as product/permission blocked for real acceptance.
+- Unblock condition: provide a tenant, project, service desk, queue, and test identity with permission to read them.
+- Required validation after implementation: run real acceptance for service desk lookup, queue listing, and queue issue listing without recording customer data or secrets.
+
+### Jira Forms/ProForma Real Acceptance
+
+- Status: backlog.
+- Reason: Stage 5 did not receive an effective Forms API response and did not have a valid real form ID for details/update.
+- Current Rust release behavior: `jira_get_issue_proforma_forms`, `jira_get_proforma_form_details`, and `jira_update_proforma_form_answers` are implemented with local mock coverage and documented as product/interface blocked for real acceptance.
+- Unblock condition: provide a tenant with Jira Forms/ProForma enabled, a disposable test issue with a form, and a safe test answer update target.
+- Required validation after implementation: run real form listing, form details, and safe answer update acceptance with cleanup and redacted compact errors.
+
+### Confluence User Search Real Acceptance
+
+- Status: backlog.
+- Reason: Stage 5 did not execute a dedicated real row for `confluence_search_user`.
+- Current Rust release behavior: `confluence_search_user` is implemented with local mock coverage and documented as local-only.
+- Unblock condition: add a dedicated real Confluence user-search acceptance row with a non-sensitive test query and stable expected result shape.
+- Required validation after implementation: run the real user-search row and record only non-sensitive account/result metadata.
+
+### Confluence Destructive Write Real Acceptance
+
+- Status: backlog.
+- Reason: Stage 5 validated only read-only guards for `confluence_delete_page`, `confluence_move_page`, and `confluence_delete_attachment`; it did not execute destructive operations on real objects.
+- Current Rust release behavior: these tools are implemented with local mock/read-only coverage and documented as read-only guard only for real acceptance.
+- Unblock condition: provide disposable test pages and attachments with explicit isolation, cleanup, and permission to delete or move them.
+- Required validation after implementation: run delete page, move page, and delete attachment acceptance against disposable objects only, then verify cleanup and absence of customer data in logs.
+
+## Confluence Content Conversion
+
+### Full md2conf Parity
+
+- Status: backlog.
+- Reason: Stage 4 implemented a deterministic minimal Markdown to Confluence storage conversion, not full Python `md2conf` parity.
+- Current Rust release behavior: supported conversion covers headings, paragraphs, unordered lists, simple links, fenced code blocks, line breaks, and HTML escaping.
+- Unblock condition: define the exact Python `md2conf` feature set to match, add fixtures for each supported construct, and decide whether a parser dependency is required.
+- Required validation after implementation: run snapshot tests for all conversion fixtures, compare representative output against Python reference behavior, and verify no unsafe HTML is emitted.
+
+### Mermaid And Macro Rendering
+
+- Status: backlog.
+- Reason: Mermaid and macro rendering were explicitly outside the Stage 4 local Confluence loop.
+- Current Rust release behavior: no Mermaid rendering, Confluence macro expansion, or macro-specific parity is claimed.
+- Unblock condition: define supported macro types, storage format output, Mermaid rendering strategy, dependency/security review, and fixture coverage.
+- Required validation after implementation: run conversion snapshots, Confluence create/update mock tests, and real acceptance on disposable pages with macro output inspection.

@@ -68,11 +68,6 @@ use serde_json::{Map, Value, json};
 
 pub const SERVER_NAME: &str = "mcp-atlassian-rs";
 
-const MIGRATION_STATUS: &str = "mcp-atlassian-rs Stage 2 Jira core migration is complete. \
-The Stage 1 MCP runtime/control plane and Stage 2 Jira config/auth/client/models/tool handlers are implemented. \
-Jira core tools are available when Jira configuration and authentication are complete. \
-Mock REST tests, MCP smoke checks, README, and the migration ledger are up to date.";
-
 const CONFLUENCE_PAGE_EXPAND: &[&str] = &[
     "body.storage",
     "version",
@@ -323,11 +318,6 @@ impl Default for AtlassianMcpServer {
 
 #[tool_router(router = tool_router)]
 impl AtlassianMcpServer {
-    #[tool(description = "Report the current Rust migration status for MCP Atlassian")]
-    fn migration_status(&self) -> String {
-        MIGRATION_STATUS.to_string()
-    }
-
     #[tool(description = "Search Confluence content using simple terms or CQL")]
     async fn confluence_search(
         &self,
@@ -3091,7 +3081,7 @@ impl ServerHandler for AtlassianMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(SERVER_NAME, env!("CARGO_PKG_VERSION")))
             .with_instructions(format!(
-                "Rust MCP Atlassian Stage 2 migration. The MCP control plane is initialized in {access_mode} mode. Jira core tools are available when Jira configuration and authentication are complete; Confluence tools are not migrated yet."
+                "Rust MCP Atlassian exposes 73 Jira and Confluence business tools. The MCP control plane is initialized in {access_mode} mode. Jira and Confluence tools are available when their service configuration and authentication are complete. See docs/support-matrix.md for per-tool and runtime support status."
             ))
     }
 }
@@ -3188,7 +3178,7 @@ mod tests {
         context::AppContext,
         jira::config::{JiraConfig, JiraDeployment},
         jira::tools,
-        tool_registry::{MIGRATION_STATUS_TOOL_NAME, ToolAccess, ToolMetadata, ToolService},
+        tool_registry::{ToolAccess, ToolMetadata, ToolService},
     };
     use axum::{
         Json, Router,
@@ -3566,7 +3556,6 @@ mod tests {
             tools::JIRA_SEARCH_TOOL_NAME.to_string(),
             tools::JIRA_SEARCH_FIELDS_TOOL_NAME.to_string(),
             tools::JIRA_TRANSITION_ISSUE_TOOL_NAME.to_string(),
-            MIGRATION_STATUS_TOOL_NAME.to_string(),
         ]
     }
 
@@ -4937,23 +4926,6 @@ mod tests {
     }
 
     #[test]
-    fn tool_metadata_is_generated() {
-        assert_eq!(
-            AtlassianMcpServer::migration_status_tool_attr().name,
-            MIGRATION_STATUS_TOOL_NAME
-        );
-    }
-
-    #[test]
-    fn migration_status_reports_stage_scope() {
-        let server = AtlassianMcpServer::default();
-        let status = server.migration_status();
-
-        assert!(status.contains("Stage 2 Jira core migration is complete"));
-        assert!(status.contains("Jira config/auth/client/models/tool handlers are implemented"));
-    }
-
-    #[test]
     fn server_info_uses_app_context() {
         let config = RuntimeConfig {
             read_only: true,
@@ -4964,18 +4936,16 @@ mod tests {
         let instructions = info.instructions.unwrap_or_default();
 
         assert!(instructions.contains("read-only mode"));
-        assert!(instructions.contains("Jira core tools are available"));
+        assert!(instructions.contains("73 Jira and Confluence business tools"));
+        assert!(instructions.contains("docs/support-matrix.md"));
     }
 
     #[test]
-    fn tool_discovery_uses_registry_and_keeps_migration_status_visible_by_default() {
+    fn tool_discovery_has_no_tools_without_service_config() {
         let server = AtlassianMcpServer::default();
 
-        assert_eq!(
-            current_tool_names(&server),
-            vec![MIGRATION_STATUS_TOOL_NAME.to_string()]
-        );
-        assert!(server.get_tool(MIGRATION_STATUS_TOOL_NAME).is_some());
+        assert!(current_tool_names(&server).is_empty());
+        assert!(server.get_tool(tools::JIRA_GET_ISSUE_TOOL_NAME).is_none());
     }
 
     #[test]
@@ -5002,10 +4972,7 @@ mod tests {
 
         assert!(names.contains(&tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()));
         assert!(names.contains(&confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string()));
-        assert_eq!(
-            current_tool_names(&server),
-            vec![MIGRATION_STATUS_TOOL_NAME.to_string()]
-        );
+        assert!(current_tool_names(&server).is_empty());
     }
 
     #[test]
@@ -5218,10 +5185,7 @@ mod tests {
         let ignored = ignore_headers
             .scoped_for_request_headers(&request_service_headers())
             .unwrap();
-        assert_eq!(
-            current_tool_names(&ignored),
-            vec![MIGRATION_STATUS_TOOL_NAME.to_string()]
-        );
+        assert!(current_tool_names(&ignored).is_empty());
 
         let read_only = server_with_config(RuntimeConfig {
             read_only: true,
@@ -7120,7 +7084,6 @@ mod tests {
             vec![
                 tools::JIRA_GET_FIELD_OPTIONS_TOOL_NAME.to_string(),
                 tools::JIRA_SEARCH_FIELDS_TOOL_NAME.to_string(),
-                MIGRATION_STATUS_TOOL_NAME.to_string(),
             ]
         );
         assert!(
@@ -7737,10 +7700,7 @@ mod tests {
                 "tool is disabled in read-only mode"
             );
         }
-        assert_eq!(
-            current_tool_names(&unknown_only),
-            vec![MIGRATION_STATUS_TOOL_NAME.to_string()]
-        );
+        assert!(current_tool_names(&unknown_only).is_empty());
         assert!(
             unknown_only
                 .guard_registered_tool_call(confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME)
@@ -9706,45 +9666,47 @@ mod tests {
     }
 
     #[test]
-    fn tool_discovery_applies_enabled_tools_filter_to_migration_status() {
+    fn tool_discovery_applies_enabled_tools_filter_to_business_tools() {
         let server = server_with_config(RuntimeConfig {
-            enabled_tools: Some(BTreeSet::from(["some_other_tool".to_string()])),
-            ..runtime_config()
-        });
-
-        assert!(current_tool_names(&server).is_empty());
-        assert!(server.get_tool(MIGRATION_STATUS_TOOL_NAME).is_none());
-        assert!(
-            server
-                .guard_registered_tool_call(MIGRATION_STATUS_TOOL_NAME)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn tool_discovery_does_not_apply_toolsets_to_migration_status() {
-        let server = server_with_config(RuntimeConfig {
-            enabled_toolsets: BTreeSet::new(),
+            jira: Some(jira_config()),
+            enabled_tools: Some(BTreeSet::from(
+                [tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()],
+            )),
             ..runtime_config()
         });
 
         assert_eq!(
             current_tool_names(&server),
-            vec![MIGRATION_STATUS_TOOL_NAME.to_string()]
+            vec![tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()]
         );
+        assert!(
+            server
+                .guard_registered_tool_call(tools::JIRA_GET_ISSUE_TOOL_NAME)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn tool_discovery_applies_toolsets_to_business_tools() {
+        let server = server_with_config(RuntimeConfig {
+            jira: Some(jira_config()),
+            enabled_toolsets: BTreeSet::new(),
+            ..runtime_config()
+        });
+
+        assert!(current_tool_names(&server).is_empty());
     }
 
     #[test]
     fn tool_discovery_fails_closed_for_unmapped_tools() {
         let server = AtlassianMcpServer::default();
-        let tools =
-            server.filtered_tools_from([tool(MIGRATION_STATUS_TOOL_NAME), tool("unmapped_tool")]);
+        let tools = server.filtered_tools_from([tool("unmapped_tool")]);
         let names: Vec<_> = tools
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect();
 
-        assert_eq!(names, vec![MIGRATION_STATUS_TOOL_NAME.to_string()]);
+        assert!(names.is_empty());
     }
 
     #[test]
@@ -9916,7 +9878,6 @@ mod tests {
                 tools::JIRA_GET_ALL_PROJECTS_TOOL_NAME.to_string(),
                 tools::JIRA_GET_PROJECT_COMPONENTS_TOOL_NAME.to_string(),
                 tools::JIRA_GET_PROJECT_VERSIONS_TOOL_NAME.to_string(),
-                MIGRATION_STATUS_TOOL_NAME.to_string(),
             ]
         );
         assert_eq!(

@@ -7,10 +7,16 @@
 Commands run:
 
 - [ ] `cargo fmt --check`
-- [ ] `cargo check`
+- [ ] `RUSTFLAGS="-Dwarnings" cargo check`
 - [ ] `cargo test`
+- [ ] `cargo build --release`
+- [ ] `bash scripts/smoke-stdio.sh`
+- [ ] `bash scripts/smoke-http.sh`
+- [ ] `bash scripts/smoke-jira.sh`
+- [ ] `bash scripts/smoke-confluence.sh`
 - [ ] `docker compose -f docker-compose.yml config`
 - [ ] `docker build -t mcp-atlassian-rs:ci -f Dockerfile .`
+- [ ] Container `/healthz` smoke
 - [ ] Not run; reason:
 
 ## Impact
@@ -19,11 +25,12 @@ Commands run:
 - [ ] Docker or compose
 - [ ] GitHub Actions or repository metadata
 - [ ] Documentation only
-- [ ] Project naming or migration-stage guidance
+- [ ] Release artifact, changelog, or version policy
+- [ ] Support matrix or backlog
 - [ ] Dependencies or lockfiles
 
 ## Checklist
 
 - [ ] I did not commit `target/`, `.env`, logs, or credentials.
-- [ ] I updated README or contributing guidance where behavior, commands, naming, or dependencies changed.
+- [ ] I updated README, contributing guidance, support matrix, backlog, or release notes where behavior, commands, naming, support status, or dependencies changed.
 - [ ] I avoided adding claims for unimplemented features.

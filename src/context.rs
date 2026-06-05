@@ -234,7 +234,10 @@ mod tests {
         atlassian::auth::AtlassianAuth,
         config::{HttpConfig, RuntimeConfig},
         confluence::config::{ConfluenceConfig, ConfluenceDeployment},
-        jira::config::{JiraConfig, JiraDeployment},
+        jira::{
+            config::{JiraConfig, JiraDeployment},
+            tools,
+        },
         tool_registry::default_toolsets,
     };
 
@@ -259,7 +262,7 @@ mod tests {
 
     #[test]
     fn context_preserves_control_plane_config() {
-        let enabled_tools = BTreeSet::from(["migration_status".to_string()]);
+        let enabled_tools = BTreeSet::from([tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()]);
         let enabled_toolsets = default_toolsets();
         let jira = jira_config();
         let confluence = confluence_config();

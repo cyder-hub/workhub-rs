@@ -44,11 +44,26 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --check
 
-      - name: Check MCP server
-        run: cargo check
+      - name: Check MCP server without warnings
+        run: RUSTFLAGS="-Dwarnings" cargo check
 
       - name: Test MCP server
         run: cargo test
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Smoke stdio transport
+        run: bash scripts/smoke-stdio.sh
+
+      - name: Smoke streamable HTTP transport
+        run: bash scripts/smoke-http.sh
+
+      - name: Smoke Jira mock tools
+        run: bash scripts/smoke-jira.sh
+
+      - name: Smoke Confluence mock tools
+        run: bash scripts/smoke-confluence.sh
 
   docker:
     name: Docker
@@ -63,3 +78,18 @@ jobs:
 
       - name: Build image
         run: docker build -t mcp-atlassian-rs:ci -f Dockerfile .
+
+      - name: Smoke container health endpoint
+        shell: bash
+        run: |
+          docker run --rm -d --name mcp-atlassian-rs-ci -p 18080:8000 mcp-atlassian-rs:ci
+          trap 'docker rm -f mcp-atlassian-rs-ci >/dev/null 2>&1 || true' EXIT
+          for _ in {1..30}; do
+            if curl -fsS http://127.0.0.1:18080/healthz >/tmp/mcp-atlassian-rs-health.json; then
+              grep -q '"status":"ok"' /tmp/mcp-atlassian-rs-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs mcp-atlassian-rs-ci
+          exit 1

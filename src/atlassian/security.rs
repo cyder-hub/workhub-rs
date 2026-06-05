@@ -54,13 +54,6 @@ impl Display for UrlValidationError {
 
 impl std::error::Error for UrlValidationError {}
 
-pub fn validate_service_base_url(
-    value: &str,
-    allowed_domains: Option<&[String]>,
-) -> Result<Url, UrlValidationError> {
-    validate_service_base_url_with_resolver(value, allowed_domains, resolve_hostname)
-}
-
 pub fn validate_service_base_url_with_resolver<F>(
     value: &str,
     allowed_domains: Option<&[String]>,

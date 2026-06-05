@@ -4,8 +4,6 @@ use rmcp::{ErrorData, model::Tool};
 
 use crate::{confluence::tools as confluence_tools, context::AppContext, jira::tools};
 
-pub const MIGRATION_STATUS_TOOL_NAME: &str = "migration_status";
-
 const TOOL_UNAVAILABLE_MESSAGE: &str = "tool not available";
 const READ_ONLY_BLOCK_MESSAGE: &str = "tool is disabled in read-only mode";
 
@@ -45,7 +43,6 @@ const DEFAULT_TOOLSETS: &[&str] = &[
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolService {
-    Migration,
     Jira,
     Confluence,
 }
@@ -91,15 +88,6 @@ macro_rules! confluence_metadata {
         };
     };
 }
-
-pub const MIGRATION_STATUS_METADATA: ToolMetadata = ToolMetadata {
-    name: MIGRATION_STATUS_TOOL_NAME,
-    service: ToolService::Migration,
-    access: ToolAccess::Read,
-    toolset: None,
-    title: "Migration status",
-    description: "Reports the current Rust migration state.",
-};
 
 pub const JIRA_GET_ISSUE_METADATA: ToolMetadata = ToolMetadata {
     name: tools::JIRA_GET_ISSUE_TOOL_NAME,
@@ -697,7 +685,6 @@ confluence_metadata!(
 );
 
 const REGISTERED_TOOLS: &[ToolMetadata] = &[
-    MIGRATION_STATUS_METADATA,
     JIRA_GET_ISSUE_METADATA,
     JIRA_SEARCH_METADATA,
     JIRA_GET_PROJECT_ISSUES_METADATA,
@@ -869,7 +856,6 @@ fn is_service_available(metadata: ToolMetadata, context: &AppContext) -> bool {
     let availability = context.service_availability();
 
     match metadata.service {
-        ToolService::Migration => true,
         ToolService::Jira => availability.jira,
         ToolService::Confluence => availability.confluence,
     }
@@ -1038,18 +1024,6 @@ mod tests {
     }
 
     #[test]
-    fn migration_status_metadata_is_control_plane_read_tool() {
-        let metadata = metadata_for(MIGRATION_STATUS_TOOL_NAME).unwrap();
-
-        assert_eq!(metadata, MIGRATION_STATUS_METADATA);
-        assert_eq!(metadata.service, ToolService::Migration);
-        assert_eq!(metadata.access, ToolAccess::Read);
-        assert_eq!(metadata.toolset, None);
-        assert!(!metadata.title.is_empty());
-        assert!(!metadata.description.is_empty());
-    }
-
-    #[test]
     fn stage_two_jira_core_metadata_is_registered() {
         let names = stage_two_jira_tool_names();
 
@@ -1163,27 +1137,26 @@ mod tests {
     }
 
     #[test]
-    fn visible_tools_keep_migration_status_and_drop_unknown_tools() {
-        let context = AppContext::default();
-        let tools = visible_tools(
-            [tool(MIGRATION_STATUS_TOOL_NAME), tool("unknown_tool")],
-            &context,
-        );
-
-        assert_eq!(names(tools), vec![MIGRATION_STATUS_TOOL_NAME.to_string()]);
-    }
-
-    #[test]
-    fn toolsets_do_not_hide_migration_status() {
+    fn toolsets_filter_registered_business_tools() {
         let config = RuntimeConfig {
-            enabled_toolsets: BTreeSet::new(),
+            enabled_toolsets: BTreeSet::from(["jira_issues".to_string()]),
+            jira: Some(jira_config()),
             ..runtime_config()
         };
         let context = context(config);
 
-        let tools = visible_tools([tool(MIGRATION_STATUS_TOOL_NAME)], &context);
+        let visible = visible_tools(
+            [
+                tool(tools::JIRA_GET_ISSUE_TOOL_NAME),
+                tool(tools::JIRA_SEARCH_FIELDS_TOOL_NAME),
+            ],
+            &context,
+        );
 
-        assert_eq!(names(tools), vec![MIGRATION_STATUS_TOOL_NAME.to_string()]);
+        assert_eq!(
+            names(visible),
+            vec![tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()]
+        );
     }
 
     #[test]
@@ -1197,7 +1170,7 @@ mod tests {
 
         let tools = visible_tools_with_metadata(
             [
-                tool(MIGRATION_STATUS_TOOL_NAME),
+                tool("stage1_synthetic_jira_write"),
                 tool("stage1_synthetic_jira_read"),
             ],
             &context,

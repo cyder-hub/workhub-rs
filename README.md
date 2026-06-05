@@ -4,6 +4,8 @@ Rust migration workspace for MCP Atlassian.
 
 This repository is migrating the Python `mcp-atlassian` Jira and Confluence MCP server to a Rust-native implementation. The Rust binary currently has the shared MCP runtime/control plane, 49 Jira business tools, and 24 Confluence business tools implemented with local mock REST and MCP smoke coverage. Stage 5 integrated acceptance has also validated representative real Jira, real Confluence, dual-service MCP, release, Docker, and compose paths. Stage 6 added the mandatory production safety foundation for redaction, request-scoped streamable HTTP auth, SSRF/allowed-domain checks, and redirect protection. Stage 7 added compatibility auth and network support for BYOT access tokens, Bearer disambiguation, Cloud API gateway base rewrite, HTTP/HTTPS proxy, NO_PROXY, custom outbound headers, and mTLS client cert/key.
 
+The final support matrix is in [`docs/support-matrix.md`](docs/support-matrix.md). It covers all 49 Jira and 24 Confluence business tools, local/MCP coverage, Stage 5 real acceptance status, blocker/local-only notes, and the runtime/auth/transport/network support boundaries.
+
 ## Current Status
 
 Implemented in the Rust root project:
@@ -28,16 +30,15 @@ Implemented in the Rust root project:
 - Stage 5 local gate passed `cargo fmt --check`, `cargo check`, `cargo test`, local stdio/HTTP/Jira/Confluence smokes, release build, Docker build, compose config, and compose `/healthz` smoke.
 - Stage 5 real acceptance passed Jira core read paths, Jira Agile board lookup, SLA read, development-info single/batch paths, Confluence page/comment/label/analytics/attachment representative paths, and dual-service MCP stdio/HTTP representative calls.
 - Stage 7 local gate passed `cargo fmt --check`, `cargo check`, `cargo test`, local stdio/HTTP/Jira/Confluence smokes, and aggregate smoke.
-- The temporary MCP tool `migration_status` reports the migration state.
 
 Deferred:
 
 - `confluence_get_page_views` is Cloud-only. Confluence Server/Data Center returns a structured unavailable response; Stage 5 validated the Cloud representative path.
 - Jira Service Management and Forms/ProForma remain objectively blocked in the Stage 5 test tenant: JSM service desk lookup returned 403, and the current Forms client path did not receive an effective Forms API response. These toolsets are implemented with local mock/product-dependency coverage but are not documented as real-accepted.
 - `confluence_search_user` is implemented with local mock coverage. Stage 5 did not include a dedicated real user-search row, so it remains local-validated only.
-- OAuth Cloud 3LO, OAuth proxy/DCR, OAuth refresh/token storage, and Data Center OAuth authorization-code/refresh flows are not implemented and remain Stage 8 support-matrix/backlog inputs.
+- OAuth Cloud 3LO, OAuth proxy/DCR, OAuth refresh/token storage, and Data Center OAuth authorization-code/refresh flows are not implemented and are fixed in the support matrix and backlog.
 - SSE transport, SOCKS proxy, and system truststore injection are not implemented in the Rust server. Supported transports are `stdio` and streamable HTTP.
-- Release pipeline, Helm, production deployment docs, parity audit, and long-term support matrix finalization remain Stage 8 work. Stage 5 only validated the local release binary, local Docker build, compose config, and a compose `/healthz` smoke.
+- Release workflow, production deployment documentation, final per-tool support matrix, configuration/auth/transport/network support matrix, fixed long-term backlog, migration-tool cleanup, zero-warning check, final release gate, and completion audit are now complete.
 
 ## Stage 5 Gate Result
 
@@ -215,7 +216,7 @@ The Rust implementation does not claim Python `md2conf` parity in Stage 4. Merma
 | --- | --- | --- |
 | `READ_ONLY_MODE` | `false` | Truthy values are `true`, `1`, `yes`, `y`, and `on`. Write tools are hidden from discovery and blocked on direct call when enabled. |
 | `ENABLED_TOOLS` | unset | Comma-separated tool names. Empty or unset means no name filtering. |
-| `TOOLSETS` | all toolsets | Supports `all`, `default`, or comma-separated toolset names. Unknown-only values fail closed. `migration_status` is not part of Jira or Confluence toolsets. |
+| `TOOLSETS` | all toolsets | Supports `all`, `default`, or comma-separated registered Jira/Confluence toolset names. Unknown-only values fail closed. |
 | `ATLASSIAN_OAUTH_CLOUD_ID` | unset | Global Cloud ID used by Cloud BYOT access-token auth and request-scoped Bearer disambiguation when a request does not provide `X-Atlassian-Cloud-Id`. |
 | `ATLASSIAN_OAUTH_ENABLE` | `false` | Truthy values are `true`, `1`, `yes`, `y`, and `on`. When enabled, streamable HTTP `Authorization: Bearer` is interpreted as a BYOT/OAuth access token instead of PAT-compatible auth. |
 | `MCP_ALLOWED_URL_DOMAINS` | unset | Optional comma-separated domain allowlist for header-provided Jira/Confluence service URLs. Exact domain and subdomain matches are accepted; URL values, IP literals, localhost, and metadata hostnames are rejected. |
@@ -349,12 +350,6 @@ The Rust server also exposes these Stage 4 Confluence tools when Confluence is c
 
 `confluence_get_page_views` is Cloud-only. Attachment download/image tools return bounded structured content; the current inline content limit is 1 MiB per attachment. Attachment upload tools accept explicit local file paths readable by the server process and do not implement directory allowlists or remote URL upload in Stage 4.
 
-The Rust server also exposes one migration utility tool:
-
-- `migration_status`: reports the Rust migration state.
-
-`migration_status` is not a Jira or Confluence business tool and is not counted as Atlassian tool parity.
-
 ## Commands
 
 Run `just --list` to see the local command surface.
@@ -375,6 +370,25 @@ just test              # run tests
 just check             # fmt, check, and tests
 just docker-build      # local Docker image build
 ```
+
+## Release Artifacts
+
+Releases are tag-driven. A release tag must use the form `vX.Y.Z`, match `Cargo.toml` `package.version = "X.Y.Z"`, and have a matching `## X.Y.Z` entry in `CHANGELOG.md`.
+
+The release workflow builds a Linux x86_64 release binary archive:
+
+```text
+mcp-atlassian-rs-linux-x86_64.tar.gz
+mcp-atlassian-rs-linux-x86_64.tar.gz.sha256
+```
+
+The current release process does not publish to crates.io, GHCR, Docker Hub, or any other external registry.
+
+## Production Deployment
+
+See [`docs/deployment.md`](docs/deployment.md) for the supported stdio, streamable HTTP, Docker, compose, authentication, network, TLS, security, and unsupported-capability deployment guidance.
+
+See [`docs/support-matrix.md`](docs/support-matrix.md) and [`docs/backlog.md`](docs/backlog.md) for current support status and fixed future work. The support matrix includes the final 49-tool Jira and 24-tool Confluence per-tool release status plus runtime, auth, transport, network, TLS, and security support boundaries. The backlog covers OAuth flow gaps, SSE, SOCKS, system truststore, Helm, external registry publishing, crates.io publishing, real-acceptance follow-up, and Confluence content-conversion parity.
 
 ## Docker And Compose
 
@@ -408,9 +422,11 @@ Run with compose:
 docker compose up --build
 ```
 
-Set `MCP_PORT` to change the host port used by compose.
+Set `MCP_PORT` to change the host port used by compose. Set `MCP_HTTP_PATH`, `READ_ONLY_MODE`, `TOOLSETS`, `ENABLED_TOOLS`, and `MCP_ALLOWED_URL_DOMAINS` through the shell or compose environment when needed.
 
-Stage 5 validated `just docker-build`, compose config, compose startup, and `GET /healthz` with `MCP_PORT=18080`. Stage 8 still owns release-grade image tags, publishing, Helm, and long-term deployment documentation.
+The compose service includes a `/healthz` healthcheck and runs the binary as the non-root `app` user from the image. Keep secrets in your deployment secret manager or local shell environment; do not commit dotenv files with real Atlassian credentials.
+
+Stage 5 validated `just docker-build`, compose config, compose startup, and `GET /healthz` with `MCP_PORT=18080`. Stage 8 completed release artifact policy, deployment documentation, Docker/compose health validation, and final release gate; Helm and external registry publishing remain out of scope for the current Rust release.
 
 ## Verification
 

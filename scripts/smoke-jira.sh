@@ -391,7 +391,6 @@ def run_stdio(jira_url):
         initialize_stdio(proc, "stage3-stdio-smoke")
         names = list_stdio_tools(proc)
         required_tools = {
-            "migration_status",
             "jira_get_issue",
             "jira_create_issue",
             "jira_get_worklog",
@@ -556,7 +555,6 @@ def run_http(jira_url):
                     for tool in tools_message.get("result", {}).get("tools", [])
                 }
                 required_tools = {
-                    "migration_status",
                     "jira_get_issue",
                     "jira_create_issue",
                     "jira_get_worklog",

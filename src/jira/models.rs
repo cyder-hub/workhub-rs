@@ -283,10 +283,6 @@ impl JiraOperationResult {
         }
     }
 
-    pub fn empty(message: impl Into<String>) -> Self {
-        Self::success(message, json!([]))
-    }
-
     pub fn product_unavailable(product: impl Into<String>, message: impl Into<String>) -> Self {
         let message = message.into();
         Self {
@@ -295,16 +291,6 @@ impl JiraOperationResult {
             data: Value::Null,
             errors: Vec::new(),
             product_dependency: Some(JiraProductDependency::unavailable(product, message)),
-        }
-    }
-
-    pub fn error(message: impl Into<String>, errors: Vec<Value>) -> Self {
-        Self {
-            success: false,
-            message: Some(message.into()),
-            data: Value::Null,
-            errors,
-            product_dependency: None,
         }
     }
 
@@ -329,133 +315,6 @@ pub struct JiraPaginatedValues {
     pub total: Option<u64>,
     pub is_last: Option<bool>,
     pub next_page_token: Option<String>,
-}
-
-impl JiraPaginatedValues {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "values": self.values,
-            "start_at": self.start_at,
-            "max_results": self.max_results,
-            "total": self.total,
-            "is_last": self.is_last,
-            "next_page_token": self.next_page_token,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraNamedEntity {
-    pub id: Option<String>,
-    pub key: Option<String>,
-    pub name: Option<String>,
-    pub description: Option<String>,
-    #[serde(default)]
-    pub archived: Option<bool>,
-    #[serde(default)]
-    pub released: Option<bool>,
-    #[serde(default)]
-    pub extra: Value,
-}
-
-impl JiraNamedEntity {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "id": self.id,
-            "key": self.key,
-            "name": self.name,
-            "description": self.description,
-            "archived": self.archived,
-            "released": self.released,
-            "extra": self.extra,
-        })
-    }
-}
-
-pub type JiraProject = JiraNamedEntity;
-pub type JiraVersion = JiraNamedEntity;
-pub type JiraComponent = JiraNamedEntity;
-pub type JiraIssueLinkType = JiraNamedEntity;
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraUserProfile {
-    pub account_id: Option<String>,
-    pub account_type: Option<String>,
-    pub name: Option<String>,
-    pub key: Option<String>,
-    pub display_name: Option<String>,
-    pub email_address: Option<String>,
-    pub active: Option<bool>,
-    #[serde(default)]
-    pub extra: Value,
-}
-
-impl JiraUserProfile {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "account_id": self.account_id,
-            "account_type": self.account_type,
-            "name": self.name,
-            "key": self.key,
-            "display_name": self.display_name,
-            "email_address": self.email_address,
-            "active": self.active,
-            "extra": self.extra,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraWatcherResponse {
-    pub watcher_count: Option<u64>,
-    pub is_watching: Option<bool>,
-    #[serde(default)]
-    pub watchers: Vec<Value>,
-}
-
-impl JiraWatcherResponse {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "watcher_count": self.watcher_count,
-            "is_watching": self.is_watching,
-            "watchers": self.watchers.iter().map(simplify_user).collect::<Vec<_>>(),
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraWorklog {
-    pub id: Option<String>,
-    pub started: Option<String>,
-    pub time_spent: Option<String>,
-    pub time_spent_seconds: Option<u64>,
-    #[serde(default)]
-    pub author: Value,
-    #[serde(default)]
-    pub update_author: Value,
-    #[serde(default)]
-    pub comment: Value,
-    #[serde(default)]
-    pub visibility: Option<Value>,
-}
-
-impl JiraWorklog {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "id": self.id,
-            "started": self.started,
-            "time_spent": self.time_spent,
-            "time_spent_seconds": self.time_spent_seconds,
-            "author": simplify_user(&self.author),
-            "update_author": simplify_user(&self.update_author),
-            "comment": comment_body_text(&self.comment),
-            "visibility": self.visibility,
-        })
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -486,19 +345,6 @@ impl JiraAttachment {
             })
     }
 
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "id": self.id,
-            "filename": self.filename,
-            "mime_type": self.mime_type,
-            "size": self.size,
-            "content": self.content,
-            "thumbnail": self.thumbnail,
-            "author": simplify_user(&self.author),
-            "is_image": self.is_image(),
-        })
-    }
-
     pub fn to_safe_metadata_value(&self) -> Value {
         json!({
             "id": self.id,
@@ -509,203 +355,6 @@ impl JiraAttachment {
             "is_image": self.is_image(),
             "has_content_url": self.content.is_some(),
             "has_thumbnail": self.thumbnail.is_some(),
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraAgileBoard {
-    pub id: Option<u64>,
-    pub name: Option<String>,
-    #[serde(rename = "type")]
-    pub board_type: Option<String>,
-    #[serde(default)]
-    pub location: Value,
-}
-
-impl JiraAgileBoard {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "id": self.id,
-            "name": self.name,
-            "type": self.board_type,
-            "location": self.location,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraSprint {
-    pub id: Option<u64>,
-    pub name: Option<String>,
-    pub state: Option<String>,
-    pub start_date: Option<String>,
-    pub end_date: Option<String>,
-    pub complete_date: Option<String>,
-    pub origin_board_id: Option<u64>,
-    pub goal: Option<String>,
-}
-
-impl JiraSprint {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "id": self.id,
-            "name": self.name,
-            "state": self.state,
-            "start_date": self.start_date,
-            "end_date": self.end_date,
-            "complete_date": self.complete_date,
-            "origin_board_id": self.origin_board_id,
-            "goal": self.goal,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraServiceDesk {
-    pub id: Option<String>,
-    pub project_id: Option<String>,
-    pub project_key: Option<String>,
-    pub service_desk_id: Option<String>,
-    pub service_desk_name: Option<String>,
-}
-
-impl JiraServiceDesk {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "id": self.id,
-            "project_id": self.project_id,
-            "project_key": self.project_key,
-            "service_desk_id": self.service_desk_id,
-            "service_desk_name": self.service_desk_name,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraServiceDeskQueue {
-    pub id: Option<String>,
-    pub name: Option<String>,
-    pub issue_count: Option<u64>,
-    pub fields: Option<Vec<String>>,
-    #[serde(default)]
-    pub jql: Option<String>,
-}
-
-impl JiraServiceDeskQueue {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "id": self.id,
-            "name": self.name,
-            "issue_count": self.issue_count,
-            "fields": self.fields,
-            "jql": self.jql,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraFormSummary {
-    pub id: Option<String>,
-    pub name: Option<String>,
-    pub internal: Option<bool>,
-    pub submitted: Option<bool>,
-    pub locked: Option<bool>,
-    #[serde(default)]
-    pub fields: Vec<Value>,
-    #[serde(default)]
-    pub answers: Vec<Value>,
-}
-
-impl JiraFormSummary {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "id": self.id,
-            "name": self.name,
-            "internal": self.internal,
-            "submitted": self.submitted,
-            "locked": self.locked,
-            "fields": self.fields,
-            "answers": self.answers,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraIssueDates {
-    pub issue_key: Option<String>,
-    pub created: Option<String>,
-    pub updated: Option<String>,
-    pub due_date: Option<String>,
-    pub resolution_date: Option<String>,
-    #[serde(default)]
-    pub status_changes: Vec<Value>,
-    #[serde(default)]
-    pub status_summary: Value,
-}
-
-impl JiraIssueDates {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "issue_key": self.issue_key,
-            "created": self.created,
-            "updated": self.updated,
-            "due_date": self.due_date,
-            "resolution_date": self.resolution_date,
-            "status_changes": self.status_changes,
-            "status_summary": self.status_summary,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct JiraSlaMetrics {
-    #[serde(default)]
-    pub metrics: Value,
-    #[serde(default)]
-    pub raw_dates: Value,
-}
-
-impl JiraSlaMetrics {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "metrics": self.metrics,
-            "raw_dates": self.raw_dates,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JiraDevelopmentInfo {
-    pub issue_key: Option<String>,
-    #[serde(default)]
-    pub branches: Vec<Value>,
-    #[serde(default)]
-    pub pull_requests: Vec<Value>,
-    #[serde(default)]
-    pub commits: Vec<Value>,
-    #[serde(default)]
-    pub repositories: Vec<Value>,
-    #[serde(default)]
-    pub raw: Value,
-}
-
-impl JiraDevelopmentInfo {
-    pub fn to_simplified_value(&self) -> Value {
-        json!({
-            "issue_key": self.issue_key,
-            "branches": self.branches,
-            "pull_requests": self.pull_requests,
-            "commits": self.commits,
-            "repositories": self.repositories,
-            "raw": self.raw,
         })
     }
 }
@@ -840,23 +489,6 @@ mod tests {
     }
 
     #[test]
-    fn paginated_values_express_empty_results() {
-        let values = JiraPaginatedValues {
-            values: Vec::new(),
-            start_at: Some(0),
-            max_results: Some(50),
-            total: Some(0),
-            is_last: Some(true),
-            next_page_token: None,
-        };
-        let simplified = values.to_simplified_value();
-
-        assert_eq!(simplified["values"], json!([]));
-        assert_eq!(simplified["total"], 0);
-        assert_eq!(simplified["is_last"], true);
-    }
-
-    #[test]
     fn attachment_detects_images_by_mime_or_filename() {
         let by_mime = JiraAttachment {
             mime_type: Some("image/png".to_string()),
@@ -895,18 +527,5 @@ mod tests {
         assert_eq!(metadata["has_thumbnail"], true);
         assert!(metadata.get("content").is_none());
         assert!(metadata.get("thumbnail").is_none());
-    }
-
-    #[test]
-    fn watcher_response_simplifies_user_values() {
-        let response: JiraWatcherResponse = serde_json::from_value(json!({
-            "watcherCount": 1,
-            "watchers": [{"accountId": "abc", "displayName": "Ada"}]
-        }))
-        .unwrap();
-        let simplified = response.to_simplified_value();
-
-        assert_eq!(simplified["watcher_count"], 1);
-        assert_eq!(simplified["watchers"][0]["display_name"], "Ada");
     }
 }

@@ -113,13 +113,6 @@ pub fn parse_required_string_list(
     parse_optional_string_list(Some(value), field_name).map(|values| values.unwrap_or_default())
 }
 
-pub fn parse_optional_string_list_or_default(
-    value: Option<Value>,
-    field_name: &'static str,
-) -> Result<Vec<String>, AtlassianError> {
-    parse_optional_string_list(value, field_name).map(|values| values.unwrap_or_default())
-}
-
 pub fn parse_required_object_list(
     value: Value,
     field_name: &'static str,
