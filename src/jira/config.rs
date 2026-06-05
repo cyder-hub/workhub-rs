@@ -90,11 +90,10 @@ impl JiraConfig {
     }
 
     pub fn is_auth_configured(&self) -> bool {
-        match (&self.deployment, &self.auth) {
-            (JiraDeployment::Cloud, AtlassianAuth::Basic { .. }) => true,
-            (JiraDeployment::ServerDataCenter, AtlassianAuth::Pat { .. }) => true,
-            _ => false,
-        }
+        matches!(
+            self.auth,
+            AtlassianAuth::Basic { .. } | AtlassianAuth::Pat { .. }
+        )
     }
 }
 

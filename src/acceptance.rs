@@ -14,7 +14,10 @@ use std::{
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
-use crate::AppResult;
+use crate::{
+    AppResult,
+    atlassian::redaction::{env_secret_values_from_pairs, redact_text_with_secrets},
+};
 
 const BLOCKED: i32 = 2;
 const FAILED: i32 = 1;
@@ -1486,21 +1489,16 @@ fn compact_error(value: &Value, env: &EnvMap) -> String {
     redact_text(&text, env).chars().take(180).collect()
 }
 
-fn redact_text(text: &str, env: &EnvMap) -> String {
-    let mut redacted = text.to_string();
-    for key in SECRET_KEYS {
-        if let Some(secret) = env.get(*key)
-            && !secret.is_empty()
-        {
-            redacted = redacted.replace(secret, "<redacted>");
-        }
-        if let Ok(secret) = env::var(key)
-            && !secret.is_empty()
-        {
-            redacted = redacted.replace(&secret, "<redacted>");
-        }
-    }
-    redacted
+fn redact_text(text: &str, env_map: &EnvMap) -> String {
+    let file_secrets =
+        env_secret_values_from_pairs(env_map.iter().map(|(key, value)| (key.as_str(), value)));
+    let process_secrets = env_secret_values_from_pairs(
+        SECRET_KEYS
+            .iter()
+            .filter_map(|key| env::var(key).ok().map(|value| (*key, value))),
+    );
+
+    redact_text_with_secrets(text, file_secrets.into_iter().chain(process_secrets))
 }
 
 #[cfg(test)]
@@ -1566,5 +1564,19 @@ mod tests {
             redact_text("Authorization secret-token", &env),
             "Authorization <redacted>"
         );
+    }
+
+    #[test]
+    fn compact_error_redacts_auth_fragments_and_query_tokens() {
+        let env = EnvMap::new();
+        let value = json!({
+            "error": "Authorization Bearer bearer-secret failed /path?token=query-secret&client=abc"
+        });
+        let output = compact_error(&value, &env);
+
+        assert!(output.contains("Bearer <redacted>"));
+        assert!(output.contains("token=<redacted>"));
+        assert!(!output.contains("bearer-secret"));
+        assert!(!output.contains("query-secret"));
     }
 }

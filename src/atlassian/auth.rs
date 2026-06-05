@@ -4,6 +4,8 @@ use std::fmt::{Debug, Formatter};
 
 use reqwest::RequestBuilder;
 
+use crate::atlassian::redaction::REDACTED;
+
 #[derive(Clone, PartialEq, Eq)]
 pub enum AtlassianAuth {
     Basic { username: String, api_token: String },
@@ -28,11 +30,11 @@ impl Debug for AtlassianAuth {
             Self::Basic { username, .. } => formatter
                 .debug_struct("AtlassianAuth::Basic")
                 .field("username", username)
-                .field("api_token", &"<redacted>")
+                .field("api_token", &REDACTED)
                 .finish(),
             Self::Pat { .. } => formatter
                 .debug_struct("AtlassianAuth::Pat")
-                .field("personal_token", &"<redacted>")
+                .field("personal_token", &REDACTED)
                 .finish(),
         }
     }

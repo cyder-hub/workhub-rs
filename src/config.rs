@@ -1,5 +1,6 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, net::IpAddr};
 
+use crate::atlassian::security::BLOCKED_HOSTNAMES;
 use crate::tool_registry::{all_toolsets, default_toolsets};
 use crate::{confluence::config::ConfluenceConfig, error::ConfigError, jira::config::JiraConfig};
 
@@ -16,6 +17,8 @@ pub const ENV_ATLASSIAN_OAUTH_CLOUD_ID: &str = "ATLASSIAN_OAUTH_CLOUD_ID";
 pub const ENV_HTTP_HOST: &str = "MCP_HTTP_HOST";
 pub const ENV_HTTP_PORT: &str = "MCP_HTTP_PORT";
 pub const ENV_HTTP_PATH: &str = "MCP_HTTP_PATH";
+pub use crate::atlassian::request_auth::ENV_IGNORE_HEADER_AUTH;
+pub use crate::atlassian::security::ENV_ALLOWED_URL_DOMAINS;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -25,6 +28,8 @@ pub struct RuntimeConfig {
     pub jira: Option<JiraConfig>,
     pub confluence: Option<ConfluenceConfig>,
     pub atlassian_oauth_cloud_id: Option<String>,
+    pub allowed_url_domains: Option<Vec<String>>,
+    pub ignore_header_auth: bool,
     pub http: HttpConfig,
 }
 
@@ -53,6 +58,9 @@ impl RuntimeConfig {
         let confluence = ConfluenceConfig::from_var_provider(&mut get_var)?;
         let atlassian_oauth_cloud_id =
             parse_optional_string(get_var(ENV_ATLASSIAN_OAUTH_CLOUD_ID).ok());
+        let allowed_url_domains = parse_allowed_url_domains(get_var(ENV_ALLOWED_URL_DOMAINS).ok())?;
+        let ignore_header_auth =
+            parse_extended_truthy(get_var(ENV_IGNORE_HEADER_AUTH).ok().as_deref());
         let http = HttpConfig::from_var_provider(&mut get_var, http_overrides)?;
 
         Ok(Self {
@@ -62,6 +70,8 @@ impl RuntimeConfig {
             jira,
             confluence,
             atlassian_oauth_cloud_id,
+            allowed_url_domains,
+            ignore_header_auth,
             http,
         })
     }
@@ -76,6 +86,8 @@ impl Default for RuntimeConfig {
             jira: None,
             confluence: None,
             atlassian_oauth_cloud_id: None,
+            allowed_url_domains: None,
+            ignore_header_auth: false,
             http: HttpConfig::default(),
         }
     }
@@ -208,6 +220,62 @@ fn parse_optional_http_port(value: Option<String>) -> Result<u16, ConfigError> {
     })
 }
 
+fn parse_allowed_url_domains(value: Option<String>) -> Result<Option<Vec<String>>, ConfigError> {
+    let Some(value) = value.and_then(non_empty_trimmed) else {
+        return Ok(None);
+    };
+
+    let mut domains = parse_csv_tokens(Some(&value));
+    if domains.is_empty() {
+        return Ok(None);
+    }
+
+    let mut normalized = BTreeSet::new();
+    for domain in domains.drain(..) {
+        let domain = normalize_allowed_domain_token(&domain)?;
+        normalized.insert(domain);
+    }
+
+    if normalized.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(normalized.into_iter().collect()))
+    }
+}
+
+fn normalize_allowed_domain_token(value: &str) -> Result<String, ConfigError> {
+    let normalized = value
+        .trim()
+        .trim_start_matches('.')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+
+    if normalized.is_empty()
+        || normalized.contains("://")
+        || normalized.contains('/')
+        || normalized.contains(':')
+        || normalized.parse::<IpAddr>().is_ok()
+        || BLOCKED_HOSTNAMES.contains(&normalized.as_str())
+        || !normalized.split('.').all(is_valid_domain_label)
+    {
+        return Err(ConfigError::InvalidAllowedUrlDomain {
+            variable: ENV_ALLOWED_URL_DOMAINS,
+            value: value.to_string(),
+        });
+    }
+
+    Ok(normalized)
+}
+
+fn is_valid_domain_label(label: &str) -> bool {
+    !label.is_empty()
+        && !label.starts_with('-')
+        && !label.ends_with('-')
+        && label
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+}
+
 fn normalize_http_path(value: Option<String>) -> String {
     let Some(value) = value.and_then(non_empty_trimmed) else {
         return DEFAULT_HTTP_PATH.to_string();
@@ -257,6 +325,8 @@ mod tests {
         assert_eq!(config.jira, None);
         assert_eq!(config.confluence, None);
         assert_eq!(config.atlassian_oauth_cloud_id, None);
+        assert_eq!(config.allowed_url_domains, None);
+        assert!(!config.ignore_header_auth);
         assert_eq!(config.http, HttpConfig::default());
     }
 
@@ -402,6 +472,73 @@ mod tests {
                 .atlassian_oauth_cloud_id,
             None
         );
+    }
+
+    #[test]
+    fn allowed_url_domains_are_trimmed_normalized_and_deduplicated() {
+        let config = config_from_pairs(&[(
+            ENV_ALLOWED_URL_DOMAINS,
+            " Example.Atlassian.Net, .atlassian.net. ,example.atlassian.net ",
+        )])
+        .unwrap();
+
+        assert_eq!(
+            config.allowed_url_domains,
+            Some(vec![
+                "atlassian.net".to_string(),
+                "example.atlassian.net".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn allowed_url_domains_empty_values_are_unset() {
+        let config = config_from_pairs(&[(ENV_ALLOWED_URL_DOMAINS, " , ")]).unwrap();
+
+        assert_eq!(config.allowed_url_domains, None);
+    }
+
+    #[test]
+    fn allowed_url_domains_reject_unsafe_or_malformed_values() {
+        for value in [
+            "https://jira.example",
+            "127.0.0.1",
+            "localhost",
+            "metadata.google.internal",
+            "bad/domain",
+            "-bad.example",
+            "bad-.example",
+            "bad..example",
+        ] {
+            let error = config_from_pairs(&[(ENV_ALLOWED_URL_DOMAINS, value)]).unwrap_err();
+
+            assert_eq!(
+                error,
+                ConfigError::InvalidAllowedUrlDomain {
+                    variable: ENV_ALLOWED_URL_DOMAINS,
+                    value: value.to_string(),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn ignore_header_auth_uses_extended_truthy_values() {
+        for value in ["true", "1", "yes", "y", "on", "TRUE", " On "] {
+            let config = config_from_pairs(&[(ENV_IGNORE_HEADER_AUTH, value)]).unwrap();
+            assert!(
+                config.ignore_header_auth,
+                "value `{value}` should be truthy"
+            );
+        }
+
+        for value in ["false", "0", "no", "off", ""] {
+            let config = config_from_pairs(&[(ENV_IGNORE_HEADER_AUTH, value)]).unwrap();
+            assert!(
+                !config.ignore_header_auth,
+                "value `{value}` should be false"
+            );
+        }
     }
 
     #[test]

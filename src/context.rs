@@ -1,7 +1,12 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    config::RuntimeConfig, confluence::config::ConfluenceConfig, jira::config::JiraConfig,
+    atlassian::request_auth::RequestAuthContext,
+    config::RuntimeConfig,
+    confluence::config::{
+        ConfluenceConfig, ConfluenceDeployment, DEFAULT_CONFLUENCE_TIMEOUT_SECONDS,
+    },
+    jira::config::{DEFAULT_JIRA_TIMEOUT_SECONDS, JiraConfig, JiraDeployment},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +17,8 @@ pub struct AppContext {
     jira: Option<JiraConfig>,
     confluence: Option<ConfluenceConfig>,
     atlassian_oauth_cloud_id: Option<String>,
+    allowed_url_domains: Option<Vec<String>>,
+    ignore_header_auth: bool,
     service_availability: ServiceAvailability,
 }
 
@@ -24,8 +31,40 @@ impl AppContext {
             jira: config.jira.clone(),
             confluence: config.confluence.clone(),
             atlassian_oauth_cloud_id: config.atlassian_oauth_cloud_id.clone(),
+            allowed_url_domains: config.allowed_url_domains.clone(),
+            ignore_header_auth: config.ignore_header_auth,
             service_availability: ServiceAvailability::from_config(config),
         }
+    }
+
+    pub fn with_request_auth(&self, request_auth: &RequestAuthContext) -> Self {
+        let mut context = self.clone();
+
+        if let Some(auth) = request_auth.authorization.clone() {
+            if let Some(jira) = context.jira.as_mut() {
+                jira.auth = auth.clone();
+            }
+            if let Some(confluence) = context.confluence.as_mut() {
+                confluence.auth = auth;
+            }
+        }
+
+        if let Some(jira) = request_auth.jira.as_ref() {
+            context.jira = Some(jira_config_from_override(jira, context.jira.as_ref()));
+        }
+        if let Some(confluence) = request_auth.confluence.as_ref() {
+            context.confluence = Some(confluence_config_from_override(
+                confluence,
+                context.confluence.as_ref(),
+            ));
+        }
+        if let Some(cloud_id) = request_auth.cloud_id.as_ref() {
+            context.atlassian_oauth_cloud_id = Some(cloud_id.clone());
+        }
+
+        context.service_availability =
+            ServiceAvailability::from_service_configs(&context.jira, &context.confluence);
+        context
     }
 
     pub fn read_only(&self) -> bool {
@@ -46,6 +85,14 @@ impl AppContext {
 
     pub fn atlassian_oauth_cloud_id(&self) -> Option<&str> {
         self.atlassian_oauth_cloud_id.as_deref()
+    }
+
+    pub fn allowed_url_domains(&self) -> Option<&[String]> {
+        self.allowed_url_domains.as_deref()
+    }
+
+    pub fn ignore_header_auth(&self) -> bool {
+        self.ignore_header_auth
     }
 
     #[allow(dead_code)]
@@ -73,16 +120,81 @@ pub struct ServiceAvailability {
 
 impl ServiceAvailability {
     pub fn from_config(config: &RuntimeConfig) -> Self {
+        Self::from_service_configs(&config.jira, &config.confluence)
+    }
+
+    fn from_service_configs(
+        jira: &Option<JiraConfig>,
+        confluence: &Option<ConfluenceConfig>,
+    ) -> Self {
         Self {
-            jira: config
-                .jira
-                .as_ref()
-                .is_some_and(JiraConfig::is_auth_configured),
-            confluence: config
-                .confluence
+            jira: jira.as_ref().is_some_and(JiraConfig::is_auth_configured),
+            confluence: confluence
                 .as_ref()
                 .is_some_and(ConfluenceConfig::is_auth_configured),
         }
+    }
+}
+
+fn jira_config_from_override(
+    override_auth: &crate::atlassian::request_auth::ServiceAuthOverride,
+    existing: Option<&JiraConfig>,
+) -> JiraConfig {
+    JiraConfig {
+        base_url: override_auth.base_url.clone(),
+        deployment: jira_deployment_from_base_url(&override_auth.base_url),
+        auth: override_auth.auth.clone(),
+        ssl_verify: existing.is_none_or(|config| config.ssl_verify),
+        projects_filter: existing
+            .map(|config| config.projects_filter.clone())
+            .unwrap_or_default(),
+        timeout_seconds: existing.map_or(DEFAULT_JIRA_TIMEOUT_SECONDS, |config| {
+            config.timeout_seconds
+        }),
+    }
+}
+
+fn confluence_config_from_override(
+    override_auth: &crate::atlassian::request_auth::ServiceAuthOverride,
+    existing: Option<&ConfluenceConfig>,
+) -> ConfluenceConfig {
+    ConfluenceConfig {
+        base_url: override_auth.base_url.clone(),
+        deployment: confluence_deployment_from_base_url(&override_auth.base_url),
+        auth: override_auth.auth.clone(),
+        ssl_verify: existing.is_none_or(|config| config.ssl_verify),
+        spaces_filter: existing
+            .map(|config| config.spaces_filter.clone())
+            .unwrap_or_default(),
+        timeout_seconds: existing.map_or(DEFAULT_CONFLUENCE_TIMEOUT_SECONDS, |config| {
+            config.timeout_seconds
+        }),
+    }
+}
+
+fn jira_deployment_from_base_url(base_url: &str) -> JiraDeployment {
+    if base_url
+        .to_ascii_lowercase()
+        .split('/')
+        .nth(2)
+        .is_some_and(|host| host.ends_with(".atlassian.net"))
+    {
+        JiraDeployment::Cloud
+    } else {
+        JiraDeployment::ServerDataCenter
+    }
+}
+
+fn confluence_deployment_from_base_url(base_url: &str) -> ConfluenceDeployment {
+    if base_url
+        .to_ascii_lowercase()
+        .split('/')
+        .nth(2)
+        .is_some_and(|host| host.ends_with(".atlassian.net"))
+    {
+        ConfluenceDeployment::Cloud
+    } else {
+        ConfluenceDeployment::ServerDataCenter
     }
 }
 
@@ -130,6 +242,8 @@ mod tests {
             jira: Some(jira.clone()),
             confluence: Some(confluence.clone()),
             atlassian_oauth_cloud_id: Some("cloud-123".to_string()),
+            allowed_url_domains: Some(vec!["atlassian.net".to_string()]),
+            ignore_header_auth: true,
             http: HttpConfig::default(),
         };
 
@@ -141,6 +255,11 @@ mod tests {
         assert_eq!(context.jira_config(), Some(&jira));
         assert_eq!(context.confluence_config(), Some(&confluence));
         assert_eq!(context.atlassian_oauth_cloud_id(), Some("cloud-123"));
+        assert_eq!(
+            context.allowed_url_domains(),
+            Some(&["atlassian.net".to_string()][..])
+        );
+        assert!(context.ignore_header_auth());
         assert_eq!(
             context.service_availability(),
             &ServiceAvailability {
@@ -161,6 +280,96 @@ mod tests {
             ServiceAvailability::from_config(&config),
             ServiceAvailability {
                 jira: false,
+                confluence: true,
+            }
+        );
+    }
+
+    #[test]
+    fn request_auth_overrides_existing_service_credentials_without_mutating_global_context() {
+        use crate::atlassian::request_auth::parse_request_auth_headers_with_resolver;
+        use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+
+        let context = AppContext::from_config(&RuntimeConfig {
+            jira: Some(jira_config()),
+            confluence: Some(confluence_config()),
+            ..RuntimeConfig::default()
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer request-token"),
+        );
+        let request_auth = parse_request_auth_headers_with_resolver(&headers, false, None, |_| {
+            Ok(vec!["8.8.8.8".parse().unwrap()])
+        })
+        .unwrap();
+
+        let scoped = context.with_request_auth(&request_auth);
+
+        assert!(matches!(
+            scoped.jira_config().unwrap().auth,
+            AtlassianAuth::Pat { ref personal_token } if personal_token == "request-token"
+        ));
+        assert!(matches!(
+            scoped.confluence_config().unwrap().auth,
+            AtlassianAuth::Pat { ref personal_token } if personal_token == "request-token"
+        ));
+        assert!(matches!(
+            context.jira_config().unwrap().auth,
+            AtlassianAuth::Pat { ref personal_token } if personal_token == "test-pat-value"
+        ));
+    }
+
+    #[test]
+    fn request_auth_service_headers_create_scoped_service_configs() {
+        use crate::atlassian::request_auth::{
+            HEADER_CONFLUENCE_PERSONAL_TOKEN, HEADER_CONFLUENCE_URL, HEADER_JIRA_PERSONAL_TOKEN,
+            HEADER_JIRA_URL, parse_request_auth_headers_with_resolver,
+        };
+        use reqwest::header::{HeaderMap, HeaderValue};
+
+        let context = AppContext::default();
+        let allowed_domains = vec!["atlassian.net".to_string()];
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HEADER_JIRA_URL,
+            HeaderValue::from_static("https://example.atlassian.net"),
+        );
+        headers.insert(
+            HEADER_JIRA_PERSONAL_TOKEN,
+            HeaderValue::from_static("jira-request-token"),
+        );
+        headers.insert(
+            HEADER_CONFLUENCE_URL,
+            HeaderValue::from_static("https://example.atlassian.net/wiki"),
+        );
+        headers.insert(
+            HEADER_CONFLUENCE_PERSONAL_TOKEN,
+            HeaderValue::from_static("conf-request-token"),
+        );
+        let request_auth = parse_request_auth_headers_with_resolver(
+            &headers,
+            false,
+            Some(&allowed_domains),
+            |_| Ok(vec!["8.8.8.8".parse().unwrap()]),
+        )
+        .unwrap();
+
+        let scoped = context.with_request_auth(&request_auth);
+
+        assert_eq!(
+            scoped.jira_config().unwrap().base_url,
+            "https://example.atlassian.net"
+        );
+        assert_eq!(
+            scoped.confluence_config().unwrap().base_url,
+            "https://example.atlassian.net/wiki"
+        );
+        assert_eq!(
+            scoped.service_availability(),
+            &ServiceAvailability {
+                jira: true,
                 confluence: true,
             }
         );

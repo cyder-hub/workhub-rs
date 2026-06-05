@@ -4,6 +4,8 @@ use std::fmt::{Display, Formatter};
 
 use serde_json::Value;
 
+use crate::atlassian::redaction::{REDACTED, is_sensitive_query_key, redact_text};
+
 #[derive(Debug)]
 pub enum AtlassianError {
     InvalidBaseUrl { message: String },
@@ -17,13 +19,13 @@ pub enum AtlassianError {
 impl AtlassianError {
     pub fn transport(error: reqwest::Error) -> Self {
         Self::Transport {
-            message: error.without_url().to_string(),
+            message: redact_text(&error.without_url().to_string()),
         }
     }
 
     pub fn json_decode(error: reqwest::Error) -> Self {
         Self::JsonDecode {
-            message: error.without_url().to_string(),
+            message: redact_text(&error.without_url().to_string()),
         }
     }
 
@@ -34,27 +36,34 @@ impl AtlassianError {
             .filter(|context| !context.is_empty())
             .map_or_else(
                 || format!("error decoding response body: {error}"),
-                |context| format!("error decoding response body from {context}: {error}"),
+                |context| {
+                    format!(
+                        "error decoding response body from {}: {error}",
+                        redact_text(context)
+                    )
+                },
             );
 
-        Self::JsonDecode { message }
+        Self::JsonDecode {
+            message: redact_text(&message),
+        }
     }
 
     pub fn invalid_base_url(message: impl Into<String>) -> Self {
         Self::InvalidBaseUrl {
-            message: message.into(),
+            message: redact_text(&message.into()),
         }
     }
 
     pub fn unexpected_shape(message: impl Into<String>) -> Self {
         Self::UnexpectedShape {
-            message: message.into(),
+            message: redact_text(&message.into()),
         }
     }
 
     pub fn invalid_input(message: impl Into<String>) -> Self {
         Self::InvalidInput {
-            message: message.into(),
+            message: redact_text(&message.into()),
         }
     }
 
@@ -109,7 +118,7 @@ fn sanitize_message(message: String) -> String {
                     .filter_map(Value::as_str)
                     .map(str::trim)
                     .filter(|message| !message.is_empty())
-                    .map(ToString::to_string),
+                    .map(redact_text),
             );
         }
 
@@ -118,13 +127,18 @@ fn sanitize_message(message: String) -> String {
                 if let Some(message) = value.as_str().map(str::trim)
                     && !message.is_empty()
                 {
-                    parts.push(format!("{key}: {message}"));
+                    let value = if is_sensitive_query_key(key) {
+                        REDACTED.to_string()
+                    } else {
+                        redact_text(message)
+                    };
+                    parts.push(format!("{key}: {value}"));
                 }
             }
         }
 
         if !parts.is_empty() {
-            return parts.join("; ").chars().take(500).collect();
+            return redact_text(&parts.join("; ")).chars().take(500).collect();
         }
     }
 
@@ -161,5 +175,33 @@ mod tests {
         assert!(output.contains("non-empty error response"));
         assert!(!output.contains("Bearer"));
         assert!(!output.contains("test-pat-value"));
+    }
+
+    #[test]
+    fn status_error_display_redacts_json_error_summary() {
+        let error = AtlassianError::http_status(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"errorMessages":["Authorization Bearer json-secret-token"],"errors":{"token":"raw-token-value","issue":"failed /path?token=query-secret"}}"#,
+        );
+        let output = error.to_string();
+
+        assert!(output.contains("HTTP 400"));
+        assert!(output.contains("Bearer <redacted>"));
+        assert!(output.contains("token: <redacted>"));
+        assert!(!output.contains("json-secret-token"));
+        assert!(!output.contains("raw-token-value"));
+    }
+
+    #[test]
+    fn json_decode_body_redacts_request_context() {
+        let error = serde_json::from_str::<Value>("not-json").unwrap_err();
+        let output = AtlassianError::json_decode_body(
+            error,
+            Some("GET /rest/api/2/issue/ABC-1?token=query-secret&client=abc"),
+        )
+        .to_string();
+
+        assert!(output.contains("token=<redacted>") || output.contains("token=%3Credacted%3E"));
+        assert!(!output.contains("query-secret"));
     }
 }

@@ -94,11 +94,10 @@ impl ConfluenceConfig {
     }
 
     pub fn is_auth_configured(&self) -> bool {
-        match (&self.deployment, &self.auth) {
-            (ConfluenceDeployment::Cloud, AtlassianAuth::Basic { .. }) => true,
-            (ConfluenceDeployment::ServerDataCenter, AtlassianAuth::Pat { .. }) => true,
-            _ => false,
-        }
+        matches!(
+            self.auth,
+            AtlassianAuth::Basic { .. } | AtlassianAuth::Pat { .. }
+        )
     }
 }
 

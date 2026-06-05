@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::{
-    atlassian::error::AtlassianError,
+    atlassian::{error::AtlassianError, redaction::redact_text},
     jira::config::{JiraConfig, JiraDeployment},
 };
 
@@ -273,23 +273,7 @@ pub fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn redact_url_query(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    let mut chars = value.chars().peekable();
-    while let Some(ch) = chars.next() {
-        output.push(ch);
-        if ch == '?' {
-            output.push_str("<redacted>");
-            while let Some(next) = chars.peek().copied() {
-                if next.is_whitespace()
-                    || matches!(next, '"' | '\'' | '<' | '>' | ')' | ']' | '}' | ',')
-                {
-                    break;
-                }
-                chars.next();
-            }
-        }
-    }
-    output
+    redact_text(value)
 }
 
 fn collect_adf_text(value: &Value, parts: &mut Vec<String>) {
@@ -426,8 +410,8 @@ mod tests {
         let message = r#"failed /secure/attachment/2/notes.txt?token=secret&client=abc", retry"#;
         let redacted = redact_url_query(message);
 
-        assert!(redacted.contains("/secure/attachment/2/notes.txt?<redacted>"));
+        assert!(redacted.contains("/secure/attachment/2/notes.txt?token=<redacted>&client=abc"));
         assert!(!redacted.contains("token=secret"));
-        assert!(!redacted.contains("client=abc"));
+        assert!(redacted.contains("client=abc"));
     }
 }

@@ -6,6 +6,10 @@ pub enum ConfigError {
         variable: &'static str,
         value: String,
     },
+    InvalidAllowedUrlDomain {
+        variable: &'static str,
+        value: String,
+    },
     MissingJiraUrl {
         credential_variables: Vec<&'static str>,
     },
@@ -45,6 +49,9 @@ impl Display for ConfigError {
         match self {
             Self::InvalidHttpPort { variable, value } => {
                 write!(formatter, "invalid {variable} value `{value}`")
+            }
+            Self::InvalidAllowedUrlDomain { variable, value } => {
+                write!(formatter, "invalid {variable} domain `{value}`")
             }
             Self::MissingJiraUrl {
                 credential_variables,

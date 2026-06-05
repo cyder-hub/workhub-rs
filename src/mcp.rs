@@ -1,7 +1,16 @@
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use crate::{
-    atlassian::error::AtlassianError,
+    atlassian::{
+        error::AtlassianError,
+        redaction::redact_text,
+        request_auth::{RequestAuthFingerprint, parse_request_auth_headers},
+    },
     confluence::{
         client::ConfluenceClient,
         config::ConfluenceDeployment,
@@ -42,6 +51,7 @@ use crate::{
     },
     tool_registry,
 };
+use axum::http::{HeaderMap, HeaderValue, request::Parts};
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     handler::server::router::tool::ToolRouter,
@@ -77,19 +87,159 @@ const CONFLUENCE_CHILDREN_MAX_LIMIT: u64 = 50;
 const CONFLUENCE_TREE_DEFAULT_LIMIT: u64 = 500;
 const CONFLUENCE_TREE_MAX_LIMIT: u64 = 1_000;
 const CONFLUENCE_TREE_PAGE_SIZE: u64 = 200;
+const HEADER_MCP_SESSION_ID: &str = "mcp-session-id";
+
+#[derive(Clone, Default)]
+pub struct RequestAuthSessionStore {
+    fingerprints: Arc<Mutex<BTreeMap<String, RequestAuthFingerprint>>>,
+}
+
+impl RequestAuthSessionStore {
+    pub fn parse_and_enforce_headers(
+        &self,
+        headers: &HeaderMap,
+        context: &AppContext,
+    ) -> Result<RequestAuthFingerprint, ErrorData> {
+        let request_auth = parse_request_auth_headers(
+            headers,
+            context.ignore_header_auth(),
+            context.allowed_url_domains(),
+        )
+        .map_err(|error| ErrorData::invalid_params(redact_text(&error.to_string()), None))?;
+
+        self.enforce_request_headers(headers, &request_auth.fingerprint)?;
+        Ok(request_auth.fingerprint)
+    }
+
+    pub fn enforce_request_headers(
+        &self,
+        headers: &HeaderMap,
+        fingerprint: &RequestAuthFingerprint,
+    ) -> Result<(), ErrorData> {
+        let Some(session_id) = session_id_from_headers(headers) else {
+            return Ok(());
+        };
+
+        self.bind_session_id(&session_id, fingerprint)
+    }
+
+    pub fn bind_response_headers(
+        &self,
+        headers: &HeaderMap,
+        fingerprint: &RequestAuthFingerprint,
+    ) -> Result<(), ErrorData> {
+        let Some(session_id) = session_id_from_headers(headers) else {
+            return Ok(());
+        };
+
+        self.bind_session_id(&session_id, fingerprint)
+    }
+
+    fn bind_session_id(
+        &self,
+        session_id: &str,
+        fingerprint: &RequestAuthFingerprint,
+    ) -> Result<(), ErrorData> {
+        let mut fingerprints = self.fingerprints.lock().map_err(|_| {
+            ErrorData::internal_error("session auth fingerprint store is unavailable", None)
+        })?;
+
+        match fingerprints.get(session_id) {
+            Some(existing) if existing == fingerprint => Ok(()),
+            Some(_) => Err(ErrorData::invalid_params(
+                "per-request authentication changed for MCP session",
+                None,
+            )),
+            None => {
+                fingerprints.insert(session_id.to_string(), fingerprint.clone());
+                Ok(())
+            }
+        }
+    }
+}
+
+fn session_id_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(HEADER_MCP_SESSION_ID)
+        .or_else(|| headers.get("Mcp-Session-Id"))
+        .and_then(header_value_to_trimmed_string)
+}
+
+fn header_value_to_trimmed_string(value: &HeaderValue) -> Option<String> {
+    value
+        .to_str()
+        .ok()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
 
 #[derive(Clone)]
 pub struct AtlassianMcpServer {
     context: Arc<AppContext>,
     tool_router: ToolRouter<Self>,
+    session_auth_fingerprints: RequestAuthSessionStore,
 }
 
 impl AtlassianMcpServer {
     pub fn new(context: Arc<AppContext>) -> Self {
+        Self::with_session_auth_store(context, RequestAuthSessionStore::default())
+    }
+
+    pub fn with_session_auth_store(
+        context: Arc<AppContext>,
+        session_auth_fingerprints: RequestAuthSessionStore,
+    ) -> Self {
         Self {
             context,
             tool_router: Self::tool_router(),
+            session_auth_fingerprints,
         }
+    }
+
+    fn with_context(&self, context: Arc<AppContext>) -> Self {
+        Self {
+            context,
+            tool_router: Self::tool_router(),
+            session_auth_fingerprints: self.session_auth_fingerprints.clone(),
+        }
+    }
+
+    fn scoped_for_request_context(
+        &self,
+        request_context: &RequestContext<RoleServer>,
+    ) -> Result<Self, ErrorData> {
+        let Some(parts) = request_context.extensions.get::<Parts>() else {
+            return Ok(self.clone());
+        };
+
+        self.scoped_for_request_headers(&parts.headers)
+    }
+
+    fn scoped_for_request_headers(&self, headers: &HeaderMap) -> Result<Self, ErrorData> {
+        let request_auth = parse_request_auth_headers(
+            headers,
+            self.context.ignore_header_auth(),
+            self.context.allowed_url_domains(),
+        )
+        .map_err(|error| ErrorData::invalid_params(redact_text(&error.to_string()), None))?;
+
+        self.enforce_session_auth_fingerprint(headers, &request_auth.fingerprint)?;
+
+        if request_auth.has_overrides() {
+            Ok(self.with_context(Arc::new(self.context.with_request_auth(&request_auth))))
+        } else {
+            Ok(self.clone())
+        }
+    }
+
+    fn enforce_session_auth_fingerprint(
+        &self,
+        headers: &HeaderMap,
+        fingerprint: &RequestAuthFingerprint,
+    ) -> Result<(), ErrorData> {
+        self.session_auth_fingerprints
+            .enforce_request_headers(headers, fingerprint)
     }
 
     fn current_tools_result(&self) -> ListToolsResult {
@@ -2764,7 +2914,7 @@ fn jira_error(error: AtlassianError) -> ErrorData {
     }
 }
 
-const TOOL_LOG_REDACTED: &str = "[redacted]";
+const TOOL_LOG_REDACTED: &str = crate::atlassian::redaction::REDACTED;
 const TOOL_LOG_TRUNCATED: &str = "[truncated]";
 const TOOL_LOG_MAX_DEPTH: usize = 8;
 const TOOL_LOG_MAX_ARRAY_ITEMS: usize = 50;
@@ -2811,7 +2961,7 @@ fn sanitize_tool_log_value(value: &Value, depth: usize) -> Value {
             Value::Array(sanitized)
         }
         Value::Object(object) => Value::Object(sanitize_tool_log_object(object, depth + 1)),
-        Value::String(value) => Value::String(truncate_tool_log_string(value)),
+        Value::String(value) => Value::String(truncate_tool_log_string(&redact_text(value))),
         value => value.clone(),
     }
 }
@@ -2873,10 +3023,11 @@ impl ServerHandler for AtlassianMcpServer {
         }
 
         let result = async {
-            self.guard_registered_tool_call(tool_name.as_str())?;
+            let scoped_server = self.scoped_for_request_context(&context)?;
+            scoped_server.guard_registered_tool_call(tool_name.as_str())?;
 
-            let tool_call_context = ToolCallContext::new(self, request, context);
-            self.tool_router.call(tool_call_context).await
+            let tool_call_context = ToolCallContext::new(&scoped_server, request, context);
+            scoped_server.tool_router.call(tool_call_context).await
         }
         .await;
         let elapsed_ms = started_at.elapsed().as_millis();
@@ -2899,7 +3050,7 @@ impl ServerHandler for AtlassianMcpServer {
                         tool = %tool_name,
                         arguments = %arguments,
                         error_code = error.code.0,
-                        error_message = %error.message,
+                        error_message = %redact_text(error.message.as_ref()),
                         elapsed_ms,
                         "MCP tool call failed details"
                     );
@@ -2913,9 +3064,11 @@ impl ServerHandler for AtlassianMcpServer {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(self.current_tools_result())
+        Ok(self
+            .scoped_for_request_context(&context)?
+            .current_tools_result())
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
@@ -3039,7 +3192,7 @@ mod tests {
         Json, Router,
         body::Bytes,
         extract::State,
-        http::{HeaderMap, Method, StatusCode},
+        http::{HeaderMap, HeaderValue, Method, StatusCode},
         response::{IntoResponse, Response},
         routing::any,
     };
@@ -3143,6 +3296,10 @@ mod tests {
         arguments.insert("api_token".to_string(), json!("test-api-token"));
         arguments.insert("nested".to_string(), Value::Object(nested));
         arguments.insert("description".to_string(), Value::String(long_value));
+        arguments.insert(
+            "callback".to_string(),
+            json!("Authorization Bearer callback-secret /path?token=query-secret&client=abc"),
+        );
 
         let sanitized = sanitize_tool_log_arguments(Some(&arguments));
 
@@ -3152,8 +3309,13 @@ mod tests {
         assert_eq!(sanitized["nested"]["password"], TOOL_LOG_REDACTED);
         let description = sanitized["description"].as_str().unwrap();
         assert!(description.ends_with(TOOL_LOG_TRUNCATED));
+        let callback = sanitized["callback"].as_str().unwrap();
+        assert!(callback.contains("Bearer <redacted>"));
+        assert!(callback.contains("token=<redacted>"));
         assert!(!sanitized.to_string().contains("test-api-token"));
         assert!(!sanitized.to_string().contains("secret-password"));
+        assert!(!sanitized.to_string().contains("callback-secret"));
+        assert!(!sanitized.to_string().contains("query-secret"));
     }
 
     fn jira_config_with_base_url(base_url: String) -> JiraConfig {
@@ -3182,6 +3344,26 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect()
+    }
+
+    fn header_map(headers: &[(&'static str, &'static str)]) -> HeaderMap {
+        let mut header_map = HeaderMap::new();
+        for (name, value) in headers {
+            header_map.insert(*name, HeaderValue::from_static(value));
+        }
+        header_map
+    }
+
+    fn request_service_headers() -> HeaderMap {
+        header_map(&[
+            ("X-Atlassian-Jira-Url", "https://8.8.8.8"),
+            ("X-Atlassian-Jira-Personal-Token", "request-jira-token"),
+            ("X-Atlassian-Confluence-Url", "https://8.8.4.4"),
+            (
+                "X-Atlassian-Confluence-Personal-Token",
+                "request-confluence-token",
+            ),
+        ])
     }
 
     fn query_value(path: &str, key: &str) -> Option<String> {
@@ -4778,6 +4960,241 @@ mod tests {
         assert!(server.get_tool(tools::JIRA_GET_ISSUE_TOOL_NAME).is_some());
     }
 
+    #[test]
+    fn list_tools_uses_request_scoped_service_headers_without_mutating_global_context() {
+        let server = server_with_config(runtime_config());
+        let headers = request_service_headers();
+
+        let scoped_server = server.scoped_for_request_headers(&headers).unwrap();
+        let names = current_tool_names(&scoped_server);
+
+        assert!(names.contains(&tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()));
+        assert!(names.contains(&confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string()));
+        assert_eq!(
+            current_tool_names(&server),
+            vec![MIGRATION_STATUS_TOOL_NAME.to_string()]
+        );
+    }
+
+    #[test]
+    fn session_auth_fingerprint_allows_stable_request_auth() {
+        let server = server_with_config(RuntimeConfig {
+            jira: Some(jira_config()),
+            ..runtime_config()
+        });
+        let headers = header_map(&[
+            ("Mcp-Session-Id", "session-1"),
+            ("Authorization", "Bearer stable-request-token"),
+        ]);
+
+        server.scoped_for_request_headers(&headers).unwrap();
+        let scoped_server = server.scoped_for_request_headers(&headers).unwrap();
+
+        assert!(
+            current_tool_names(&scoped_server)
+                .contains(&tools::JIRA_GET_ISSUE_TOOL_NAME.to_string())
+        );
+    }
+
+    #[test]
+    fn session_auth_fingerprint_rejects_changed_request_auth() {
+        let server = server_with_config(RuntimeConfig {
+            jira: Some(jira_config()),
+            ..runtime_config()
+        });
+        let first = header_map(&[
+            ("Mcp-Session-Id", "session-1"),
+            ("Authorization", "Bearer first-request-token"),
+        ]);
+        let changed = header_map(&[
+            ("Mcp-Session-Id", "session-1"),
+            ("Authorization", "Bearer second-request-token"),
+        ]);
+        let different_session = header_map(&[
+            ("Mcp-Session-Id", "session-2"),
+            ("Authorization", "Bearer second-request-token"),
+        ]);
+
+        server.scoped_for_request_headers(&first).unwrap();
+        let error = match server.scoped_for_request_headers(&changed) {
+            Ok(_) => panic!("changed request auth should be rejected"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.message.as_ref(),
+            "per-request authentication changed for MCP session"
+        );
+        assert!(!error.message.contains("first-request-token"));
+        assert!(!error.message.contains("second-request-token"));
+        server
+            .scoped_for_request_headers(&different_session)
+            .unwrap();
+    }
+
+    #[test]
+    fn session_auth_store_binds_initialize_response_fingerprint() {
+        let context = AppContext::from_config(&RuntimeConfig {
+            jira: Some(jira_config()),
+            ..runtime_config()
+        });
+        let store = RequestAuthSessionStore::default();
+        let init_headers = header_map(&[("Authorization", "Bearer init-request-token")]);
+        let response_headers = header_map(&[("Mcp-Session-Id", "session-from-init")]);
+
+        let fingerprint = store
+            .parse_and_enforce_headers(&init_headers, &context)
+            .unwrap();
+        store
+            .bind_response_headers(&response_headers, &fingerprint)
+            .unwrap();
+
+        let stable_headers = header_map(&[
+            ("Mcp-Session-Id", "session-from-init"),
+            ("Authorization", "Bearer init-request-token"),
+        ]);
+        store
+            .parse_and_enforce_headers(&stable_headers, &context)
+            .unwrap();
+
+        let changed_headers = header_map(&[
+            ("Mcp-Session-Id", "session-from-init"),
+            ("Authorization", "Bearer changed-request-token"),
+        ]);
+        let error = store
+            .parse_and_enforce_headers(&changed_headers, &context)
+            .unwrap_err();
+
+        assert_eq!(
+            error.message.as_ref(),
+            "per-request authentication changed for MCP session"
+        );
+        assert!(!error.message.contains("init-request-token"));
+        assert!(!error.message.contains("changed-request-token"));
+    }
+
+    #[test]
+    fn request_auth_matrix_accepts_basic_token_and_bearer_at_mcp_boundary() {
+        let server = server_with_config(RuntimeConfig {
+            jira: Some(jira_config()),
+            confluence: Some(confluence_config()),
+            ..runtime_config()
+        });
+
+        let basic = server
+            .scoped_for_request_headers(&header_map(&[(
+                "Authorization",
+                "Basic dXNlckBleGFtcGxlLmNvbTphcGktdG9rZW4=",
+            )]))
+            .unwrap();
+        assert_eq!(
+            basic.context.jira_config().unwrap().auth,
+            AtlassianAuth::Basic {
+                username: "user@example.com".to_string(),
+                api_token: "api-token".to_string(),
+            }
+        );
+        assert_eq!(
+            basic.context.confluence_config().unwrap().auth,
+            AtlassianAuth::Basic {
+                username: "user@example.com".to_string(),
+                api_token: "api-token".to_string(),
+            }
+        );
+
+        for (scheme, token) in [
+            ("Token request-token-value", "request-token-value"),
+            ("Bearer request-bearer-value", "request-bearer-value"),
+        ] {
+            let scoped = server
+                .scoped_for_request_headers(&header_map(&[("Authorization", scheme)]))
+                .unwrap();
+            assert_eq!(
+                scoped.context.jira_config().unwrap().auth,
+                AtlassianAuth::Pat {
+                    personal_token: token.to_string(),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn request_auth_matrix_rejects_bad_headers_without_echoing_credentials() {
+        let server = server_with_config(runtime_config());
+
+        let missing_pair = match server.scoped_for_request_headers(&header_map(&[(
+            "X-Atlassian-Jira-Url",
+            "https://example.com",
+        )])) {
+            Ok(_) => panic!("missing Jira token should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            missing_pair.message.as_ref(),
+            "missing Jira URL/token header pair"
+        );
+
+        let unsupported = match server.scoped_for_request_headers(&header_map(&[(
+            "Authorization",
+            "Digest reject-this-secret",
+        )])) {
+            Ok(_) => panic!("unsupported Authorization scheme should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            unsupported.message.as_ref(),
+            "unsupported Authorization scheme `Digest`"
+        );
+        assert!(!unsupported.message.contains("reject-this-secret"));
+    }
+
+    #[test]
+    fn request_auth_matrix_respects_ignore_header_auth_and_control_plane() {
+        let ignore_headers = server_with_config(RuntimeConfig {
+            ignore_header_auth: true,
+            ..runtime_config()
+        });
+        let ignored = ignore_headers
+            .scoped_for_request_headers(&request_service_headers())
+            .unwrap();
+        assert_eq!(
+            current_tool_names(&ignored),
+            vec![MIGRATION_STATUS_TOOL_NAME.to_string()]
+        );
+
+        let read_only = server_with_config(RuntimeConfig {
+            read_only: true,
+            ..runtime_config()
+        });
+        let read_only = read_only
+            .scoped_for_request_headers(&request_service_headers())
+            .unwrap();
+        let read_only_names = current_tool_names(&read_only);
+        assert!(read_only_names.contains(&tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()));
+        assert!(!read_only_names.contains(&tools::JIRA_CREATE_ISSUE_TOOL_NAME.to_string()));
+        assert!(
+            read_only_names.contains(&confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string())
+        );
+        assert!(
+            !read_only_names
+                .contains(&confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME.to_string())
+        );
+
+        let filtered = server_with_config(RuntimeConfig {
+            enabled_tools: Some(BTreeSet::from(
+                [tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()],
+            )),
+            ..runtime_config()
+        });
+        let filtered = filtered
+            .scoped_for_request_headers(&request_service_headers())
+            .unwrap();
+        assert_eq!(
+            current_tool_names(&filtered),
+            vec![tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()]
+        );
+    }
+
     #[tokio::test]
     async fn jira_get_issue_handler_returns_structured_content_from_mock_rest() {
         let (base_url, requests) = mock_jira_server().await;
@@ -5692,9 +6109,10 @@ mod tests {
         let error = structured["attachments"][1]["content_error"]["message"]
             .as_str()
             .unwrap();
-        assert!(error.contains("/secure/attachment/2/notes.txt?<redacted>"));
+        assert!(error.contains("/secure/attachment/2/notes.txt?"));
+        assert!(error.contains("<redacted>"));
         assert!(!error.contains("token=secret"));
-        assert!(!error.contains("client=abc"));
+        assert!(error.contains("client=abc"));
         assert_eq!(requests[0].method, Method::GET);
         assert_eq!(
             requests[0].path,

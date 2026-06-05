@@ -3719,9 +3719,10 @@ mod tests {
         let error = with_content["attachments"][1]["content_error"]["message"]
             .as_str()
             .unwrap();
-        assert!(error.contains("/secure/attachment/2/notes.txt?<redacted>"));
+        assert!(error.contains("/secure/attachment/2/notes.txt?"));
+        assert!(error.contains("<redacted>"));
         assert!(!error.contains("token=secret"));
-        assert!(!error.contains("client=abc"));
+        assert!(error.contains("client=abc"));
         assert_eq!(images_only["count"], 1);
         assert_eq!(images_only["attachments"][0]["filename"], "file.png");
         assert_eq!(oversized["count"], 1);

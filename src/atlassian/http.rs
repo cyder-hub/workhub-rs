@@ -2,12 +2,15 @@
 
 use std::time::Duration;
 
-use reqwest::{Client, Method, RequestBuilder, Url, header::CONTENT_TYPE};
+use reqwest::{Client, Method, RequestBuilder, Url, header::CONTENT_TYPE, redirect::Policy};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::atlassian::{auth::AtlassianAuth, error::AtlassianError};
+use crate::atlassian::{
+    auth::AtlassianAuth, error::AtlassianError, redaction::redact_text,
+    security::MAX_SAME_ORIGIN_REDIRECTS,
+};
 
 #[derive(Clone, Debug)]
 pub struct AtlassianHttpClient {
@@ -34,6 +37,7 @@ impl AtlassianHttpClient {
         let client = Client::builder()
             .timeout(Duration::from_secs(timeout_seconds))
             .danger_accept_invalid_certs(!ssl_verify)
+            .redirect(same_origin_redirect_policy())
             .build()
             .map_err(AtlassianError::transport)?;
 
@@ -233,13 +237,57 @@ fn same_origin(left: &Url, right: &Url) -> bool {
         && left.port_or_known_default() == right.port_or_known_default()
 }
 
+fn same_origin_redirect_policy() -> Policy {
+    Policy::custom(|attempt| {
+        if attempt.previous().len() > MAX_SAME_ORIGIN_REDIRECTS {
+            return attempt.error("too many same-origin redirects");
+        }
+
+        let Some(previous) = attempt.previous().last() else {
+            return attempt.error("redirect chain is missing previous URL");
+        };
+
+        if matches!(attempt.url().scheme(), "http" | "https")
+            && same_origin(previous, attempt.url())
+        {
+            attempt.follow()
+        } else {
+            attempt.error("blocked unsafe redirect")
+        }
+    })
+}
+
 fn request_context(builder: &RequestBuilder) -> Option<String> {
     let request = builder.try_clone()?.build().ok()?;
-    Some(format!("{} {}", request.method(), request.url().path()))
+    Some(format!(
+        "{} {}",
+        request.method(),
+        redacted_path_and_query(request.url())
+    ))
+}
+
+fn redacted_path_and_query(url: &Url) -> String {
+    let mut value = url.path().to_string();
+    if let Some(query) = url.query() {
+        value.push('?');
+        value.push_str(query);
+    }
+    redact_text(&value)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use axum::{
+        Json, Router,
+        http::{StatusCode, header::LOCATION},
+        response::{IntoResponse, Redirect},
+        routing::get,
+    };
     use serde_json::json;
 
     use crate::atlassian::auth::AtlassianAuth;
@@ -318,5 +366,138 @@ mod tests {
                 .and_then(|value| value.to_str().ok())
                 .is_some_and(|value| value == expected_header)
         );
+    }
+
+    #[test]
+    fn request_context_redacts_sensitive_query_values() {
+        let builder = client()
+            .get("/rest/api/2/issue/ABC-1?token=secret&client=abc")
+            .unwrap();
+        let context = request_context(&builder).unwrap();
+
+        assert_eq!(
+            context,
+            "GET /base/rest/api/2/issue/ABC-1?token=<redacted>&client=abc"
+        );
+        assert!(!context.contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn send_json_follows_same_origin_redirects() {
+        let app = Router::new()
+            .route(
+                "/redirect-safe",
+                get(|| async { Redirect::temporary("/final") }),
+            )
+            .route("/final", get(|| async { Json(json!({ "ok": true })) }));
+        let base_url = serve(app).await;
+        let client = AtlassianHttpClient::new(
+            &base_url,
+            AtlassianAuth::Pat {
+                personal_token: "test-pat-value".to_string(),
+            },
+            75,
+            true,
+        )
+        .unwrap();
+
+        let value: Value = client
+            .send_json(client.get("/redirect-safe").unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(value, json!({ "ok": true }));
+    }
+
+    #[tokio::test]
+    async fn send_json_blocks_cross_origin_redirects_without_contacting_target() {
+        let target_hits = Arc::new(AtomicUsize::new(0));
+        let target_hits_for_route = target_hits.clone();
+        let target = serve(Router::new().route(
+            "/target",
+            get(move || {
+                let target_hits = target_hits_for_route.clone();
+                async move {
+                    target_hits.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({ "reached": true }))
+                }
+            }),
+        ))
+        .await;
+        let location = format!("{target}/target?token=secret");
+        let redirector = serve(Router::new().route(
+            "/redirect-unsafe",
+            get(move || {
+                let location = location.clone();
+                async move { (StatusCode::FOUND, [(LOCATION, location)]).into_response() }
+            }),
+        ))
+        .await;
+        let client = AtlassianHttpClient::new(
+            &redirector,
+            AtlassianAuth::Pat {
+                personal_token: "test-pat-value".to_string(),
+            },
+            75,
+            true,
+        )
+        .unwrap();
+
+        let error = client
+            .send_json::<Value>(client.get("/redirect-unsafe").unwrap())
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("redirect"));
+        assert!(!error.contains("token=secret"));
+        assert_eq!(target_hits.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn send_json_enforces_same_origin_redirect_limit() {
+        let app = Router::new().route(
+            "/redirect/{step}",
+            get(
+                |axum::extract::Path(step): axum::extract::Path<u8>| async move {
+                    if step < 4 {
+                        (
+                            StatusCode::FOUND,
+                            [(LOCATION, format!("/redirect/{}", step + 1))],
+                        )
+                            .into_response()
+                    } else {
+                        Json(json!({ "ok": true })).into_response()
+                    }
+                },
+            ),
+        );
+        let base_url = serve(app).await;
+        let client = AtlassianHttpClient::new(
+            &base_url,
+            AtlassianAuth::Pat {
+                personal_token: "test-pat-value".to_string(),
+            },
+            75,
+            true,
+        )
+        .unwrap();
+
+        let error = client
+            .send_json::<Value>(client.get("/redirect/0").unwrap())
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("redirect"));
+    }
+
+    async fn serve(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{address}")
     }
 }
