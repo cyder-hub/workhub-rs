@@ -66,6 +66,12 @@ use rmcp::{
 };
 use serde_json::{Map, Value, json};
 
+pub(crate) fn wrap_array(value: Value) -> Value {
+    match value {
+        Value::Array(items) => json!({ "items": items }),
+        other => other,
+    }
+}
 pub const SERVER_NAME: &str = "mcp-atlassian-rs";
 
 const CONFLUENCE_PAGE_EXPAND: &[&str] = &[
@@ -332,7 +338,7 @@ impl AtlassianMcpServer {
             .map_err(jira_error)?
             .to_simplified_value();
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get a Confluence page by ID or title and space key")]
@@ -491,7 +497,7 @@ impl AtlassianMcpServer {
             result["next_start"] = Value::from(start);
         }
 
-        Ok(CallToolResult::structured(result))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(result)))
     }
 
     #[tool(description = "Create a Confluence page")]
@@ -861,7 +867,9 @@ impl AtlassianMcpServer {
         }
 
         match client.get_page_views(&page_id, include_title).await {
-            Ok(views) => Ok(CallToolResult::structured(views.to_simplified_value())),
+            Ok(views) => Ok(CallToolResult::structured(crate::mcp::wrap_array(
+                views.to_simplified_value(),
+            ))),
             Err(AtlassianError::HttpStatus {
                 status, message, ..
             }) if matches!(status, 401 | 403) => Ok(CallToolResult::structured(json!({
@@ -1026,7 +1034,7 @@ impl AtlassianMcpServer {
                 "success": true,
                 "attachment": attachment,
             }))),
-            Err(error) => Ok(CallToolResult::structured(error)),
+            Err(error) => Ok(CallToolResult::structured(crate::mcp::wrap_array(error))),
         }
     }
 
@@ -1183,7 +1191,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Search Jira issues with JQL")]
@@ -1209,7 +1217,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "List Jira issues for a project")]
@@ -1223,7 +1231,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Search Jira fields by keyword")]
@@ -1237,7 +1245,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get options for a Jira field")]
@@ -1259,7 +1267,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Add a comment to a Jira issue")]
@@ -1274,7 +1282,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Edit a Jira issue comment")]
@@ -1289,7 +1297,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get available transitions for a Jira issue")]
@@ -1303,7 +1311,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Transition a Jira issue")]
@@ -1318,7 +1326,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Create a Jira issue")]
@@ -1338,7 +1346,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Create multiple Jira issues in a batch")]
@@ -1358,7 +1366,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get changelogs for multiple Jira issues")]
@@ -1376,7 +1384,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Update fields on a Jira issue")]
@@ -1401,7 +1409,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Delete a Jira issue")]
@@ -1415,7 +1423,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "List Jira projects visible to the current user")]
@@ -1429,7 +1437,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "List versions for a Jira project")]
@@ -1443,7 +1451,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "List components for a Jira project")]
@@ -1457,7 +1465,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Create a Jira project version")]
@@ -1471,7 +1479,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Create multiple Jira project versions")]
@@ -1490,7 +1498,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Retrieve a Jira user profile")]
@@ -1507,7 +1515,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get watchers for a Jira issue")]
@@ -1521,7 +1529,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Add a watcher to a Jira issue")]
@@ -1538,7 +1546,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Remove a watcher from a Jira issue")]
@@ -1555,7 +1563,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get worklogs for a Jira issue")]
@@ -1569,7 +1577,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Add a worklog entry to a Jira issue")]
@@ -1589,7 +1597,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get Jira issue link types")]
@@ -1618,7 +1626,7 @@ impl AtlassianMcpServer {
             }
         }
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Link a Jira issue to an epic using parent key")]
@@ -1635,7 +1643,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Create a link between two Jira issues")]
@@ -1654,7 +1662,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Create a remote link on a Jira issue")]
@@ -1669,7 +1677,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Remove a Jira issue link by id")]
@@ -1683,7 +1691,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Download Jira issue attachments with bounded safe content output")]
@@ -1708,7 +1716,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get image attachments for a Jira issue with safe content output")]
@@ -1732,7 +1740,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get Jira Software agile boards")]
@@ -1746,7 +1754,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get issues on a Jira Software agile board")]
@@ -1761,7 +1769,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get sprints for a Jira Software agile board")]
@@ -1776,7 +1784,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get issues for a Jira Software sprint")]
@@ -1791,7 +1799,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Create a Jira Software sprint")]
@@ -1805,7 +1813,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Update a Jira Software sprint")]
@@ -1820,7 +1828,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Add Jira issues to a sprint")]
@@ -1835,7 +1843,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get the Jira Service Management service desk for a project")]
@@ -1849,7 +1857,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get queues for a Jira Service Management service desk")]
@@ -1863,7 +1871,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get issues for a Jira Service Management queue")]
@@ -1882,7 +1890,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get Jira Forms or ProForma forms for an issue")]
@@ -1899,7 +1907,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get details for a Jira Form or ProForma form")]
@@ -1917,7 +1925,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Update answers on a Jira Form or ProForma form")]
@@ -1937,7 +1945,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get Jira issue date and status timing information")]
@@ -1955,7 +1963,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get Jira Service Management SLA metrics for an issue")]
@@ -1975,7 +1983,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get Jira development information for an issue")]
@@ -1993,7 +2001,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 
     #[tool(description = "Get Jira development information for multiple issues")]
@@ -2008,7 +2016,7 @@ impl AtlassianMcpServer {
             .await
             .map_err(jira_error)?;
 
-        Ok(CallToolResult::structured(value))
+        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
     }
 }
 
@@ -5727,25 +5735,22 @@ mod tests {
         let requests = requests.lock().await;
 
         assert_eq!(
-            projects.structured_content.as_ref().unwrap()[0]["key"],
+            projects.structured_content.as_ref().unwrap()["items"][0]["key"],
             json!("ABC")
         );
         assert_eq!(
-            projects
-                .structured_content
-                .as_ref()
-                .unwrap()
+            projects.structured_content.as_ref().unwrap()["items"]
                 .as_array()
                 .unwrap()
                 .len(),
             1
         );
         assert_eq!(
-            versions.structured_content.as_ref().unwrap()[0]["name"],
+            versions.structured_content.as_ref().unwrap()["items"][0]["name"],
             json!("v1")
         );
         assert_eq!(
-            components.structured_content.as_ref().unwrap()[1],
+            components.structured_content.as_ref().unwrap()["items"][1],
             json!({})
         );
         assert_eq!(

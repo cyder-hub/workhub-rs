@@ -204,7 +204,15 @@ pub fn ensure_project_allowed(
 }
 
 pub fn inject_project_filter(jql: &str, projects: &[String]) -> String {
+    let jql = jql.trim();
+    let has_order_by_only = jql.to_ascii_uppercase().starts_with("ORDER BY");
+
     if projects.is_empty() {
+        if jql.is_empty() {
+            return "issuekey IS NOT EMPTY".to_string();
+        } else if has_order_by_only {
+            return format!("issuekey IS NOT EMPTY {jql}");
+        }
         return jql.to_string();
     }
 
@@ -219,7 +227,18 @@ pub fn inject_project_filter(jql: &str, projects: &[String]) -> String {
         format!("project in ({values})")
     };
 
-    if jql.trim().is_empty() {
+    let upper_jql = jql.to_ascii_uppercase();
+    if let Some(idx) = upper_jql.rfind(" ORDER BY ") {
+        let filter_part = jql[..idx].trim();
+        let order_part = jql[idx..].trim();
+        if filter_part.is_empty() {
+            format!("{project_clause} {order_part}")
+        } else {
+            format!("({project_clause}) AND ({filter_part}) {order_part}")
+        }
+    } else if upper_jql.starts_with("ORDER BY") {
+        format!("{project_clause} {jql}")
+    } else if jql.is_empty() {
         project_clause
     } else {
         format!("({project_clause}) AND ({jql})")
