@@ -2,7 +2,7 @@
 
 Rust migration workspace for MCP Atlassian.
 
-This repository is migrating the Python `mcp-atlassian` Jira and Confluence MCP server to a Rust-native implementation. The Rust binary currently has the shared MCP runtime/control plane, 49 Jira business tools, and 24 Confluence business tools implemented with local mock REST and MCP smoke coverage. Stage 5 integrated acceptance has also validated representative real Jira, real Confluence, dual-service MCP, release, Docker, and compose paths. Stage 6 added the mandatory production safety foundation for redaction, request-scoped streamable HTTP auth, SSRF/allowed-domain checks, and redirect protection.
+This repository is migrating the Python `mcp-atlassian` Jira and Confluence MCP server to a Rust-native implementation. The Rust binary currently has the shared MCP runtime/control plane, 49 Jira business tools, and 24 Confluence business tools implemented with local mock REST and MCP smoke coverage. Stage 5 integrated acceptance has also validated representative real Jira, real Confluence, dual-service MCP, release, Docker, and compose paths. Stage 6 added the mandatory production safety foundation for redaction, request-scoped streamable HTTP auth, SSRF/allowed-domain checks, and redirect protection. Stage 7 added compatibility auth and network support for BYOT access tokens, Bearer disambiguation, Cloud API gateway base rewrite, HTTP/HTTPS proxy, NO_PROXY, custom outbound headers, and mTLS client cert/key.
 
 ## Current Status
 
@@ -11,11 +11,13 @@ Implemented in the Rust root project:
 - Package, binary, server name, Docker image, compose service, and CI image identity use `mcp-atlassian-rs`.
 - MCP server runs over `stdio` and streamable HTTP at `/mcp`.
 - Logging is configured to stderr so stdio MCP stdout remains protocol-only.
-- Runtime control-plane config parses `READ_ONLY_MODE`, `ENABLED_TOOLS`, `TOOLSETS`, `ATLASSIAN_OAUTH_CLOUD_ID`, `MCP_ALLOWED_URL_DOMAINS`, `IGNORE_HEADER_AUTH`, `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, and `MCP_HTTP_PATH`.
-- Jira config parses `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`, `JIRA_PERSONAL_TOKEN`, `JIRA_SSL_VERIFY`, `JIRA_PROJECTS_FILTER`, and `JIRA_TIMEOUT`.
-- Confluence config parses `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_API_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `CONFLUENCE_SSL_VERIFY`, `CONFLUENCE_SPACES_FILTER`, and `CONFLUENCE_TIMEOUT`.
+- Runtime control-plane config parses `READ_ONLY_MODE`, `ENABLED_TOOLS`, `TOOLSETS`, `ATLASSIAN_OAUTH_CLOUD_ID`, `ATLASSIAN_OAUTH_ENABLE`, `MCP_ALLOWED_URL_DOMAINS`, `IGNORE_HEADER_AUTH`, `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, and `MCP_HTTP_PATH`.
+- Jira config parses `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`, `JIRA_PERSONAL_TOKEN`, `ATLASSIAN_OAUTH_ACCESS_TOKEN`, `JIRA_OAUTH_ACCESS_TOKEN`, `JIRA_SSL_VERIFY`, `JIRA_PROJECTS_FILTER`, `JIRA_TIMEOUT`, `JIRA_HTTP_PROXY`, `JIRA_HTTPS_PROXY`, `JIRA_NO_PROXY`, `JIRA_CUSTOM_HEADERS`, `JIRA_CLIENT_CERT`, `JIRA_CLIENT_KEY`, and `JIRA_CLIENT_KEY_PASSWORD`.
+- Confluence config parses `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_API_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `ATLASSIAN_OAUTH_ACCESS_TOKEN`, `CONFLUENCE_OAUTH_ACCESS_TOKEN`, `CONFLUENCE_SSL_VERIFY`, `CONFLUENCE_SPACES_FILTER`, `CONFLUENCE_TIMEOUT`, `CONFLUENCE_HTTP_PROXY`, `CONFLUENCE_HTTPS_PROXY`, `CONFLUENCE_NO_PROXY`, `CONFLUENCE_CUSTOM_HEADERS`, `CONFLUENCE_CLIENT_CERT`, `CONFLUENCE_CLIENT_KEY`, and `CONFLUENCE_CLIENT_KEY_PASSWORD`.
 - Jira Cloud uses username/API token auth for `*.atlassian.net`; Jira Server/Data Center uses PAT auth.
 - Confluence Cloud uses username/API token auth for `*.atlassian.net`; Confluence Server/Data Center uses PAT auth.
+- Cloud BYOT access tokens use `https://api.atlassian.com/ex/jira/{cloud_id}` for Jira and `https://api.atlassian.com/ex/confluence/{cloud_id}/wiki` for Confluence. Server/Data Center BYOT keeps the configured service base URL.
+- Service network config supports typed HTTP/HTTPS proxy, NO_PROXY, custom outbound headers, and mTLS client cert/key. SOCKS proxy envs fail closed as unsupported.
 - Shared Atlassian HTTP/auth/error helpers and Jira models/client/tool handlers are implemented for the Stage 2 core tools and the completed Stage 3 Jira extensions.
 - Tool registry metadata, service availability filtering, toolset filtering, enabled-tools filtering, and read-only write guards are in place for migrated tools.
 - Stage 3 Jira extension tools are implemented for local mock validation: create/update/delete issue, batch create, changelog bulk fetch, projects, versions, users, watchers, worklog, links, attachment download, issue image retrieval, agile boards/sprints, service desk queues, Forms/ProForma, metrics/SLA, and development information.
@@ -25,6 +27,7 @@ Implemented in the Rust root project:
 - Local stdio, streamable HTTP, and read-only smoke commands validate MCP initialization, Jira and Confluence tool discovery, mock read calls, `/healthz`, and write-tool blocking.
 - Stage 5 local gate passed `cargo fmt --check`, `cargo check`, `cargo test`, local stdio/HTTP/Jira/Confluence smokes, release build, Docker build, compose config, and compose `/healthz` smoke.
 - Stage 5 real acceptance passed Jira core read paths, Jira Agile board lookup, SLA read, development-info single/batch paths, Confluence page/comment/label/analytics/attachment representative paths, and dual-service MCP stdio/HTTP representative calls.
+- Stage 7 local gate passed `cargo fmt --check`, `cargo check`, `cargo test`, local stdio/HTTP/Jira/Confluence smokes, and aggregate smoke.
 - The temporary MCP tool `migration_status` reports the migration state.
 
 Deferred:
@@ -32,7 +35,8 @@ Deferred:
 - `confluence_get_page_views` is Cloud-only. Confluence Server/Data Center returns a structured unavailable response; Stage 5 validated the Cloud representative path.
 - Jira Service Management and Forms/ProForma remain objectively blocked in the Stage 5 test tenant: JSM service desk lookup returned 403, and the current Forms client path did not receive an effective Forms API response. These toolsets are implemented with local mock/product-dependency coverage but are not documented as real-accepted.
 - `confluence_search_user` is implemented with local mock coverage. Stage 5 did not include a dedicated real user-search row, so it remains local-validated only.
-- OAuth Cloud 3LO, BYOT, Data Center OAuth, SSE transport compatibility, proxy/custom outbound headers, mTLS, and broader compatibility auth/transport/network decisions remain Stage 7 work.
+- OAuth Cloud 3LO, OAuth proxy/DCR, OAuth refresh/token storage, and Data Center OAuth authorization-code/refresh flows are not implemented and remain Stage 8 support-matrix/backlog inputs.
+- SSE transport, SOCKS proxy, and system truststore injection are not implemented in the Rust server. Supported transports are `stdio` and streamable HTTP.
 - Release pipeline, Helm, production deployment docs, parity audit, and long-term support matrix finalization remain Stage 8 work. Stage 5 only validated the local release binary, local Docker build, compose config, and a compose `/healthz` smoke.
 
 ## Stage 5 Gate Result
@@ -114,9 +118,15 @@ Optional Jira variables:
 | `JIRA_SSL_VERIFY` | `true` | Set `false`, `0`, `no`, or `off` to disable TLS certificate verification for Jira requests. |
 | `JIRA_PROJECTS_FILTER` | unset | Comma-separated project keys. Filters `jira_get_issue` by issue key prefix and injects a project filter into JQL search. |
 | `JIRA_TIMEOUT` | `75` | Jira HTTP request timeout in seconds. Must be a positive integer. |
-| `ATLASSIAN_OAUTH_CLOUD_ID` | unset | Optional Cloud ID used by Jira Forms/ProForma helpers. Missing values return a structured product-dependency response. |
+| `ATLASSIAN_OAUTH_ACCESS_TOKEN` | unset | Shared BYOT/OAuth access token fallback for Jira and Confluence. For Jira Cloud, `ATLASSIAN_OAUTH_CLOUD_ID` is required and the effective base URL is rewritten to the Atlassian API gateway. |
+| `JIRA_OAUTH_ACCESS_TOKEN` | unset | Jira-specific BYOT/OAuth access token. Takes precedence over `ATLASSIAN_OAUTH_ACCESS_TOKEN` for Jira. |
+| `ATLASSIAN_OAUTH_CLOUD_ID` | unset | Required for Cloud BYOT access-token auth. Also used by Jira Forms/ProForma helpers. Missing Forms values return a structured product-dependency response. |
+| `JIRA_HTTP_PROXY` / `JIRA_HTTPS_PROXY` / `JIRA_NO_PROXY` | unset | Jira-specific proxy config. HTTP/HTTPS proxy URLs must use `http` or `https`; `JIRA_NO_PROXY` bypasses matching hosts. Falls back to `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` when unset. |
+| `JIRA_CUSTOM_HEADERS` | unset | Comma-separated `Header-Name=value` pairs added to outbound Jira requests after validation. Reserved auth, cookie, host, content, proxy, connection, and request-scoped Atlassian headers are rejected. |
+| `JIRA_CLIENT_CERT` / `JIRA_CLIENT_KEY` | unset | PEM client certificate and key paths for Jira mTLS. Both must be set together. |
+| `JIRA_CLIENT_KEY_PASSWORD` | unset | Explicitly unsupported. Setting it returns a configuration error. |
 
-OAuth, BYOT, and Data Center OAuth are not implemented. Stage 6 `Authorization: Bearer` is treated only as a PAT-compatible request credential, not as OAuth support.
+Full OAuth Cloud 3LO, OAuth proxy/DCR, refresh/token storage, and Data Center OAuth authorization-code/refresh flows are not implemented. BYOT access-token auth is supported as described above.
 
 ## Confluence Configuration
 
@@ -148,8 +158,50 @@ Optional Confluence variables:
 | `CONFLUENCE_SSL_VERIFY` | `true` | Set `false`, `0`, `no`, or `off` to disable TLS certificate verification for Confluence requests. |
 | `CONFLUENCE_SPACES_FILTER` | unset | Comma-separated space keys. Applies to Confluence search when the tool call does not provide `spaces_filter`; an explicit empty `spaces_filter` disables the env filter. |
 | `CONFLUENCE_TIMEOUT` | `75` | Confluence HTTP request timeout in seconds. Must be a positive integer. |
+| `ATLASSIAN_OAUTH_ACCESS_TOKEN` | unset | Shared BYOT/OAuth access token fallback for Jira and Confluence. For Confluence Cloud, `ATLASSIAN_OAUTH_CLOUD_ID` is required and the effective base URL is rewritten to the Atlassian API gateway. |
+| `CONFLUENCE_OAUTH_ACCESS_TOKEN` | unset | Confluence-specific BYOT/OAuth access token. Takes precedence over `ATLASSIAN_OAUTH_ACCESS_TOKEN` for Confluence. |
+| `ATLASSIAN_OAUTH_CLOUD_ID` | unset | Required for Cloud BYOT access-token auth. |
+| `CONFLUENCE_HTTP_PROXY` / `CONFLUENCE_HTTPS_PROXY` / `CONFLUENCE_NO_PROXY` | unset | Confluence-specific proxy config. HTTP/HTTPS proxy URLs must use `http` or `https`; `CONFLUENCE_NO_PROXY` bypasses matching hosts. Falls back to `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` when unset. |
+| `CONFLUENCE_CUSTOM_HEADERS` | unset | Comma-separated `Header-Name=value` pairs added to outbound Confluence requests after validation. Reserved auth, cookie, host, content, proxy, connection, and request-scoped Atlassian headers are rejected. |
+| `CONFLUENCE_CLIENT_CERT` / `CONFLUENCE_CLIENT_KEY` | unset | PEM client certificate and key paths for Confluence mTLS. Both must be set together. |
+| `CONFLUENCE_CLIENT_KEY_PASSWORD` | unset | Explicitly unsupported. Setting it returns a configuration error. |
 
-OAuth, BYOT, proxy/custom outbound headers, and mTLS are not implemented. Stage 6 request-scoped headers and SSRF protections are available only on the streamable HTTP MCP endpoint.
+Full OAuth Cloud 3LO, OAuth proxy/DCR, refresh/token storage, and Data Center OAuth authorization-code/refresh flows are not implemented. BYOT access-token auth, proxy/custom outbound headers, and mTLS client cert/key are supported as described above.
+
+## Stage 7 Compatibility Auth And Network
+
+BYOT access tokens:
+
+- Cloud Jira with `ATLASSIAN_OAUTH_ACCESS_TOKEN` or `JIRA_OAUTH_ACCESS_TOKEN` requires `ATLASSIAN_OAUTH_CLOUD_ID` and uses `https://api.atlassian.com/ex/jira/{cloud_id}`.
+- Cloud Confluence with `ATLASSIAN_OAUTH_ACCESS_TOKEN` or `CONFLUENCE_OAUTH_ACCESS_TOKEN` requires `ATLASSIAN_OAUTH_CLOUD_ID` and uses `https://api.atlassian.com/ex/confluence/{cloud_id}/wiki`.
+- Server/Data Center PAT takes precedence over BYOT access-token auth. When no PAT is set, Server/Data Center can use the BYOT access token against the configured service URL.
+- Access tokens, proxy credentials, custom header values, and client key contents are redacted from Debug/error output.
+
+Proxy and custom headers:
+
+| Variable | Behavior |
+| --- | --- |
+| `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | Global fallback for Jira and Confluence when a service-specific proxy variable is unset. |
+| `JIRA_HTTP_PROXY` / `JIRA_HTTPS_PROXY` / `JIRA_NO_PROXY` | Jira-specific proxy config. |
+| `CONFLUENCE_HTTP_PROXY` / `CONFLUENCE_HTTPS_PROXY` / `CONFLUENCE_NO_PROXY` | Confluence-specific proxy config. |
+| `JIRA_CUSTOM_HEADERS` | Jira outbound headers as comma-separated `Name=value` pairs. |
+| `CONFLUENCE_CUSTOM_HEADERS` | Confluence outbound headers as comma-separated `Name=value` pairs. |
+
+Reserved custom header names are rejected: `Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`, `Host`, `Content-Type`, `Content-Length`, `Transfer-Encoding`, `Connection`, `X-Atlassian-Jira-Personal-Token`, `X-Atlassian-Confluence-Personal-Token`, `X-Atlassian-Jira-Url`, `X-Atlassian-Confluence-Url`, and `X-Atlassian-Cloud-Id`.
+
+mTLS:
+
+| Variable | Behavior |
+| --- | --- |
+| `JIRA_CLIENT_CERT` / `JIRA_CLIENT_KEY` | Jira PEM client certificate and key paths. Must be set together. |
+| `CONFLUENCE_CLIENT_CERT` / `CONFLUENCE_CLIENT_KEY` | Confluence PEM client certificate and key paths. Must be set together. |
+| `JIRA_CLIENT_KEY_PASSWORD` / `CONFLUENCE_CLIENT_KEY_PASSWORD` | Explicitly unsupported. Setting either variable returns a configuration error. |
+
+Explicitly unsupported:
+
+- `JIRA_SOCKS_PROXY`, `CONFLUENCE_SOCKS_PROXY`, and `SOCKS_PROXY` return a configuration error. SOCKS proxy support is not compiled in.
+- `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE` is not implemented; the Rust server does not inject a system truststore.
+- SSE transport is not implemented.
 
 ## Confluence Content Conversion Boundary
 
@@ -164,13 +216,15 @@ The Rust implementation does not claim Python `md2conf` parity in Stage 4. Merma
 | `READ_ONLY_MODE` | `false` | Truthy values are `true`, `1`, `yes`, `y`, and `on`. Write tools are hidden from discovery and blocked on direct call when enabled. |
 | `ENABLED_TOOLS` | unset | Comma-separated tool names. Empty or unset means no name filtering. |
 | `TOOLSETS` | all toolsets | Supports `all`, `default`, or comma-separated toolset names. Unknown-only values fail closed. `migration_status` is not part of Jira or Confluence toolsets. |
+| `ATLASSIAN_OAUTH_CLOUD_ID` | unset | Global Cloud ID used by Cloud BYOT access-token auth and request-scoped Bearer disambiguation when a request does not provide `X-Atlassian-Cloud-Id`. |
+| `ATLASSIAN_OAUTH_ENABLE` | `false` | Truthy values are `true`, `1`, `yes`, `y`, and `on`. When enabled, streamable HTTP `Authorization: Bearer` is interpreted as a BYOT/OAuth access token instead of PAT-compatible auth. |
 | `MCP_ALLOWED_URL_DOMAINS` | unset | Optional comma-separated domain allowlist for header-provided Jira/Confluence service URLs. Exact domain and subdomain matches are accepted; URL values, IP literals, localhost, and metadata hostnames are rejected. |
 | `IGNORE_HEADER_AUTH` | `false` | Truthy values are `true`, `1`, `yes`, `y`, and `on`. When enabled, streamable HTTP ignores all request-scoped auth/service headers and uses only global env service config. |
 | `MCP_HTTP_HOST` | `127.0.0.1` | Streamable HTTP host when not overridden by CLI. |
 | `MCP_HTTP_PORT` | `8000` | Streamable HTTP port when not overridden by CLI. |
 | `MCP_HTTP_PATH` | `/mcp` | Streamable HTTP MCP path when not overridden by CLI. A missing leading slash is normalized. |
 
-Supported transports are `stdio` and streamable HTTP. SSE is not implemented; Stage 7 must classify it as implemented, explicitly unsupported, or Stage 8 backlog.
+Supported transports are `stdio` and streamable HTTP. SSE is explicitly unsupported in the Rust implementation.
 
 The health endpoint is always:
 
@@ -178,9 +232,9 @@ The health endpoint is always:
 GET http://127.0.0.1:8000/healthz
 ```
 
-## Stage 6 Security And Request Auth
+## Stage 6/7 Security And Request Auth
 
-Stage 6 security is active for the streamable HTTP MCP endpoint. It does not affect `stdio` global-env behavior except for shared redaction and outbound redirect policy.
+Stage 6 security is active for the streamable HTTP MCP endpoint. Stage 7 extends request-scoped Bearer handling for BYOT access tokens. These request-scoped headers do not affect `stdio` global-env behavior except for shared redaction and outbound redirect policy.
 
 Supported request-scoped headers:
 
@@ -188,10 +242,10 @@ Supported request-scoped headers:
 | --- | --- |
 | `Authorization: Basic <base64(email:api_token)>` | Overrides credentials for already configured Jira/Confluence services in the current HTTP request or MCP session. |
 | `Authorization: Token <pat>` | Uses the token as a PAT-compatible credential for already configured services. |
-| `Authorization: Bearer <token>` | Uses the token as a PAT-compatible credential only. This is not OAuth. |
+| `Authorization: Bearer <token>` | Uses the token as a BYOT/OAuth access token when `X-Atlassian-Cloud-Id` is present or global `ATLASSIAN_OAUTH_ENABLE=true`; otherwise keeps the Stage 6 PAT-compatible behavior. |
 | `X-Atlassian-Jira-Url` + `X-Atlassian-Jira-Personal-Token` | Creates or overrides the Jira config for the current request/session after URL validation. |
 | `X-Atlassian-Confluence-Url` + `X-Atlassian-Confluence-Personal-Token` | Creates or overrides the Confluence config for the current request/session after URL validation. |
-| `X-Atlassian-Cloud-Id` | Sets request-scoped Cloud ID context. It does not enable OAuth. |
+| `X-Atlassian-Cloud-Id` | Sets request-scoped Cloud ID context and is a BYOT signal for `Authorization: Bearer`. |
 
 Security behavior:
 
@@ -199,7 +253,8 @@ Security behavior:
 - Header-provided service URLs must use `http` or `https`, have a hostname, and cannot target localhost, metadata hostnames, private, loopback, link-local, multicast, unspecified, documentation, or DNS-resolved non-global IP addresses.
 - When `MCP_ALLOWED_URL_DOMAINS` is set, header-provided service URLs must match an allowed domain or subdomain.
 - Outbound Atlassian HTTP redirects are limited to same-origin `http`/`https` redirects, maximum 3 hops.
-- Request auth fingerprint is bound to `Mcp-Session-Id`; changing request auth within the same MCP session is rejected.
+- Request-scoped BYOT, service URL, and credential overrides apply only to the current streamable HTTP request or MCP session and do not mutate global env service config.
+- Request auth fingerprint is bound to `Mcp-Session-Id`; changing request auth or token type within the same MCP session is rejected.
 - Logs, MCP debug argument output, acceptance compact errors, HTTP status summaries, and URL query values are redacted for secret-looking header, token, cookie, password, key, signature, and env secret values.
 
 ## MCP Tools

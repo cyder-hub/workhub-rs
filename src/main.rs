@@ -401,6 +401,13 @@ mod tests {
         assert!(parse_args(["http"]).is_err());
     }
 
+    #[test]
+    fn parse_args_rejects_sse_transport() {
+        let error = parse_args(["sse"]).unwrap_err();
+
+        assert_eq!(error, "unknown command `sse`");
+    }
+
     #[tokio::test]
     async fn healthz_reports_ok_without_runtime_details() {
         let Json(response) = healthz().await;

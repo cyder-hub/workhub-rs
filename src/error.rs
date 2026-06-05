@@ -10,6 +10,33 @@ pub enum ConfigError {
         variable: &'static str,
         value: String,
     },
+    InvalidProxyUrl {
+        variable: &'static str,
+    },
+    UnsupportedSocksProxy {
+        variable: &'static str,
+    },
+    InvalidCustomHeaderFormat {
+        variable: &'static str,
+    },
+    InvalidCustomHeaderName {
+        variable: &'static str,
+    },
+    InvalidCustomHeaderValue {
+        variable: &'static str,
+        header: String,
+    },
+    ReservedCustomHeader {
+        variable: &'static str,
+        header: String,
+    },
+    MissingClientCertKeyPair {
+        cert_variable: &'static str,
+        key_variable: &'static str,
+    },
+    UnsupportedClientKeyPassword {
+        variable: &'static str,
+    },
     MissingJiraUrl {
         credential_variables: Vec<&'static str>,
     },
@@ -21,6 +48,10 @@ pub enum ConfigError {
     },
     MissingJiraPersonalToken {
         variable: &'static str,
+    },
+    MissingJiraOAuthCloudId {
+        access_token_variables: Vec<&'static str>,
+        cloud_id_variable: &'static str,
     },
     InvalidJiraTimeout {
         variable: &'static str,
@@ -38,6 +69,10 @@ pub enum ConfigError {
     MissingConfluencePersonalToken {
         variable: &'static str,
     },
+    MissingConfluenceOAuthCloudId {
+        access_token_variables: Vec<&'static str>,
+        cloud_id_variable: &'static str,
+    },
     InvalidConfluenceTimeout {
         variable: &'static str,
         value: String,
@@ -52,6 +87,51 @@ impl Display for ConfigError {
             }
             Self::InvalidAllowedUrlDomain { variable, value } => {
                 write!(formatter, "invalid {variable} domain `{value}`")
+            }
+            Self::InvalidProxyUrl { variable } => {
+                write!(
+                    formatter,
+                    "invalid {variable} proxy URL; expected http or https URL"
+                )
+            }
+            Self::UnsupportedSocksProxy { variable } => {
+                write!(formatter, "SOCKS proxy is not supported via {variable}")
+            }
+            Self::InvalidCustomHeaderFormat { variable } => {
+                write!(
+                    formatter,
+                    "invalid {variable} custom header; expected comma-separated key=value pairs"
+                )
+            }
+            Self::InvalidCustomHeaderName { variable } => {
+                write!(formatter, "invalid {variable} custom header name")
+            }
+            Self::InvalidCustomHeaderValue { variable, header } => {
+                write!(
+                    formatter,
+                    "invalid {variable} custom header value for `{header}`"
+                )
+            }
+            Self::ReservedCustomHeader { variable, header } => {
+                write!(
+                    formatter,
+                    "reserved header `{header}` is not allowed in {variable}"
+                )
+            }
+            Self::MissingClientCertKeyPair {
+                cert_variable,
+                key_variable,
+            } => {
+                write!(
+                    formatter,
+                    "mTLS client certificate and key must be configured together: {cert_variable}, {key_variable}"
+                )
+            }
+            Self::UnsupportedClientKeyPassword { variable } => {
+                write!(
+                    formatter,
+                    "encrypted mTLS client keys are not supported via {variable}"
+                )
             }
             Self::MissingJiraUrl {
                 credential_variables,
@@ -78,6 +158,14 @@ impl Display for ConfigError {
                     "missing Jira Server/Data Center credential variable: {variable}"
                 )
             }
+            Self::MissingJiraOAuthCloudId {
+                access_token_variables,
+                cloud_id_variable,
+            } => write!(
+                formatter,
+                "missing {cloud_id_variable} while Jira OAuth/BYOT access token variables are set: {}",
+                access_token_variables.join(", ")
+            ),
             Self::InvalidJiraTimeout { variable, value } => {
                 write!(formatter, "invalid {variable} value `{value}`")
             }
@@ -106,6 +194,14 @@ impl Display for ConfigError {
                     "missing Confluence Server/Data Center credential variable: {variable}"
                 )
             }
+            Self::MissingConfluenceOAuthCloudId {
+                access_token_variables,
+                cloud_id_variable,
+            } => write!(
+                formatter,
+                "missing {cloud_id_variable} while Confluence OAuth/BYOT access token variables are set: {}",
+                access_token_variables.join(", ")
+            ),
             Self::InvalidConfluenceTimeout { variable, value } => {
                 write!(formatter, "invalid {variable} value `{value}`")
             }

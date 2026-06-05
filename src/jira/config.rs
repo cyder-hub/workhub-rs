@@ -2,7 +2,21 @@ use std::collections::BTreeSet;
 
 use reqwest::Url;
 
-use crate::{atlassian::auth::AtlassianAuth, error::ConfigError};
+use crate::{
+    atlassian::{
+        auth::AtlassianAuth,
+        compat::{
+            ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN, ENV_ATLASSIAN_OAUTH_CLOUD_ID, ENV_JIRA_CLIENT_CERT,
+            ENV_JIRA_CLIENT_KEY, ENV_JIRA_CLIENT_KEY_PASSWORD, ENV_JIRA_CUSTOM_HEADERS,
+            ENV_JIRA_HTTP_PROXY, ENV_JIRA_HTTPS_PROXY, ENV_JIRA_NO_PROXY,
+            ENV_JIRA_OAUTH_ACCESS_TOKEN, ENV_JIRA_SOCKS_PROXY,
+        },
+        custom_headers::CustomHeaders,
+        mtls::ClientTlsIdentityConfig,
+        proxy::ProxyConfig,
+    },
+    error::ConfigError,
+};
 
 pub const ENV_JIRA_URL: &str = "JIRA_URL";
 pub const ENV_JIRA_USERNAME: &str = "JIRA_USERNAME";
@@ -19,7 +33,11 @@ pub struct JiraConfig {
     pub base_url: String,
     pub deployment: JiraDeployment,
     pub auth: AtlassianAuth,
+    pub oauth_cloud_id: Option<String>,
     pub ssl_verify: bool,
+    pub proxy: ProxyConfig,
+    pub custom_headers: CustomHeaders,
+    pub mtls: Option<ClientTlsIdentityConfig>,
     pub projects_filter: BTreeSet<String>,
     pub timeout_seconds: u64,
 }
@@ -33,12 +51,36 @@ impl JiraConfig {
         let username = optional_var(get_var, ENV_JIRA_USERNAME);
         let api_token = optional_var(get_var, ENV_JIRA_API_TOKEN);
         let personal_token = optional_var(get_var, ENV_JIRA_PERSONAL_TOKEN);
+        let service_oauth_access_token = optional_var(get_var, ENV_JIRA_OAUTH_ACCESS_TOKEN);
+        let shared_oauth_access_token = optional_var(get_var, ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN);
+        let oauth_access_token = service_oauth_access_token
+            .clone()
+            .or_else(|| shared_oauth_access_token.clone());
+        let oauth_access_token_variables = present_variables([
+            (
+                ENV_JIRA_OAUTH_ACCESS_TOKEN,
+                service_oauth_access_token.as_ref(),
+            ),
+            (
+                ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN,
+                shared_oauth_access_token.as_ref(),
+            ),
+        ]);
+        let oauth_cloud_id = optional_var(get_var, ENV_ATLASSIAN_OAUTH_CLOUD_ID);
 
         let Some(base_url) = base_url else {
             let credential_variables = present_variables([
                 (ENV_JIRA_USERNAME, username.as_ref()),
                 (ENV_JIRA_API_TOKEN, api_token.as_ref()),
                 (ENV_JIRA_PERSONAL_TOKEN, personal_token.as_ref()),
+                (
+                    ENV_JIRA_OAUTH_ACCESS_TOKEN,
+                    service_oauth_access_token.as_ref(),
+                ),
+                (
+                    ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN,
+                    shared_oauth_access_token.as_ref(),
+                ),
             ]);
 
             if credential_variables.is_empty() {
@@ -52,38 +94,85 @@ impl JiraConfig {
 
         let parsed_url = parse_base_url(&base_url)?;
         let deployment = JiraDeployment::from_base_url(&parsed_url);
-        let auth = match deployment {
+        let (auth, oauth_cloud_id) = match deployment {
             JiraDeployment::Cloud => {
-                let missing_variables = missing_variables([
-                    (ENV_JIRA_USERNAME, username.as_ref()),
-                    (ENV_JIRA_API_TOKEN, api_token.as_ref()),
-                ]);
+                if let Some(access_token) = oauth_access_token {
+                    let Some(cloud_id) = oauth_cloud_id else {
+                        return Err(ConfigError::MissingJiraOAuthCloudId {
+                            access_token_variables: oauth_access_token_variables,
+                            cloud_id_variable: ENV_ATLASSIAN_OAUTH_CLOUD_ID,
+                        });
+                    };
 
-                if !missing_variables.is_empty() {
-                    return Err(ConfigError::MissingJiraCloudCredentials { missing_variables });
-                }
+                    (
+                        AtlassianAuth::OAuthAccessToken { access_token },
+                        Some(cloud_id),
+                    )
+                } else {
+                    let missing_variables = missing_variables([
+                        (ENV_JIRA_USERNAME, username.as_ref()),
+                        (ENV_JIRA_API_TOKEN, api_token.as_ref()),
+                    ]);
 
-                AtlassianAuth::Basic {
-                    username: username.expect("missing variables were checked"),
-                    api_token: api_token.expect("missing variables were checked"),
+                    if !missing_variables.is_empty() {
+                        return Err(ConfigError::MissingJiraCloudCredentials { missing_variables });
+                    }
+
+                    (
+                        AtlassianAuth::Basic {
+                            username: username.expect("missing variables were checked"),
+                            api_token: api_token.expect("missing variables were checked"),
+                        },
+                        None,
+                    )
                 }
             }
             JiraDeployment::ServerDataCenter => {
-                let Some(personal_token) = personal_token else {
+                if let Some(personal_token) = personal_token {
+                    (AtlassianAuth::Pat { personal_token }, None)
+                } else if let Some(access_token) = oauth_access_token {
+                    (AtlassianAuth::OAuthAccessToken { access_token }, None)
+                } else if let (Some(username), Some(api_token)) = (username, api_token) {
+                    (
+                        AtlassianAuth::Basic {
+                            username,
+                            api_token,
+                        },
+                        None,
+                    )
+                } else {
                     return Err(ConfigError::MissingJiraPersonalToken {
                         variable: ENV_JIRA_PERSONAL_TOKEN,
                     });
-                };
-
-                AtlassianAuth::Pat { personal_token }
+                }
             }
         };
 
+        let base_url = normalize_effective_base_url(parsed_url, deployment, &auth, &oauth_cloud_id);
+        let proxy = ProxyConfig::from_var_provider(
+            get_var,
+            ENV_JIRA_HTTP_PROXY,
+            ENV_JIRA_HTTPS_PROXY,
+            ENV_JIRA_NO_PROXY,
+            ENV_JIRA_SOCKS_PROXY,
+        )?;
+        let custom_headers = CustomHeaders::from_var_provider(get_var, ENV_JIRA_CUSTOM_HEADERS)?;
+        let mtls = ClientTlsIdentityConfig::from_var_provider(
+            get_var,
+            ENV_JIRA_CLIENT_CERT,
+            ENV_JIRA_CLIENT_KEY,
+            ENV_JIRA_CLIENT_KEY_PASSWORD,
+        )?;
+
         Ok(Some(Self {
-            base_url: normalize_base_url(parsed_url),
+            base_url,
             deployment,
             auth,
+            oauth_cloud_id,
             ssl_verify: parse_ssl_verify(optional_var(get_var, ENV_JIRA_SSL_VERIFY).as_deref()),
+            proxy,
+            custom_headers,
+            mtls,
             projects_filter: parse_project_filter(optional_var(get_var, ENV_JIRA_PROJECTS_FILTER)),
             timeout_seconds: parse_timeout_seconds(optional_var(get_var, ENV_JIRA_TIMEOUT))?,
         }))
@@ -92,8 +181,27 @@ impl JiraConfig {
     pub fn is_auth_configured(&self) -> bool {
         matches!(
             self.auth,
-            AtlassianAuth::Basic { .. } | AtlassianAuth::Pat { .. }
+            AtlassianAuth::Basic { .. }
+                | AtlassianAuth::Pat { .. }
+                | AtlassianAuth::OAuthAccessToken { .. }
         )
+    }
+
+    pub fn with_auth_override(&self, auth: AtlassianAuth, oauth_cloud_id: Option<String>) -> Self {
+        let mut config = self.clone();
+        let effective_cloud_id = if matches!(auth, AtlassianAuth::OAuthAccessToken { .. })
+            && self.deployment == JiraDeployment::Cloud
+        {
+            oauth_cloud_id
+        } else {
+            None
+        };
+        if let Some(cloud_id) = effective_cloud_id.as_ref() {
+            config.base_url = cloud_oauth_api_base_url(cloud_id);
+        }
+        config.auth = auth;
+        config.oauth_cloud_id = effective_cloud_id;
+        config
     }
 }
 
@@ -149,6 +257,30 @@ fn parse_base_url(value: &str) -> Result<Url, ConfigError> {
 fn normalize_base_url(mut url: Url) -> String {
     url.set_query(None);
     url.set_fragment(None);
+    url.to_string().trim_end_matches('/').to_string()
+}
+
+fn normalize_effective_base_url(
+    url: Url,
+    deployment: JiraDeployment,
+    auth: &AtlassianAuth,
+    oauth_cloud_id: &Option<String>,
+) -> String {
+    if deployment == JiraDeployment::Cloud
+        && matches!(auth, AtlassianAuth::OAuthAccessToken { .. })
+        && let Some(cloud_id) = oauth_cloud_id
+    {
+        return cloud_oauth_api_base_url(cloud_id);
+    }
+
+    normalize_base_url(url)
+}
+
+fn cloud_oauth_api_base_url(cloud_id: &str) -> String {
+    let mut url = Url::parse("https://api.atlassian.com").expect("static URL is valid");
+    url.path_segments_mut()
+        .expect("static URL supports path segments")
+        .extend(["ex", "jira", cloud_id]);
     url.to_string().trim_end_matches('/').to_string()
 }
 
@@ -210,6 +342,8 @@ fn missing_variables<const N: usize>(
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
+
+    use crate::atlassian::compat::{ENV_HTTP_PROXY, ENV_HTTPS_PROXY, ENV_NO_PROXY};
 
     use super::*;
 
@@ -275,6 +409,7 @@ mod tests {
                 api_token: "test-api-token".to_string(),
             }
         );
+        assert_eq!(config.oauth_cloud_id, None);
         assert!(!config.ssl_verify);
         assert_eq!(
             config.projects_filter,
@@ -313,10 +448,152 @@ mod tests {
                 personal_token: "test-pat-value".to_string(),
             }
         );
+        assert_eq!(config.oauth_cloud_id, None);
         assert!(config.ssl_verify);
+        assert!(config.proxy.is_empty());
         assert!(config.projects_filter.is_empty());
         assert_eq!(config.timeout_seconds, DEFAULT_JIRA_TIMEOUT_SECONDS);
         assert!(config.is_auth_configured());
+    }
+
+    #[test]
+    fn proxy_config_prefers_jira_specific_values_before_global() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_PERSONAL_TOKEN, "test-pat-value"),
+            (ENV_HTTP_PROXY, "http://global-proxy.example:8080"),
+            (ENV_JIRA_HTTP_PROXY, "http://jira-proxy.example:8080"),
+            (ENV_HTTPS_PROXY, "http://global-secure-proxy.example:8080"),
+            (
+                ENV_JIRA_HTTPS_PROXY,
+                "https://jira-secure-proxy.example:8443",
+            ),
+            (ENV_NO_PROXY, "global.example"),
+            (ENV_JIRA_NO_PROXY, " jira.example,localhost "),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            config.proxy.http_proxy.as_deref(),
+            Some("http://jira-proxy.example:8080")
+        );
+        assert_eq!(
+            config.proxy.https_proxy.as_deref(),
+            Some("https://jira-secure-proxy.example:8443")
+        );
+        assert_eq!(
+            config.proxy.no_proxy.as_deref(),
+            Some("jira.example,localhost")
+        );
+    }
+
+    #[test]
+    fn invalid_proxy_url_is_rejected_without_leaking_credentials() {
+        let error = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_PERSONAL_TOKEN, "test-pat-value"),
+            (ENV_JIRA_HTTP_PROXY, "ftp://user:secret@proxy.example"),
+        ])
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            ConfigError::InvalidProxyUrl {
+                variable: ENV_JIRA_HTTP_PROXY,
+            }
+        );
+        assert!(!error.to_string().contains("secret"));
+        assert!(!format!("{error:?}").contains("secret"));
+    }
+
+    #[test]
+    fn socks_proxy_is_rejected_without_leaking_credentials() {
+        let error = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_PERSONAL_TOKEN, "test-pat-value"),
+            (ENV_JIRA_SOCKS_PROXY, "socks5://user:secret@proxy.example"),
+        ])
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            ConfigError::UnsupportedSocksProxy {
+                variable: ENV_JIRA_SOCKS_PROXY,
+            }
+        );
+        assert!(!error.to_string().contains("secret"));
+        assert!(!error.to_string().contains("proxy.example"));
+    }
+
+    #[test]
+    fn custom_headers_are_parsed_into_typed_config() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_PERSONAL_TOKEN, "test-pat-value"),
+            (ENV_JIRA_CUSTOM_HEADERS, "X-Team=platform,X-Trace=abc=def"),
+        ])
+        .unwrap()
+        .unwrap();
+        let headers = config
+            .custom_headers
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_string(),
+                    value.to_str().unwrap().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            headers,
+            vec![
+                ("x-team".to_string(), "platform".to_string()),
+                ("x-trace".to_string(), "abc=def".to_string()),
+            ]
+        );
+        assert!(!format!("{:?}", config.custom_headers).contains("platform"));
+    }
+
+    #[test]
+    fn mtls_cert_key_pair_is_parsed_into_typed_config() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_PERSONAL_TOKEN, "test-pat-value"),
+            (ENV_JIRA_CLIENT_CERT, "/tmp/jira-client.crt"),
+            (ENV_JIRA_CLIENT_KEY, "/tmp/jira-client.key"),
+        ])
+        .unwrap()
+        .unwrap();
+        let mtls = config.mtls.unwrap();
+
+        assert_eq!(
+            mtls.cert_path,
+            std::path::PathBuf::from("/tmp/jira-client.crt")
+        );
+        assert_eq!(
+            mtls.key_path,
+            std::path::PathBuf::from("/tmp/jira-client.key")
+        );
+    }
+
+    #[test]
+    fn mtls_missing_cert_key_pair_is_rejected() {
+        let error = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_PERSONAL_TOKEN, "test-pat-value"),
+            (ENV_JIRA_CLIENT_CERT, "/tmp/jira-client.crt"),
+        ])
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            ConfigError::MissingClientCertKeyPair {
+                cert_variable: ENV_JIRA_CLIENT_CERT,
+                key_variable: ENV_JIRA_CLIENT_KEY,
+            }
+        );
     }
 
     #[test]
@@ -334,6 +611,141 @@ mod tests {
                 variable: ENV_JIRA_TIMEOUT,
                 value: "0".to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn cloud_config_builds_oauth_access_token_auth_with_cloud_id() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://example.atlassian.net"),
+            (ENV_ATLASSIAN_OAUTH_CLOUD_ID, " cloud-123 "),
+            (ENV_JIRA_OAUTH_ACCESS_TOKEN, "test-access-token"),
+            (ENV_JIRA_USERNAME, "user@example.com"),
+            (ENV_JIRA_API_TOKEN, "test-api-token"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(config.deployment, JiraDeployment::Cloud);
+        assert_eq!(
+            config.base_url,
+            "https://api.atlassian.com/ex/jira/cloud-123"
+        );
+        assert_eq!(
+            config.auth,
+            AtlassianAuth::OAuthAccessToken {
+                access_token: "test-access-token".to_string(),
+            }
+        );
+        assert_eq!(config.oauth_cloud_id.as_deref(), Some("cloud-123"));
+        assert!(!format!("{:?}", config.auth).contains("test-access-token"));
+    }
+
+    #[test]
+    fn shared_oauth_access_token_is_used_when_service_specific_value_is_absent() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://example.atlassian.net"),
+            (ENV_ATLASSIAN_OAUTH_CLOUD_ID, "cloud-123"),
+            (ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN, "shared-access-token"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            config.auth,
+            AtlassianAuth::OAuthAccessToken {
+                access_token: "shared-access-token".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn cloud_oauth_access_token_requires_cloud_id_without_leaking_secret() {
+        let error = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://example.atlassian.net"),
+            (ENV_JIRA_OAUTH_ACCESS_TOKEN, "test-access-token"),
+        ])
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            ConfigError::MissingJiraOAuthCloudId {
+                access_token_variables: vec![ENV_JIRA_OAUTH_ACCESS_TOKEN],
+                cloud_id_variable: ENV_ATLASSIAN_OAUTH_CLOUD_ID,
+            }
+        );
+        assert!(!error.to_string().contains("test-access-token"));
+    }
+
+    #[test]
+    fn server_config_prefers_pat_over_oauth_access_token_and_basic() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_PERSONAL_TOKEN, "test-pat-value"),
+            (ENV_JIRA_OAUTH_ACCESS_TOKEN, "test-access-token"),
+            (ENV_JIRA_USERNAME, "user@example.com"),
+            (ENV_JIRA_API_TOKEN, "test-api-token"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            config.auth,
+            AtlassianAuth::Pat {
+                personal_token: "test-pat-value".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn server_config_uses_oauth_access_token_without_pat() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_OAUTH_ACCESS_TOKEN, "test-access-token"),
+            (ENV_JIRA_USERNAME, "user@example.com"),
+            (ENV_JIRA_API_TOKEN, "test-api-token"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            config.auth,
+            AtlassianAuth::OAuthAccessToken {
+                access_token: "test-access-token".to_string(),
+            }
+        );
+        assert_eq!(config.base_url, "https://jira.example");
+    }
+
+    #[test]
+    fn cloud_byot_config_rewrites_base_url_to_atlassian_api_gateway() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://example.atlassian.net"),
+            (ENV_ATLASSIAN_OAUTH_CLOUD_ID, "cloud-123"),
+            (ENV_JIRA_OAUTH_ACCESS_TOKEN, "test-access-token"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            config.base_url,
+            "https://api.atlassian.com/ex/jira/cloud-123"
+        );
+    }
+
+    #[test]
+    fn cloud_byot_config_percent_encodes_cloud_id_path_segment() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://example.atlassian.net"),
+            (ENV_ATLASSIAN_OAUTH_CLOUD_ID, "cloud id/123"),
+            (ENV_JIRA_OAUTH_ACCESS_TOKEN, "test-access-token"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            config.base_url,
+            "https://api.atlassian.com/ex/jira/cloud%20id%2F123"
         );
     }
 

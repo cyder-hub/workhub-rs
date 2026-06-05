@@ -9,7 +9,7 @@ use crate::{
     atlassian::{
         error::AtlassianError,
         redaction::redact_text,
-        request_auth::{RequestAuthFingerprint, parse_request_auth_headers},
+        request_auth::{RequestAuthFingerprint, parse_request_auth_headers_with_oauth_bearer},
     },
     confluence::{
         client::ConfluenceClient,
@@ -100,10 +100,11 @@ impl RequestAuthSessionStore {
         headers: &HeaderMap,
         context: &AppContext,
     ) -> Result<RequestAuthFingerprint, ErrorData> {
-        let request_auth = parse_request_auth_headers(
+        let request_auth = parse_request_auth_headers_with_oauth_bearer(
             headers,
             context.ignore_header_auth(),
             context.allowed_url_domains(),
+            context.atlassian_oauth_enabled(),
         )
         .map_err(|error| ErrorData::invalid_params(redact_text(&error.to_string()), None))?;
 
@@ -217,10 +218,11 @@ impl AtlassianMcpServer {
     }
 
     fn scoped_for_request_headers(&self, headers: &HeaderMap) -> Result<Self, ErrorData> {
-        let request_auth = parse_request_auth_headers(
+        let request_auth = parse_request_auth_headers_with_oauth_bearer(
             headers,
             self.context.ignore_header_auth(),
             self.context.allowed_url_domains(),
+            self.context.atlassian_oauth_enabled(),
         )
         .map_err(|error| ErrorData::invalid_params(redact_text(&error.to_string()), None))?;
 
@@ -3180,7 +3182,7 @@ mod tests {
     use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
     use crate::{
-        atlassian::auth::AtlassianAuth,
+        atlassian::{auth::AtlassianAuth, custom_headers::CustomHeaders, proxy::ProxyConfig},
         config::{HttpConfig, RuntimeConfig},
         confluence::config::{ConfluenceConfig, ConfluenceDeployment},
         context::AppContext,
@@ -3258,6 +3260,24 @@ mod tests {
         confluence_config_with_base_url("https://confluence.example".to_string())
     }
 
+    fn jira_cloud_config_with_base_url(base_url: String) -> JiraConfig {
+        JiraConfig {
+            base_url,
+            deployment: JiraDeployment::Cloud,
+            auth: AtlassianAuth::Basic {
+                username: "test-user".to_string(),
+                api_token: "test-api-token".to_string(),
+            },
+            oauth_cloud_id: None,
+            ssl_verify: true,
+            proxy: ProxyConfig::default(),
+            custom_headers: CustomHeaders::default(),
+            mtls: None,
+            projects_filter: BTreeSet::new(),
+            timeout_seconds: 75,
+        }
+    }
+
     fn confluence_cloud_config_with_base_url(base_url: String) -> ConfluenceConfig {
         ConfluenceConfig {
             base_url,
@@ -3266,7 +3286,11 @@ mod tests {
                 username: "test-user".to_string(),
                 api_token: "test-api-token".to_string(),
             },
+            oauth_cloud_id: None,
             ssl_verify: true,
+            proxy: ProxyConfig::default(),
+            custom_headers: CustomHeaders::default(),
+            mtls: None,
             spaces_filter: BTreeSet::new(),
             timeout_seconds: 75,
         }
@@ -3279,7 +3303,11 @@ mod tests {
             auth: AtlassianAuth::Pat {
                 personal_token: "test-pat-value".to_string(),
             },
+            oauth_cloud_id: None,
             ssl_verify: true,
+            proxy: ProxyConfig::default(),
+            custom_headers: CustomHeaders::default(),
+            mtls: None,
             spaces_filter: BTreeSet::new(),
             timeout_seconds: 75,
         }
@@ -3325,7 +3353,11 @@ mod tests {
             auth: AtlassianAuth::Pat {
                 personal_token: "test-pat-value".to_string(),
             },
+            oauth_cloud_id: None,
             ssl_verify: true,
+            proxy: ProxyConfig::default(),
+            custom_headers: CustomHeaders::default(),
+            mtls: None,
             projects_filter: BTreeSet::new(),
             timeout_seconds: 75,
         }
@@ -5033,6 +5065,35 @@ mod tests {
     }
 
     #[test]
+    fn request_auth_session_fingerprint_rejects_changed_token_type() {
+        let server = server_with_config(RuntimeConfig {
+            jira: Some(jira_config()),
+            atlassian_oauth_enabled: true,
+            ..runtime_config()
+        });
+        let bearer = header_map(&[
+            ("Mcp-Session-Id", "session-token-type"),
+            ("Authorization", "Bearer shared-request-secret"),
+        ]);
+        let token = header_map(&[
+            ("Mcp-Session-Id", "session-token-type"),
+            ("Authorization", "Token shared-request-secret"),
+        ]);
+
+        server.scoped_for_request_headers(&bearer).unwrap();
+        let error = match server.scoped_for_request_headers(&token) {
+            Ok(_) => panic!("changed request auth token type should be rejected"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.message.as_ref(),
+            "per-request authentication changed for MCP session"
+        );
+        assert!(!error.message.contains("shared-request-secret"));
+    }
+
+    #[test]
     fn session_auth_store_binds_initialize_response_fingerprint() {
         let context = AppContext::from_config(&RuntimeConfig {
             jira: Some(jira_config()),
@@ -5192,6 +5253,98 @@ mod tests {
         assert_eq!(
             current_tool_names(&filtered),
             vec![tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()]
+        );
+    }
+
+    #[test]
+    fn request_auth_byot_matrix_preserves_read_only_filters_and_service_availability() {
+        let byot_headers = header_map(&[
+            ("Authorization", "Bearer request-access-token"),
+            ("X-Atlassian-Cloud-Id", "cloud-123"),
+        ]);
+        let read_only = server_with_config(RuntimeConfig {
+            jira: Some(jira_cloud_config_with_base_url(
+                "https://example.atlassian.net".to_string(),
+            )),
+            confluence: Some(confluence_cloud_config_with_base_url(
+                "https://example.atlassian.net/wiki".to_string(),
+            )),
+            read_only: true,
+            ..runtime_config()
+        });
+        let read_only = read_only.scoped_for_request_headers(&byot_headers).unwrap();
+        let read_only_names = current_tool_names(&read_only);
+
+        assert_eq!(
+            read_only.context.jira_config().unwrap().auth,
+            AtlassianAuth::OAuthAccessToken {
+                access_token: "request-access-token".to_string(),
+            }
+        );
+        assert_eq!(
+            read_only.context.jira_config().unwrap().base_url,
+            "https://api.atlassian.com/ex/jira/cloud-123"
+        );
+        assert_eq!(
+            read_only.context.confluence_config().unwrap().base_url,
+            "https://api.atlassian.com/ex/confluence/cloud-123/wiki"
+        );
+        assert!(read_only_names.contains(&tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()));
+        assert!(!read_only_names.contains(&tools::JIRA_CREATE_ISSUE_TOOL_NAME.to_string()));
+        assert!(
+            read_only_names.contains(&confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME.to_string())
+        );
+        assert!(
+            !read_only_names
+                .contains(&confluence_tools::CONFLUENCE_CREATE_PAGE_TOOL_NAME.to_string())
+        );
+
+        let filtered = server_with_config(RuntimeConfig {
+            jira: Some(jira_cloud_config_with_base_url(
+                "https://example.atlassian.net".to_string(),
+            )),
+            confluence: Some(confluence_cloud_config_with_base_url(
+                "https://example.atlassian.net/wiki".to_string(),
+            )),
+            enabled_tools: Some(BTreeSet::from(
+                [tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()],
+            )),
+            ..runtime_config()
+        });
+        let filtered = filtered.scoped_for_request_headers(&byot_headers).unwrap();
+
+        assert_eq!(
+            current_tool_names(&filtered),
+            vec![tools::JIRA_GET_ISSUE_TOOL_NAME.to_string()]
+        );
+    }
+
+    #[test]
+    fn request_auth_byot_matrix_keeps_token_scheme_as_pat_when_oauth_enabled() {
+        let server = server_with_config(RuntimeConfig {
+            jira: Some(jira_config()),
+            confluence: Some(confluence_config()),
+            atlassian_oauth_enabled: true,
+            ..runtime_config()
+        });
+        let scoped = server
+            .scoped_for_request_headers(&header_map(&[(
+                "Authorization",
+                "Token request-pat-token",
+            )]))
+            .unwrap();
+
+        assert_eq!(
+            scoped.context.jira_config().unwrap().auth,
+            AtlassianAuth::Pat {
+                personal_token: "request-pat-token".to_string(),
+            }
+        );
+        assert_eq!(
+            scoped.context.confluence_config().unwrap().auth,
+            AtlassianAuth::Pat {
+                personal_token: "request-pat-token".to_string(),
+            }
         );
     }
 

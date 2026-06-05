@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 use reqwest::Url;
 use serde_json::{Map, Value, json};
 
+#[cfg(test)]
+use crate::atlassian::{custom_headers::CustomHeaders, proxy::ProxyConfig};
 use crate::{
     atlassian::{
         error::AtlassianError,
@@ -88,17 +90,23 @@ pub struct FieldOptionsRequest {
 
 impl JiraClient {
     pub fn new(config: JiraConfig) -> Result<Self, AtlassianError> {
-        let http = AtlassianHttpClient::new(
+        let http = AtlassianHttpClient::new_with_proxy_headers_and_mtls(
             &config.base_url,
             config.auth.clone(),
             config.timeout_seconds,
             config.ssl_verify,
+            config.proxy.clone(),
+            config.custom_headers.clone(),
+            config.mtls.clone(),
         )?;
-        let atlassian_api_http = AtlassianHttpClient::new(
+        let atlassian_api_http = AtlassianHttpClient::new_with_proxy_headers_and_mtls(
             &atlassian_api_base_url(&config),
             config.auth.clone(),
             config.timeout_seconds,
             config.ssl_verify,
+            config.proxy.clone(),
+            config.custom_headers.clone(),
+            config.mtls.clone(),
         )?;
         Ok(Self {
             config,
@@ -716,7 +724,7 @@ impl JiraClient {
                     .is_some_and(|key| self.config.projects_filter.contains(key))
             });
         }
-        Ok(Value::Array(projects))
+        Ok(json!({"projects": projects}))
     }
 
     pub async fn get_project_versions(&self, project_key: String) -> Result<Value, AtlassianError> {
@@ -2414,7 +2422,11 @@ mod tests {
                     personal_token: "test-pat-value".to_string(),
                 },
             },
+            oauth_cloud_id: None,
             ssl_verify: true,
+            proxy: ProxyConfig::default(),
+            custom_headers: CustomHeaders::default(),
+            mtls: None,
             projects_filter: BTreeSet::new(),
             timeout_seconds: DEFAULT_JIRA_TIMEOUT_SECONDS,
         }

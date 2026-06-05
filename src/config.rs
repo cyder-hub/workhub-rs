@@ -2,8 +2,12 @@ use std::{collections::BTreeSet, net::IpAddr};
 
 use crate::atlassian::security::BLOCKED_HOSTNAMES;
 use crate::tool_registry::{all_toolsets, default_toolsets};
-use crate::{confluence::config::ConfluenceConfig, error::ConfigError, jira::config::JiraConfig};
+use crate::{
+    atlassian::compat::ENV_ATLASSIAN_OAUTH_ENABLE, confluence::config::ConfluenceConfig,
+    error::ConfigError, jira::config::JiraConfig,
+};
 
+#[cfg(test)]
 pub use crate::confluence::config::ENV_CONFLUENCE_URL;
 
 pub const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
@@ -28,6 +32,7 @@ pub struct RuntimeConfig {
     pub jira: Option<JiraConfig>,
     pub confluence: Option<ConfluenceConfig>,
     pub atlassian_oauth_cloud_id: Option<String>,
+    pub atlassian_oauth_enabled: bool,
     pub allowed_url_domains: Option<Vec<String>>,
     pub ignore_header_auth: bool,
     pub http: HttpConfig,
@@ -58,6 +63,8 @@ impl RuntimeConfig {
         let confluence = ConfluenceConfig::from_var_provider(&mut get_var)?;
         let atlassian_oauth_cloud_id =
             parse_optional_string(get_var(ENV_ATLASSIAN_OAUTH_CLOUD_ID).ok());
+        let atlassian_oauth_enabled =
+            parse_extended_truthy(get_var(ENV_ATLASSIAN_OAUTH_ENABLE).ok().as_deref());
         let allowed_url_domains = parse_allowed_url_domains(get_var(ENV_ALLOWED_URL_DOMAINS).ok())?;
         let ignore_header_auth =
             parse_extended_truthy(get_var(ENV_IGNORE_HEADER_AUTH).ok().as_deref());
@@ -70,6 +77,7 @@ impl RuntimeConfig {
             jira,
             confluence,
             atlassian_oauth_cloud_id,
+            atlassian_oauth_enabled,
             allowed_url_domains,
             ignore_header_auth,
             http,
@@ -86,6 +94,7 @@ impl Default for RuntimeConfig {
             jira: None,
             confluence: None,
             atlassian_oauth_cloud_id: None,
+            atlassian_oauth_enabled: false,
             allowed_url_domains: None,
             ignore_header_auth: false,
             http: HttpConfig::default(),
@@ -325,6 +334,7 @@ mod tests {
         assert_eq!(config.jira, None);
         assert_eq!(config.confluence, None);
         assert_eq!(config.atlassian_oauth_cloud_id, None);
+        assert!(!config.atlassian_oauth_enabled);
         assert_eq!(config.allowed_url_domains, None);
         assert!(!config.ignore_header_auth);
         assert_eq!(config.http, HttpConfig::default());
@@ -421,6 +431,7 @@ mod tests {
             config.atlassian_oauth_cloud_id.as_deref(),
             Some("cloud-123")
         );
+        assert!(!config.atlassian_oauth_enabled);
     }
 
     #[test]
@@ -472,6 +483,25 @@ mod tests {
                 .atlassian_oauth_cloud_id,
             None
         );
+    }
+
+    #[test]
+    fn atlassian_oauth_enable_uses_extended_truthy_values() {
+        for value in ["true", "1", "yes", "y", "on", "TRUE", " On "] {
+            let config = config_from_pairs(&[(ENV_ATLASSIAN_OAUTH_ENABLE, value)]).unwrap();
+            assert!(
+                config.atlassian_oauth_enabled,
+                "value `{value}` should enable OAuth/BYOT request mode"
+            );
+        }
+
+        for value in ["false", "0", "no", "off", ""] {
+            let config = config_from_pairs(&[(ENV_ATLASSIAN_OAUTH_ENABLE, value)]).unwrap();
+            assert!(
+                !config.atlassian_oauth_enabled,
+                "value `{value}` should leave OAuth/BYOT request mode disabled"
+            );
+        }
     }
 
     #[test]

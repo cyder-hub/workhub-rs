@@ -122,10 +122,26 @@ pub fn parse_request_auth_headers(
     ignore_header_auth: bool,
     allowed_domains: Option<&[String]>,
 ) -> Result<RequestAuthContext, RequestAuthError> {
-    parse_request_auth_headers_with_resolver(
+    parse_request_auth_headers_with_resolver_and_oauth_bearer(
         headers,
         ignore_header_auth,
         allowed_domains,
+        false,
+        resolve_hostname,
+    )
+}
+
+pub fn parse_request_auth_headers_with_oauth_bearer(
+    headers: &HeaderMap,
+    ignore_header_auth: bool,
+    allowed_domains: Option<&[String]>,
+    oauth_bearer_enabled: bool,
+) -> Result<RequestAuthContext, RequestAuthError> {
+    parse_request_auth_headers_with_resolver_and_oauth_bearer(
+        headers,
+        ignore_header_auth,
+        allowed_domains,
+        oauth_bearer_enabled,
         resolve_hostname,
     )
 }
@@ -134,6 +150,25 @@ pub fn parse_request_auth_headers_with_resolver<F>(
     headers: &HeaderMap,
     ignore_header_auth: bool,
     allowed_domains: Option<&[String]>,
+    mut resolver: F,
+) -> Result<RequestAuthContext, RequestAuthError>
+where
+    F: FnMut(&str) -> Result<Vec<IpAddr>, UrlValidationError>,
+{
+    parse_request_auth_headers_with_resolver_and_oauth_bearer(
+        headers,
+        ignore_header_auth,
+        allowed_domains,
+        false,
+        &mut resolver,
+    )
+}
+
+pub fn parse_request_auth_headers_with_resolver_and_oauth_bearer<F>(
+    headers: &HeaderMap,
+    ignore_header_auth: bool,
+    allowed_domains: Option<&[String]>,
+    oauth_bearer_enabled: bool,
     mut resolver: F,
 ) -> Result<RequestAuthContext, RequestAuthError>
 where
@@ -149,10 +184,12 @@ where
         });
     }
 
-    let authorization = optional_header(headers, HEADER_AUTHORIZATION)?
+    let parsed_authorization = optional_header(headers, HEADER_AUTHORIZATION)?
         .map(parse_authorization_header)
         .transpose()?;
     let cloud_id = optional_header(headers, HEADER_ATLASSIAN_CLOUD_ID)?.map(ToString::to_string);
+    let authorization = parsed_authorization
+        .map(|authorization| authorization.into_auth(oauth_bearer_enabled || cloud_id.is_some()));
     let jira = parse_service_headers(
         headers,
         "Jira",
@@ -218,7 +255,33 @@ where
     }
 }
 
-fn parse_authorization_header(value: &str) -> Result<AtlassianAuth, RequestAuthError> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedAuthorization {
+    scheme: ParsedAuthorizationScheme,
+    auth: AtlassianAuth,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParsedAuthorizationScheme {
+    Basic,
+    Token,
+    Bearer,
+}
+
+impl ParsedAuthorization {
+    fn into_auth(self, oauth_bearer: bool) -> AtlassianAuth {
+        match (self.scheme, self.auth, oauth_bearer) {
+            (ParsedAuthorizationScheme::Bearer, AtlassianAuth::Pat { personal_token }, true) => {
+                AtlassianAuth::OAuthAccessToken {
+                    access_token: personal_token,
+                }
+            }
+            (_, auth, _) => auth,
+        }
+    }
+}
+
+fn parse_authorization_header(value: &str) -> Result<ParsedAuthorization, RequestAuthError> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(RequestAuthError::EmptyAuthorizationHeader);
@@ -242,17 +305,30 @@ fn parse_authorization_header(value: &str) -> Result<AtlassianAuth, RequestAuthE
         if username.is_empty() || api_token.is_empty() {
             return Err(RequestAuthError::InvalidBasicFormat);
         }
-        return Ok(AtlassianAuth::Basic {
-            username: username.to_string(),
-            api_token: api_token.to_string(),
+        return Ok(ParsedAuthorization {
+            scheme: ParsedAuthorizationScheme::Basic,
+            auth: AtlassianAuth::Basic {
+                username: username.to_string(),
+                api_token: api_token.to_string(),
+            },
         });
     }
 
-    if scheme.eq_ignore_ascii_case(AUTH_SCHEME_TOKEN)
-        || scheme.eq_ignore_ascii_case(AUTH_SCHEME_BEARER)
-    {
-        return Ok(AtlassianAuth::Pat {
-            personal_token: credential.to_string(),
+    if scheme.eq_ignore_ascii_case(AUTH_SCHEME_TOKEN) {
+        return Ok(ParsedAuthorization {
+            scheme: ParsedAuthorizationScheme::Token,
+            auth: AtlassianAuth::Pat {
+                personal_token: credential.to_string(),
+            },
+        });
+    }
+
+    if scheme.eq_ignore_ascii_case(AUTH_SCHEME_BEARER) {
+        return Ok(ParsedAuthorization {
+            scheme: ParsedAuthorizationScheme::Bearer,
+            auth: AtlassianAuth::Pat {
+                personal_token: credential.to_string(),
+            },
         });
     }
 
@@ -320,6 +396,12 @@ fn build_fingerprint(
         Some(AtlassianAuth::Pat { personal_token }) => {
             format!("authorization=pat:{}", secret_hash(personal_token))
         }
+        Some(AtlassianAuth::OAuthAccessToken { access_token }) => {
+            format!(
+                "authorization=oauth_access_token:{}",
+                secret_hash(access_token)
+            )
+        }
         None => "authorization=global".to_string(),
     });
     parts.push(service_fingerprint("jira", jira));
@@ -353,6 +435,13 @@ fn service_fingerprint(service: &str, auth: Option<&ServiceAuthOverride>) -> Str
                     "{service}=pat:{}:{}",
                     service_host(&auth.base_url),
                     secret_hash(personal_token)
+                )
+            }
+            AtlassianAuth::OAuthAccessToken { access_token } => {
+                format!(
+                    "{service}=oauth_access_token:{}:{}",
+                    service_host(&auth.base_url),
+                    secret_hash(access_token)
                 )
             }
         },
@@ -463,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_token_bearer_service_headers_and_cloud_id() {
+    fn parses_bearer_as_oauth_access_token_when_cloud_id_present() {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
@@ -493,8 +582,8 @@ mod tests {
 
         assert_eq!(
             context.authorization,
-            Some(AtlassianAuth::Pat {
-                personal_token: "bearer-token".to_string(),
+            Some(AtlassianAuth::OAuthAccessToken {
+                access_token: "bearer-token".to_string(),
             })
         );
         assert_eq!(
@@ -505,6 +594,52 @@ mod tests {
         assert!(context.has_overrides());
         assert!(!context.fingerprint.as_str().contains("bearer-token"));
         assert!(!context.fingerprint.as_str().contains("jira-pat-token"));
+    }
+
+    #[test]
+    fn parses_bearer_as_oauth_access_token_when_oauth_bearer_enabled() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer access-token"),
+        );
+
+        let context = parse_request_auth_headers_with_resolver_and_oauth_bearer(
+            &headers,
+            false,
+            None,
+            true,
+            empty_resolver,
+        )
+        .unwrap();
+
+        assert_eq!(
+            context.authorization,
+            Some(AtlassianAuth::OAuthAccessToken {
+                access_token: "access-token".to_string(),
+            })
+        );
+        assert_eq!(context.cloud_id, None);
+        assert!(!context.fingerprint.as_str().contains("access-token"));
+    }
+
+    #[test]
+    fn parses_bearer_as_pat_without_byot_signal() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer pat-token"));
+
+        let context =
+            parse_request_auth_headers_with_resolver(&headers, false, None, empty_resolver)
+                .unwrap();
+
+        assert_eq!(
+            context.authorization,
+            Some(AtlassianAuth::Pat {
+                personal_token: "pat-token".to_string(),
+            })
+        );
+        assert_eq!(context.cloud_id, None);
+        assert!(!context.fingerprint.as_str().contains("pat-token"));
     }
 
     #[test]

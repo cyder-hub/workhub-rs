@@ -10,6 +10,7 @@ use crate::atlassian::redaction::REDACTED;
 pub enum AtlassianAuth {
     Basic { username: String, api_token: String },
     Pat { personal_token: String },
+    OAuthAccessToken { access_token: String },
 }
 
 impl AtlassianAuth {
@@ -20,6 +21,7 @@ impl AtlassianAuth {
                 api_token,
             } => builder.basic_auth(username, Some(api_token)),
             Self::Pat { personal_token } => builder.bearer_auth(personal_token),
+            Self::OAuthAccessToken { access_token } => builder.bearer_auth(access_token),
         }
     }
 }
@@ -35,6 +37,10 @@ impl Debug for AtlassianAuth {
             Self::Pat { .. } => formatter
                 .debug_struct("AtlassianAuth::Pat")
                 .field("personal_token", &REDACTED)
+                .finish(),
+            Self::OAuthAccessToken { .. } => formatter
+                .debug_struct("AtlassianAuth::OAuthAccessToken")
+                .field("access_token", &REDACTED)
                 .finish(),
         }
     }
@@ -71,6 +77,17 @@ mod tests {
     }
 
     #[test]
+    fn debug_output_redacts_oauth_access_token() {
+        let auth = AtlassianAuth::OAuthAccessToken {
+            access_token: "test-access-token".to_string(),
+        };
+        let output = format!("{auth:?}");
+
+        assert!(output.contains("<redacted>"));
+        assert!(!output.contains("test-access-token"));
+    }
+
+    #[test]
     fn pat_auth_applies_bearer_header_without_debug_leakage() {
         let expected_header = format!("Bearer {}", "test-pat-value");
         let auth = AtlassianAuth::Pat {
@@ -89,5 +106,26 @@ mod tests {
                 .is_some_and(|value| value == expected_header)
         );
         assert!(!format!("{auth:?}").contains("test-pat-value"));
+    }
+
+    #[test]
+    fn oauth_access_token_auth_applies_bearer_header_without_debug_leakage() {
+        let expected_header = format!("Bearer {}", "test-access-token");
+        let auth = AtlassianAuth::OAuthAccessToken {
+            access_token: "test-access-token".to_string(),
+        };
+        let request = auth
+            .apply(Client::new().get("https://api.atlassian.com/ex/jira/cloud-123/myself"))
+            .build()
+            .unwrap();
+        let header = request.headers().get(reqwest::header::AUTHORIZATION);
+
+        assert!(header.is_some());
+        assert!(
+            header
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value == expected_header)
+        );
+        assert!(!format!("{auth:?}").contains("test-access-token"));
     }
 }

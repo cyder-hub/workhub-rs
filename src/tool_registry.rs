@@ -893,7 +893,7 @@ mod tests {
     use rmcp::model::{JsonObject, Tool};
 
     use crate::{
-        atlassian::auth::AtlassianAuth,
+        atlassian::{auth::AtlassianAuth, custom_headers::CustomHeaders, proxy::ProxyConfig},
         config::{HttpConfig, RuntimeConfig},
         confluence::config::{ConfluenceConfig, ConfluenceDeployment},
         context::AppContext,
@@ -961,7 +961,11 @@ mod tests {
             auth: AtlassianAuth::Pat {
                 personal_token: "test-pat-value".to_string(),
             },
+            oauth_cloud_id: None,
             ssl_verify: true,
+            proxy: ProxyConfig::default(),
+            custom_headers: CustomHeaders::default(),
+            mtls: None,
             projects_filter: BTreeSet::new(),
             timeout_seconds: 75,
         }
@@ -974,7 +978,11 @@ mod tests {
             auth: AtlassianAuth::Pat {
                 personal_token: "test-pat-value".to_string(),
             },
+            oauth_cloud_id: None,
             ssl_verify: true,
+            proxy: ProxyConfig::default(),
+            custom_headers: CustomHeaders::default(),
+            mtls: None,
             spaces_filter: BTreeSet::new(),
             timeout_seconds: 75,
         }

@@ -3,6 +3,8 @@ use std::{fs, path::Path};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+#[cfg(test)]
+use crate::atlassian::{custom_headers::CustomHeaders, proxy::ProxyConfig};
 use crate::{
     atlassian::{
         error::AtlassianError,
@@ -39,11 +41,14 @@ pub struct ConfluenceClient {
 
 impl ConfluenceClient {
     pub fn new(config: ConfluenceConfig) -> Result<Self, AtlassianError> {
-        let http = AtlassianHttpClient::new(
+        let http = AtlassianHttpClient::new_with_proxy_headers_and_mtls(
             &config.base_url,
             config.auth.clone(),
             config.timeout_seconds,
             config.ssl_verify,
+            config.proxy.clone(),
+            config.custom_headers.clone(),
+            config.mtls.clone(),
         )?;
         Ok(Self { config, http })
     }
@@ -1218,7 +1223,11 @@ mod tests {
                 username: "test-user".to_string(),
                 api_token: "test-api-token".to_string(),
             },
+            oauth_cloud_id: None,
             ssl_verify: true,
+            proxy: ProxyConfig::default(),
+            custom_headers: CustomHeaders::default(),
+            mtls: None,
             spaces_filter: BTreeSet::new(),
             timeout_seconds: 75,
         })
@@ -1235,7 +1244,11 @@ mod tests {
             auth: AtlassianAuth::Pat {
                 personal_token: "test-pat-value".to_string(),
             },
+            oauth_cloud_id: None,
             ssl_verify: true,
+            proxy: ProxyConfig::default(),
+            custom_headers: CustomHeaders::default(),
+            mtls: None,
             spaces_filter,
             timeout_seconds: 75,
         })
