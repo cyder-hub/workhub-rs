@@ -188,7 +188,7 @@ impl JiraClient {
                     "startAt": request.start_at.unwrap_or(0),
                     "maxResults": limit,
                     "fields": request.fields.unwrap_or_default(),
-                    "expand": request.expand.unwrap_or_default().join(","),
+                    "expand": request.expand.unwrap_or_default(),
                 });
                 self.http
                     .send_json(self.http.post_json("/rest/api/2/search", &body)?)
@@ -774,6 +774,11 @@ impl JiraClient {
     }
 
     pub async fn get_user_profile(&self, user_identifier: String) -> Result<Value, AtlassianError> {
+        let identifier = user_identifier.trim();
+        if identifier.eq_ignore_ascii_case("currentuser()") || identifier.eq_ignore_ascii_case("me") {
+            return self.http.send_json(self.http.get("/rest/api/2/myself")?).await;
+        }
+
         let query_key = match self.config.deployment {
             JiraDeployment::Cloud => "accountId",
             JiraDeployment::ServerDataCenter => "username",
@@ -782,7 +787,7 @@ impl JiraClient {
             .send_json(
                 self.http
                     .get("/rest/api/2/user")?
-                    .query(&[(query_key, user_identifier)]),
+                    .query(&[(query_key, identifier)]),
             )
             .await
     }
@@ -797,6 +802,7 @@ impl JiraClient {
             )
             .await
     }
+
 
     pub async fn add_watcher(
         &self,
