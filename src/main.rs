@@ -36,6 +36,12 @@ use tracing_subscriber::EnvFilter;
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+const ENV_RUST_LOG: &str = "RUST_LOG";
+const ENV_TOOL_CALL_DEBUG: &str = "MCP_TOOL_CALL_DEBUG";
+const DEFAULT_RUST_LOG: &str = "info";
+const TOOL_CALL_DEBUG_RUST_LOG: &str =
+    "mcp_atlassian_rs::mcp=debug,mcp_atlassian_rs=info,rmcp=info";
+
 const USAGE: &str = "\
 Usage:
   mcp-atlassian-rs [stdio]
@@ -252,7 +258,9 @@ fn request_auth_error_response(error: rmcp::ErrorData) -> Response {
 }
 
 fn init_tracing() -> AppResult<()> {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter_spec = tracing_filter_spec_from_env(|key| std::env::var(key));
+    let filter =
+        EnvFilter::try_new(&filter_spec).unwrap_or_else(|_| EnvFilter::new(DEFAULT_RUST_LOG));
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -261,6 +269,25 @@ fn init_tracing() -> AppResult<()> {
         .try_init()?;
 
     Ok(())
+}
+
+fn tracing_filter_spec_from_env<F, E>(mut get_var: F) -> String
+where
+    F: FnMut(&str) -> Result<String, E>,
+{
+    if let Some(rust_log) = get_var(ENV_RUST_LOG)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return rust_log;
+    }
+
+    if config::parse_extended_truthy(get_var(ENV_TOOL_CALL_DEBUG).ok().as_deref()) {
+        return TOOL_CALL_DEBUG_RUST_LOG.to_string();
+    }
+
+    DEFAULT_RUST_LOG.to_string()
 }
 
 fn parse_args<I, S>(args: I) -> Result<RunMode, String>
@@ -368,6 +395,18 @@ mod tests {
     use super::*;
     use crate::config::{DEFAULT_HTTP_HOST, DEFAULT_HTTP_PATH, DEFAULT_HTTP_PORT};
 
+    fn env_provider<'a>(
+        pairs: &'a [(&'a str, &'a str)],
+    ) -> impl FnMut(&str) -> Result<String, ()> + 'a {
+        move |key| {
+            pairs
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| (*value).to_string())
+                .ok_or(())
+        }
+    }
+
     fn merge_http(overrides: HttpConfigOverrides) -> config::HttpConfig {
         config::HttpConfig::from_var_provider(|_| Err(()), overrides).unwrap()
     }
@@ -448,6 +487,46 @@ mod tests {
         let error = parse_args(["sse"]).unwrap_err();
 
         assert_eq!(error, "unknown command `sse`");
+    }
+
+    #[test]
+    fn tracing_filter_defaults_to_info() {
+        assert_eq!(
+            tracing_filter_spec_from_env(env_provider(&[])),
+            DEFAULT_RUST_LOG
+        );
+    }
+
+    #[test]
+    fn tracing_filter_enables_tool_call_debug_when_requested() {
+        for value in ["true", "1", "yes", "y", "on"] {
+            assert_eq!(
+                tracing_filter_spec_from_env(env_provider(&[(ENV_TOOL_CALL_DEBUG, value)])),
+                TOOL_CALL_DEBUG_RUST_LOG
+            );
+        }
+    }
+
+    #[test]
+    fn tracing_filter_respects_rust_log_over_tool_call_debug() {
+        assert_eq!(
+            tracing_filter_spec_from_env(env_provider(&[
+                (ENV_RUST_LOG, "warn,rmcp=debug"),
+                (ENV_TOOL_CALL_DEBUG, "true"),
+            ])),
+            "warn,rmcp=debug"
+        );
+    }
+
+    #[test]
+    fn tracing_filter_treats_empty_rust_log_as_unset() {
+        assert_eq!(
+            tracing_filter_spec_from_env(env_provider(&[
+                (ENV_RUST_LOG, "   "),
+                (ENV_TOOL_CALL_DEBUG, "true"),
+            ])),
+            TOOL_CALL_DEBUG_RUST_LOG
+        );
     }
 
     #[tokio::test]

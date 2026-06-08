@@ -151,7 +151,7 @@ pub struct HttpConfigOverrides {
     pub path: Option<String>,
 }
 
-fn parse_extended_truthy(value: Option<&str>) -> bool {
+pub(crate) fn parse_extended_truthy(value: Option<&str>) -> bool {
     matches!(
         value.map(|value| value.trim().to_ascii_lowercase()),
         Some(value)

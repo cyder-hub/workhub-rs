@@ -426,6 +426,8 @@ Set `MCP_PORT` to change the host port used by compose. Set `MCP_HTTP_PATH`, `RE
 
 The compose service includes a `/healthz` healthcheck and runs the binary as the non-root `app` user from the image. Keep secrets in your deployment secret manager or local shell environment; do not commit dotenv files with real Atlassian credentials.
 
+Tool-call diagnostics can be enabled in release binaries, Docker, or compose with `MCP_TOOL_CALL_DEBUG=true`. This prints MCP tool names, elapsed time, failures, and redacted JSON arguments to stderr when `RUST_LOG` is unset. `RUST_LOG` remains the advanced override; the equivalent filter is `RUST_LOG=mcp_atlassian_rs::mcp=debug,mcp_atlassian_rs=info,rmcp=info`. Diagnostic arguments are redacted and truncated, but can still contain business data such as JQL, issue keys, page IDs, summaries, or descriptions, so enable them only during troubleshooting.
+
 Stage 5 validated `just docker-build`, compose config, compose startup, and `GET /healthz` with `MCP_PORT=18080`. Stage 8 completed release artifact policy, deployment documentation, Docker/compose health validation, and final release gate; Helm and external registry publishing remain out of scope for the current Rust release.
 
 ## Verification
