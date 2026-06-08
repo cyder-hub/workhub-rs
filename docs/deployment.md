@@ -23,6 +23,14 @@ mcp-atlassian-rs stdio
 
 Logs are written to stderr. Stdout is reserved for the MCP protocol.
 
+To include MCP tool call names, elapsed time, failures, and redacted arguments in stderr logs, enable tool-call diagnostics:
+
+```bash
+MCP_TOOL_CALL_DEBUG=true mcp-atlassian-rs stdio
+```
+
+`RUST_LOG` remains the advanced logging control and takes precedence over `MCP_TOOL_CALL_DEBUG` when set.
+
 ## Streamable HTTP
 
 Use streamable HTTP for server deployments:
@@ -39,6 +47,12 @@ GET /healthz
 
 The MCP endpoint path defaults to `/mcp` and can be set with `MCP_HTTP_PATH` or `--path`.
 
+To enable tool-call diagnostics for streamable HTTP:
+
+```bash
+MCP_TOOL_CALL_DEBUG=true mcp-atlassian-rs streamhttp --host 0.0.0.0 --port 8000 --path /mcp
+```
+
 ## Docker And Compose
 
 Build the local image:
@@ -53,6 +67,12 @@ Run the image:
 docker run --rm -p 8000:8000 mcp-atlassian-rs:local
 ```
 
+Run the image with tool-call diagnostics:
+
+```bash
+docker run --rm -e MCP_TOOL_CALL_DEBUG=true -p 8000:8000 mcp-atlassian-rs:local
+```
+
 Run with compose:
 
 ```bash
@@ -60,6 +80,12 @@ docker compose up --build
 ```
 
 The image runs as a non-root `app` user. The compose service includes a `/healthz` healthcheck and maps `${MCP_PORT:-8000}` on the host to container port `8000`.
+
+Compose passes through `MCP_TOOL_CALL_DEBUG` and `RUST_LOG`. For example:
+
+```bash
+MCP_TOOL_CALL_DEBUG=true docker compose up --build
+```
 
 ## Runtime Controls
 
@@ -71,6 +97,8 @@ The image runs as a non-root `app` user. The compose service includes a `/health
 | `MCP_HTTP_HOST` / `MCP_HTTP_PORT` / `MCP_HTTP_PATH` | Configure streamable HTTP when CLI flags are not used. |
 | `IGNORE_HEADER_AUTH` | Set `true` to ignore request-scoped auth/service headers and use only global environment config. |
 | `MCP_ALLOWED_URL_DOMAINS` | Restrict header-provided Jira/Confluence service URLs to exact domains or subdomains. |
+| `MCP_TOOL_CALL_DEBUG` | Set `true` to enable MCP tool-call diagnostics when `RUST_LOG` is unset. Uses `mcp_atlassian_rs::mcp=debug,mcp_atlassian_rs=info,rmcp=info`. |
+| `RUST_LOG` | Advanced tracing filter. Takes precedence over `MCP_TOOL_CALL_DEBUG`. |
 
 ## Jira And Confluence Auth
 
@@ -113,6 +141,7 @@ Reserved auth, cookie, host, content, proxy, connection, and request-scoped Atla
 ## Security Behavior
 
 - Secret-looking values are redacted from logs, MCP debug output, compact acceptance errors, URL query values, and Atlassian error summaries.
+- MCP tool-call diagnostics include redacted JSON arguments. They can still include business data such as JQL, issue keys, page IDs, summaries, or descriptions, so enable them only while troubleshooting.
 - Header-provided service URLs are validated for scheme, hostname, blocked hostnames, IP ranges, DNS results, and optional allowed domains.
 - Outbound Atlassian redirects are same-origin only and limited to 3 hops.
 - Request-scoped auth applies only to the current streamable HTTP request or MCP session and does not mutate global environment config.

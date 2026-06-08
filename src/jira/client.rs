@@ -775,8 +775,12 @@ impl JiraClient {
 
     pub async fn get_user_profile(&self, user_identifier: String) -> Result<Value, AtlassianError> {
         let identifier = user_identifier.trim();
-        if identifier.eq_ignore_ascii_case("currentuser()") || identifier.eq_ignore_ascii_case("me") {
-            return self.http.send_json(self.http.get("/rest/api/2/myself")?).await;
+        if identifier.eq_ignore_ascii_case("currentuser()") || identifier.eq_ignore_ascii_case("me")
+        {
+            return self
+                .http
+                .send_json(self.http.get("/rest/api/2/myself")?)
+                .await;
         }
 
         let query_key = match self.config.deployment {
@@ -802,8 +806,6 @@ impl JiraClient {
             )
             .await
     }
-
-
     pub async fn add_watcher(
         &self,
         issue_key: String,

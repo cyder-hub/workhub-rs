@@ -11,6 +11,8 @@ services:
       TOOLSETS: "${TOOLSETS:-}"
       ENABLED_TOOLS: "${ENABLED_TOOLS:-}"
       MCP_ALLOWED_URL_DOMAINS: "${MCP_ALLOWED_URL_DOMAINS:-}"
+      MCP_TOOL_CALL_DEBUG: "${MCP_TOOL_CALL_DEBUG:-false}"
+      RUST_LOG: "${RUST_LOG:-}"
     ports:
       - "${MCP_PORT:-8000}:8000"
     healthcheck:
