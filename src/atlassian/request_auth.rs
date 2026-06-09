@@ -103,7 +103,7 @@ impl Display for RequestAuthError {
             Self::InvalidBasicFormat => {
                 write!(
                     formatter,
-                    "invalid Basic auth format; expected email:api_token"
+                    "invalid Basic auth format; expected email:api_token or username:password"
                 )
             }
             Self::MissingServiceHeaderPair { service } => {

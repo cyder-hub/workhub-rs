@@ -6,8 +6,8 @@ use crate::{
         compat::{
             ENV_ATLASSIAN_API_TOKEN, ENV_ATLASSIAN_CLIENT_CERT, ENV_ATLASSIAN_CLIENT_KEY,
             ENV_ATLASSIAN_CUSTOM_HEADERS, ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN,
-            ENV_ATLASSIAN_OAUTH_CLOUD_ID, ENV_ATLASSIAN_PERSONAL_TOKEN, ENV_ATLASSIAN_SSL_VERIFY,
-            ENV_ATLASSIAN_TIMEOUT, ENV_ATLASSIAN_USERNAME,
+            ENV_ATLASSIAN_OAUTH_CLOUD_ID, ENV_ATLASSIAN_PASSWORD, ENV_ATLASSIAN_PERSONAL_TOKEN,
+            ENV_ATLASSIAN_SSL_VERIFY, ENV_ATLASSIAN_TIMEOUT, ENV_ATLASSIAN_USERNAME,
         },
         custom_headers::CustomHeaders,
         mtls::ClientTlsIdentityConfig,
@@ -33,6 +33,7 @@ pub struct AtlassianServiceConfigSpec<D> {
     pub url_variable: &'static str,
     pub username_variable: &'static str,
     pub api_token_variable: &'static str,
+    pub password_variable: &'static str,
     pub personal_token_variable: &'static str,
     pub oauth_access_token_variable: &'static str,
     pub ssl_verify_variable: &'static str,
@@ -71,6 +72,8 @@ where
         spec.api_token_variable,
         ENV_ATLASSIAN_API_TOKEN,
     );
+    let password =
+        optional_service_or_atlassian_var(get_var, spec.password_variable, ENV_ATLASSIAN_PASSWORD);
     let personal_token = optional_service_or_atlassian_var(
         get_var,
         spec.personal_token_variable,
@@ -91,6 +94,7 @@ where
         let credential_variables = present_variables([
             service_specific_variable(username.as_ref(), spec.username_variable),
             service_specific_variable(api_token.as_ref(), spec.api_token_variable),
+            service_specific_variable(password.as_ref(), spec.password_variable),
             service_specific_variable(personal_token.as_ref(), spec.personal_token_variable),
             service_oauth_access_token.as_ref(),
         ]);
@@ -151,14 +155,8 @@ where
             },
             None,
         )
-    } else if let (Some(username), Some(api_token)) = (username, api_token) {
-        (
-            AtlassianAuth::Basic {
-                username: username.value,
-                api_token: api_token.value,
-            },
-            None,
-        )
+    } else if let Some(auth) = server_basic_auth(username, password, api_token, spec) {
+        (auth, None)
     } else {
         return Err((spec.missing_personal_token_error)(
             spec.personal_token_variable,
@@ -217,6 +215,31 @@ where
         mtls,
         timeout_seconds,
     }))
+}
+
+fn server_basic_auth<D>(
+    username: Option<NamedEnvValue>,
+    password: Option<NamedEnvValue>,
+    api_token: Option<NamedEnvValue>,
+    spec: &AtlassianServiceConfigSpec<D>,
+) -> Option<AtlassianAuth> {
+    let username = username?;
+    let password_is_service_specific = password
+        .as_ref()
+        .is_some_and(|value| value.variable == spec.password_variable);
+    let api_token_is_service_specific = api_token
+        .as_ref()
+        .is_some_and(|value| value.variable == spec.api_token_variable);
+    let secret = if password_is_service_specific || !api_token_is_service_specific {
+        password.or(api_token)
+    } else {
+        api_token.or(password)
+    }?;
+
+    Some(AtlassianAuth::Basic {
+        username: username.value,
+        api_token: secret.value,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

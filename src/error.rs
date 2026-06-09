@@ -154,7 +154,7 @@ impl Display for ConfigError {
             Self::MissingJiraPersonalToken { variable } => {
                 write!(
                     formatter,
-                    "missing Jira Server/Data Center credential variable: {variable}"
+                    "missing Jira Server/Data Center credential variables: {variable}, JIRA_OAUTH_ACCESS_TOKEN, or JIRA_USERNAME with JIRA_PASSWORD"
                 )
             }
             Self::MissingJiraOAuthCloudId {
@@ -190,7 +190,7 @@ impl Display for ConfigError {
             Self::MissingConfluencePersonalToken { variable } => {
                 write!(
                     formatter,
-                    "missing Confluence Server/Data Center credential variable: {variable}"
+                    "missing Confluence Server/Data Center credential variables: {variable}, CONFLUENCE_OAUTH_ACCESS_TOKEN, or CONFLUENCE_USERNAME with CONFLUENCE_PASSWORD"
                 )
             }
             Self::MissingConfluenceOAuthCloudId {

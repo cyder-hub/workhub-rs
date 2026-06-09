@@ -14,10 +14,10 @@ Implemented in the Rust root project:
 - MCP server runs over `stdio` and streamable HTTP at `/mcp`.
 - Logging is configured to stderr so stdio MCP stdout remains protocol-only.
 - Runtime control-plane config parses `TOOL_PROFILE`, `TOOLSETS`, `ENABLED_TOOLS`, `DISABLED_TOOLS`, `ATLASSIAN_OAUTH_CLOUD_ID`, `ATLASSIAN_OAUTH_ENABLE`, `MCP_ALLOWED_URL_DOMAINS`, and `IGNORE_HEADER_AUTH`. Streamable HTTP additionally parses `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, and `MCP_HTTP_PATH`.
-- Jira config parses `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`, `JIRA_PERSONAL_TOKEN`, `ATLASSIAN_USERNAME`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_PERSONAL_TOKEN`, `ATLASSIAN_OAUTH_ACCESS_TOKEN`, `JIRA_OAUTH_ACCESS_TOKEN`, `JIRA_SSL_VERIFY`, `ATLASSIAN_SSL_VERIFY`, `JIRA_PROJECTS_FILTER`, `JIRA_TIMEOUT`, `ATLASSIAN_TIMEOUT`, `JIRA_HTTP_PROXY`, `JIRA_HTTPS_PROXY`, `JIRA_NO_PROXY`, `ATLASSIAN_HTTP_PROXY`, `ATLASSIAN_HTTPS_PROXY`, `ATLASSIAN_NO_PROXY`, `JIRA_CUSTOM_HEADERS`, `ATLASSIAN_CUSTOM_HEADERS`, `JIRA_CLIENT_CERT`, `JIRA_CLIENT_KEY`, `ATLASSIAN_CLIENT_CERT`, and `ATLASSIAN_CLIENT_KEY`.
-- Confluence config parses `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_API_TOKEN`, `CONFLUENCE_PERSONAL_TOKEN`, `ATLASSIAN_USERNAME`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_PERSONAL_TOKEN`, `ATLASSIAN_OAUTH_ACCESS_TOKEN`, `CONFLUENCE_OAUTH_ACCESS_TOKEN`, `CONFLUENCE_SSL_VERIFY`, `ATLASSIAN_SSL_VERIFY`, `CONFLUENCE_SPACES_FILTER`, `CONFLUENCE_TIMEOUT`, `ATLASSIAN_TIMEOUT`, `CONFLUENCE_HTTP_PROXY`, `CONFLUENCE_HTTPS_PROXY`, `CONFLUENCE_NO_PROXY`, `ATLASSIAN_HTTP_PROXY`, `ATLASSIAN_HTTPS_PROXY`, `ATLASSIAN_NO_PROXY`, `CONFLUENCE_CUSTOM_HEADERS`, `ATLASSIAN_CUSTOM_HEADERS`, `CONFLUENCE_CLIENT_CERT`, `CONFLUENCE_CLIENT_KEY`, `ATLASSIAN_CLIENT_CERT`, and `ATLASSIAN_CLIENT_KEY`.
-- Jira Cloud uses username/API token auth for `*.atlassian.net`; Jira Server/Data Center uses PAT auth.
-- Confluence Cloud uses username/API token auth for `*.atlassian.net`; Confluence Server/Data Center uses PAT auth.
+- Jira config parses `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`, `JIRA_PASSWORD`, `JIRA_PERSONAL_TOKEN`, `ATLASSIAN_USERNAME`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_PASSWORD`, `ATLASSIAN_PERSONAL_TOKEN`, `ATLASSIAN_OAUTH_ACCESS_TOKEN`, `JIRA_OAUTH_ACCESS_TOKEN`, `JIRA_SSL_VERIFY`, `ATLASSIAN_SSL_VERIFY`, `JIRA_PROJECTS_FILTER`, `JIRA_TIMEOUT`, `ATLASSIAN_TIMEOUT`, `JIRA_HTTP_PROXY`, `JIRA_HTTPS_PROXY`, `JIRA_NO_PROXY`, `ATLASSIAN_HTTP_PROXY`, `ATLASSIAN_HTTPS_PROXY`, `ATLASSIAN_NO_PROXY`, `JIRA_CUSTOM_HEADERS`, `ATLASSIAN_CUSTOM_HEADERS`, `JIRA_CLIENT_CERT`, `JIRA_CLIENT_KEY`, `ATLASSIAN_CLIENT_CERT`, and `ATLASSIAN_CLIENT_KEY`.
+- Confluence config parses `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_API_TOKEN`, `CONFLUENCE_PASSWORD`, `CONFLUENCE_PERSONAL_TOKEN`, `ATLASSIAN_USERNAME`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_PASSWORD`, `ATLASSIAN_PERSONAL_TOKEN`, `ATLASSIAN_OAUTH_ACCESS_TOKEN`, `CONFLUENCE_OAUTH_ACCESS_TOKEN`, `CONFLUENCE_SSL_VERIFY`, `ATLASSIAN_SSL_VERIFY`, `CONFLUENCE_SPACES_FILTER`, `CONFLUENCE_TIMEOUT`, `ATLASSIAN_TIMEOUT`, `CONFLUENCE_HTTP_PROXY`, `CONFLUENCE_HTTPS_PROXY`, `CONFLUENCE_NO_PROXY`, `ATLASSIAN_HTTP_PROXY`, `ATLASSIAN_HTTPS_PROXY`, `ATLASSIAN_NO_PROXY`, `CONFLUENCE_CUSTOM_HEADERS`, `ATLASSIAN_CUSTOM_HEADERS`, `CONFLUENCE_CLIENT_CERT`, `CONFLUENCE_CLIENT_KEY`, `ATLASSIAN_CLIENT_CERT`, and `ATLASSIAN_CLIENT_KEY`.
+- Jira Cloud uses username/API token auth for `*.atlassian.net`; Jira Server/Data Center uses PAT, BYOT access-token, or username/password auth.
+- Confluence Cloud uses username/API token auth for `*.atlassian.net`; Confluence Server/Data Center uses PAT, BYOT access-token, or username/password auth.
 - Cloud BYOT access tokens use `https://api.atlassian.com/ex/jira/{cloud_id}` for Jira and `https://api.atlassian.com/ex/confluence/{cloud_id}/wiki` for Confluence. Server/Data Center BYOT keeps the configured service base URL.
 - Service network config supports typed HTTP/HTTPS proxy, NO_PROXY, custom outbound headers, and mTLS client cert/key.
 - Shared Atlassian HTTP/auth/error helpers and Jira models/client/tool handlers are implemented for Jira core and extended tools.
@@ -78,6 +78,14 @@ export JIRA_URL="https://jira.example.com"
 export JIRA_PERSONAL_TOKEN="<personal-access-token>"
 ```
 
+Or, when the private Jira instance still allows Basic username/password auth:
+
+```bash
+export JIRA_URL="https://jira.example.com"
+export JIRA_USERNAME="<username>"
+export JIRA_PASSWORD="<password>"
+```
+
 Confluence Cloud:
 
 ```bash
@@ -91,6 +99,14 @@ Confluence Server/Data Center:
 ```bash
 export CONFLUENCE_URL="https://confluence.example.com"
 export CONFLUENCE_PERSONAL_TOKEN="<personal-access-token>"
+```
+
+Or, when the private Confluence instance still allows Basic username/password auth:
+
+```bash
+export CONFLUENCE_URL="https://confluence.example.com"
+export CONFLUENCE_USERNAME="<username>"
+export CONFLUENCE_PASSWORD="<password>"
 ```
 
 Run over stdio:
@@ -156,7 +172,7 @@ BYOT access tokens:
 
 - Cloud Jira with `ATLASSIAN_OAUTH_ACCESS_TOKEN` or `JIRA_OAUTH_ACCESS_TOKEN` requires `ATLASSIAN_OAUTH_CLOUD_ID` and uses `https://api.atlassian.com/ex/jira/{cloud_id}`.
 - Cloud Confluence with `ATLASSIAN_OAUTH_ACCESS_TOKEN` or `CONFLUENCE_OAUTH_ACCESS_TOKEN` requires `ATLASSIAN_OAUTH_CLOUD_ID` and uses `https://api.atlassian.com/ex/confluence/{cloud_id}/wiki`.
-- Server/Data Center PAT takes precedence over BYOT access-token auth. When no PAT is set, Server/Data Center can use the BYOT access token against the configured service URL.
+- Server/Data Center PAT takes precedence over BYOT access-token auth. When no PAT is set, Server/Data Center can use the BYOT access token against the configured service URL. When neither PAT nor BYOT is set, Server/Data Center can use Basic username/password auth.
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
@@ -166,6 +182,7 @@ BYOT access tokens:
 | `ATLASSIAN_OAUTH_CLOUD_ID` | unset | Required for Cloud BYOT access-token auth. Also used by Jira Forms/ProForma helpers. |
 | `ATLASSIAN_OAUTH_ENABLE` | `false` | Truthy values interpret streamable HTTP `Authorization: Bearer` as BYOT/OAuth access-token auth instead of PAT-compatible auth. |
 | `ATLASSIAN_USERNAME` / `ATLASSIAN_API_TOKEN` | unset | Shared username/API-token fallback for Jira and Confluence when service-specific values are unset. |
+| `ATLASSIAN_USERNAME` / `ATLASSIAN_PASSWORD` | unset | Shared Server/Data Center username/password fallback when service-specific username/password values are unset. |
 | `ATLASSIAN_PERSONAL_TOKEN` | unset | Shared PAT fallback for Jira and Confluence Server/Data Center when service-specific PAT values are unset. |
 
 Full OAuth Cloud 3LO, OAuth proxy/DCR, refresh/token storage, and Data Center OAuth authorization-code/refresh flows are not implemented.
@@ -242,7 +259,7 @@ Supported request-scoped headers:
 
 | Header | Behavior |
 | --- | --- |
-| `Authorization: Basic <base64(email:api_token)>` | Overrides credentials for already configured Jira/Confluence services in the current HTTP request or MCP session. |
+| `Authorization: Basic <base64(email:api_token)>` or `Authorization: Basic <base64(username:password)>` | Overrides credentials for already configured Jira/Confluence services in the current HTTP request or MCP session. |
 | `Authorization: Token <pat>` | Uses the token as a PAT-compatible credential for already configured services. |
 | `Authorization: Bearer <token>` | Uses the token as a BYOT/OAuth access token when `X-Atlassian-Cloud-Id` is present or global `ATLASSIAN_OAUTH_ENABLE=true`; otherwise keeps the PAT-compatible behavior. |
 | `X-Atlassian-Jira-Url` + `X-Atlassian-Jira-Personal-Token` | Creates or overrides the Jira config for the current request/session after URL validation. |

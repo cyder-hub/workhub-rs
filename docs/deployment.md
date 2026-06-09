@@ -107,24 +107,24 @@ MCP_TOOL_CALL_DEBUG=true docker compose up --build
 Supported global auth:
 
 - Jira Cloud: `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`.
-- Jira Server/Data Center: `JIRA_URL`, `JIRA_PERSONAL_TOKEN`.
+- Jira Server/Data Center: `JIRA_URL`, `JIRA_PERSONAL_TOKEN`, or `JIRA_URL`, `JIRA_USERNAME`, `JIRA_PASSWORD`.
 - Confluence Cloud: `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_API_TOKEN`.
-- Confluence Server/Data Center: `CONFLUENCE_URL`, `CONFLUENCE_PERSONAL_TOKEN`.
-- Shared auth fallbacks: `ATLASSIAN_USERNAME`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_PERSONAL_TOKEN`.
+- Confluence Server/Data Center: `CONFLUENCE_URL`, `CONFLUENCE_PERSONAL_TOKEN`, or `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_PASSWORD`.
+- Shared auth fallbacks: `ATLASSIAN_USERNAME`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_PASSWORD`, `ATLASSIAN_PERSONAL_TOKEN`.
 - BYOT access token: `ATLASSIAN_OAUTH_ACCESS_TOKEN`, or service-specific `JIRA_OAUTH_ACCESS_TOKEN` / `CONFLUENCE_OAUTH_ACCESS_TOKEN`.
 
 Cloud BYOT access-token auth requires `ATLASSIAN_OAUTH_CLOUD_ID`. Jira Cloud BYOT uses `https://api.atlassian.com/ex/jira/{cloud_id}`. Confluence Cloud BYOT uses `https://api.atlassian.com/ex/confluence/{cloud_id}/wiki`.
 
 Supported streamable HTTP request-scoped auth:
 
-- `Authorization: Basic <base64(email:api_token)>`.
+- `Authorization: Basic <base64(email:api_token)>` or `Authorization: Basic <base64(username:password)>`.
 - `Authorization: Token <pat>`.
 - `Authorization: Bearer <token>`.
 - `X-Atlassian-Jira-Url` plus `X-Atlassian-Jira-Personal-Token`.
 - `X-Atlassian-Confluence-Url` plus `X-Atlassian-Confluence-Personal-Token`.
 - `X-Atlassian-Cloud-Id`.
 
-Bearer tokens are interpreted as BYOT/OAuth access tokens when `X-Atlassian-Cloud-Id` is present or `ATLASSIAN_OAUTH_ENABLE=true`. Otherwise Bearer keeps the PAT-compatible behavior.
+Bearer tokens are interpreted as BYOT/OAuth access tokens when `X-Atlassian-Cloud-Id` is present or `ATLASSIAN_OAUTH_ENABLE=true`. Otherwise Bearer keeps the PAT-compatible behavior. Server/Data Center global env auth precedence is PAT, then BYOT access token, then username/password Basic Auth.
 
 ## Network And TLS
 

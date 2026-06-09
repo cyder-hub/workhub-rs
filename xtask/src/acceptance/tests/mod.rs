@@ -100,6 +100,50 @@ fn preflight_accepts_shared_basic_auth_for_both_services() {
 }
 
 #[test]
+fn preflight_accepts_service_password_auth_for_each_service() {
+    let mut jira_env = EnvMap::new();
+    jira_env.insert("JIRA_URL".to_string(), "https://jira.example".to_string());
+    jira_env.insert("JIRA_USERNAME".to_string(), "user@example.com".to_string());
+    jira_env.insert("JIRA_PASSWORD".to_string(), "jira-password".to_string());
+    assert!(missing_base_env(&AcceptanceMode::Jira, &jira_env).is_empty());
+
+    let mut confluence_env = EnvMap::new();
+    confluence_env.insert(
+        "CONFLUENCE_URL".to_string(),
+        "https://confluence.example".to_string(),
+    );
+    confluence_env.insert(
+        "CONFLUENCE_USERNAME".to_string(),
+        "user@example.com".to_string(),
+    );
+    confluence_env.insert(
+        "CONFLUENCE_PASSWORD".to_string(),
+        "confluence-password".to_string(),
+    );
+    assert!(missing_base_env(&AcceptanceMode::Confluence, &confluence_env).is_empty());
+}
+
+#[test]
+fn preflight_accepts_shared_password_auth_for_both_services() {
+    let mut env = EnvMap::new();
+    env.insert("JIRA_URL".to_string(), "https://jira.example".to_string());
+    env.insert(
+        "CONFLUENCE_URL".to_string(),
+        "https://confluence.example".to_string(),
+    );
+    env.insert(
+        "ATLASSIAN_USERNAME".to_string(),
+        "user@example.com".to_string(),
+    );
+    env.insert(
+        "ATLASSIAN_PASSWORD".to_string(),
+        "shared-password".to_string(),
+    );
+
+    assert!(missing_base_env(&AcceptanceMode::Mcp, &env).is_empty());
+}
+
+#[test]
 fn preflight_accepts_shared_token_auth_for_each_service() {
     let mut jira_env = EnvMap::new();
     jira_env.insert("JIRA_URL".to_string(), "https://jira.example".to_string());
@@ -125,9 +169,10 @@ fn preflight_accepts_shared_token_auth_for_each_service() {
 fn redacts_file_loaded_secrets() {
     let mut env = EnvMap::new();
     env.insert("JIRA_API_TOKEN".to_string(), "secret-token".to_string());
+    env.insert("JIRA_PASSWORD".to_string(), "secret-password".to_string());
     assert_eq!(
-        redact_text("Authorization secret-token", &env),
-        "Authorization <redacted>"
+        redact_text("Authorization secret-token and secret-password", &env),
+        "Authorization <redacted> and <redacted>"
     );
 }
 

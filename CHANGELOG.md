@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- feat(auth): Added Jira and Confluence Server/Data Center username/password Basic Auth via `JIRA_PASSWORD`, `CONFLUENCE_PASSWORD`, and shared `ATLASSIAN_PASSWORD` fallbacks.
+
 ## 0.1.2 - 2026-06-08
 
 ### Added
