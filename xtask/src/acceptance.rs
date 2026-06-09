@@ -25,12 +25,15 @@ const FAILED: i32 = 1;
 const ENV_FILE_VAR: &str = "ACCEPTANCE_ENV_FILE";
 const SECRET_KEYS: &[&str] = &[
     "JIRA_API_TOKEN",
+    "JIRA_PASSWORD",
     "JIRA_PERSONAL_TOKEN",
     "JIRA_OAUTH_ACCESS_TOKEN",
     "CONFLUENCE_API_TOKEN",
+    "CONFLUENCE_PASSWORD",
     "CONFLUENCE_PERSONAL_TOKEN",
     "CONFLUENCE_OAUTH_ACCESS_TOKEN",
     "ATLASSIAN_API_TOKEN",
+    "ATLASSIAN_PASSWORD",
     "ATLASSIAN_PERSONAL_TOKEN",
     "ATLASSIAN_OAUTH_ACCESS_TOKEN",
 ];
@@ -342,7 +345,9 @@ fn has_jira_auth(env: &EnvMap) -> bool {
             "ATLASSIAN_OAUTH_ACCESS_TOKEN",
         ],
     ) || has_basic_auth(env, "JIRA_USERNAME", "JIRA_API_TOKEN")
+        || has_basic_auth(env, "JIRA_USERNAME", "JIRA_PASSWORD")
         || has_basic_auth(env, "ATLASSIAN_USERNAME", "ATLASSIAN_API_TOKEN")
+        || has_basic_auth(env, "ATLASSIAN_USERNAME", "ATLASSIAN_PASSWORD")
 }
 
 fn has_confluence_auth(env: &EnvMap) -> bool {
@@ -355,15 +360,17 @@ fn has_confluence_auth(env: &EnvMap) -> bool {
             "ATLASSIAN_OAUTH_ACCESS_TOKEN",
         ],
     ) || has_basic_auth(env, "CONFLUENCE_USERNAME", "CONFLUENCE_API_TOKEN")
+        || has_basic_auth(env, "CONFLUENCE_USERNAME", "CONFLUENCE_PASSWORD")
         || has_basic_auth(env, "ATLASSIAN_USERNAME", "ATLASSIAN_API_TOKEN")
+        || has_basic_auth(env, "ATLASSIAN_USERNAME", "ATLASSIAN_PASSWORD")
 }
 
 fn has_any_token(env: &EnvMap, keys: &[&str]) -> bool {
     keys.iter().any(|key| !env_value(env, key).is_empty())
 }
 
-fn has_basic_auth(env: &EnvMap, username_key: &str, api_token_key: &str) -> bool {
-    !env_value(env, username_key).is_empty() && !env_value(env, api_token_key).is_empty()
+fn has_basic_auth(env: &EnvMap, username_key: &str, credential_key: &str) -> bool {
+    !env_value(env, username_key).is_empty() && !env_value(env, credential_key).is_empty()
 }
 
 fn env_value<'a>(env: &'a EnvMap, key: &str) -> &'a str {

@@ -24,6 +24,7 @@ use crate::{
 pub const ENV_JIRA_URL: &str = "JIRA_URL";
 pub const ENV_JIRA_USERNAME: &str = "JIRA_USERNAME";
 pub const ENV_JIRA_API_TOKEN: &str = "JIRA_API_TOKEN";
+pub const ENV_JIRA_PASSWORD: &str = "JIRA_PASSWORD";
 pub const ENV_JIRA_PERSONAL_TOKEN: &str = "JIRA_PERSONAL_TOKEN";
 pub const ENV_JIRA_SSL_VERIFY: &str = "JIRA_SSL_VERIFY";
 pub const ENV_JIRA_PROJECTS_FILTER: &str = "JIRA_PROJECTS_FILTER";
@@ -163,6 +164,7 @@ fn jira_config_spec() -> AtlassianServiceConfigSpec<JiraDeployment> {
         url_variable: ENV_JIRA_URL,
         username_variable: ENV_JIRA_USERNAME,
         api_token_variable: ENV_JIRA_API_TOKEN,
+        password_variable: ENV_JIRA_PASSWORD,
         personal_token_variable: ENV_JIRA_PERSONAL_TOKEN,
         oauth_access_token_variable: ENV_JIRA_OAUTH_ACCESS_TOKEN,
         ssl_verify_variable: ENV_JIRA_SSL_VERIFY,
@@ -205,9 +207,9 @@ mod tests {
     use crate::atlassian::compat::{
         ENV_ATLASSIAN_API_TOKEN, ENV_ATLASSIAN_CLIENT_CERT, ENV_ATLASSIAN_CLIENT_KEY,
         ENV_ATLASSIAN_CUSTOM_HEADERS, ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN,
-        ENV_ATLASSIAN_OAUTH_CLOUD_ID, ENV_ATLASSIAN_PERSONAL_TOKEN, ENV_ATLASSIAN_SSL_VERIFY,
-        ENV_ATLASSIAN_TIMEOUT, ENV_ATLASSIAN_USERNAME, ENV_HTTP_PROXY, ENV_HTTPS_PROXY,
-        ENV_NO_PROXY,
+        ENV_ATLASSIAN_OAUTH_CLOUD_ID, ENV_ATLASSIAN_PASSWORD, ENV_ATLASSIAN_PERSONAL_TOKEN,
+        ENV_ATLASSIAN_SSL_VERIFY, ENV_ATLASSIAN_TIMEOUT, ENV_ATLASSIAN_USERNAME, ENV_HTTP_PROXY,
+        ENV_HTTPS_PROXY, ENV_NO_PROXY,
     };
 
     use super::*;
@@ -237,6 +239,19 @@ mod tests {
             }
         );
         assert!(!error.to_string().contains("test-pat-value"));
+    }
+
+    #[test]
+    fn jira_password_without_url_is_rejected() {
+        let error = config_from_pairs(&[(ENV_JIRA_PASSWORD, "test-password")]).unwrap_err();
+
+        assert_eq!(
+            error,
+            ConfigError::MissingJiraUrl {
+                credential_variables: vec![ENV_JIRA_PASSWORD],
+            }
+        );
+        assert!(!error.to_string().contains("test-password"));
     }
 
     #[test]
@@ -285,6 +300,24 @@ mod tests {
     }
 
     #[test]
+    fn cloud_config_does_not_accept_password_in_place_of_api_token() {
+        let error = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://example.atlassian.net"),
+            (ENV_JIRA_USERNAME, "user@example.com"),
+            (ENV_JIRA_PASSWORD, "test-password"),
+        ])
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            ConfigError::MissingJiraCloudCredentials {
+                missing_variables: vec![ENV_JIRA_API_TOKEN],
+            }
+        );
+        assert!(!error.to_string().contains("test-password"));
+    }
+
+    #[test]
     fn server_config_requires_pat() {
         let error = config_from_pairs(&[(ENV_JIRA_URL, "https://jira.example")]).unwrap_err();
 
@@ -322,6 +355,70 @@ mod tests {
     }
 
     #[test]
+    fn server_config_builds_basic_auth_from_password() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_USERNAME, "jira-user"),
+            (ENV_JIRA_PASSWORD, "test-password"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(config.base_url, "https://jira.example");
+        assert_eq!(config.deployment, JiraDeployment::ServerDataCenter);
+        assert_eq!(
+            config.auth,
+            AtlassianAuth::Basic {
+                username: "jira-user".to_string(),
+                api_token: "test-password".to_string(),
+            }
+        );
+        assert_eq!(config.oauth_cloud_id, None);
+        assert!(config.is_auth_configured());
+        assert!(!format!("{:?}", config.auth).contains("test-password"));
+    }
+
+    #[test]
+    fn server_config_prefers_password_over_api_token_basic_auth() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_USERNAME, "jira-user"),
+            (ENV_JIRA_API_TOKEN, "legacy-api-token"),
+            (ENV_JIRA_PASSWORD, "test-password"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            config.auth,
+            AtlassianAuth::Basic {
+                username: "jira-user".to_string(),
+                api_token: "test-password".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn server_config_prefers_service_api_token_over_shared_password() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_JIRA_USERNAME, "jira-user"),
+            (ENV_JIRA_API_TOKEN, "service-api-token"),
+            (ENV_ATLASSIAN_PASSWORD, "global-password"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            config.auth,
+            AtlassianAuth::Basic {
+                username: "jira-user".to_string(),
+                api_token: "service-api-token".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn atlassian_fallbacks_build_jira_config() {
         let config = config_from_pairs(&[
             (ENV_JIRA_URL, "https://example.atlassian.net"),
@@ -356,6 +453,25 @@ mod tests {
         assert_eq!(
             config.mtls.unwrap().cert_path,
             std::path::PathBuf::from("/tmp/global-client.crt")
+        );
+    }
+
+    #[test]
+    fn atlassian_password_fallback_builds_jira_server_config() {
+        let config = config_from_pairs(&[
+            (ENV_JIRA_URL, "https://jira.example"),
+            (ENV_ATLASSIAN_USERNAME, "global-user"),
+            (ENV_ATLASSIAN_PASSWORD, "global-password"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            config.auth,
+            AtlassianAuth::Basic {
+                username: "global-user".to_string(),
+                api_token: "global-password".to_string(),
+            }
         );
     }
 

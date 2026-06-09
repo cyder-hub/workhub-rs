@@ -140,15 +140,18 @@ All Confluence rows below are implemented in Rust and are registry-managed busin
 | --- | --- | --- | --- |
 | Jira Cloud basic/API token | `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN` | Supported | Used for Jira Cloud URLs ending in `.atlassian.net`. |
 | Jira Server/Data Center PAT | `JIRA_URL`, `JIRA_PERSONAL_TOKEN` | Supported | Used for non-Cloud Jira URLs. |
+| Jira Server/Data Center basic password | `JIRA_URL`, `JIRA_USERNAME`, `JIRA_PASSWORD` | Supported | Used for non-Cloud Jira URLs when PAT and BYOT access-token auth are unset. |
 | Confluence Cloud basic/API token | `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_API_TOKEN` | Supported | Used for Confluence Cloud URLs ending in `.atlassian.net`. |
 | Confluence Server/Data Center PAT | `CONFLUENCE_URL`, `CONFLUENCE_PERSONAL_TOKEN` | Supported | Used for non-Cloud Confluence URLs. |
+| Confluence Server/Data Center basic password | `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_PASSWORD` | Supported | Used for non-Cloud Confluence URLs when PAT and BYOT access-token auth are unset. |
 | Shared basic/API token fallback | `ATLASSIAN_USERNAME`, `ATLASSIAN_API_TOKEN` | Supported | Used when service-specific username/API-token variables are unset. Service-specific values take precedence. |
+| Shared Server/Data Center basic password fallback | `ATLASSIAN_USERNAME`, `ATLASSIAN_PASSWORD` | Supported | Used for non-Cloud Jira and Confluence when service-specific username/password variables are unset and PAT/BYOT access-token auth are unset. |
 | Shared Server/Data Center PAT fallback | `ATLASSIAN_PERSONAL_TOKEN` | Supported | Used when service-specific PAT variables are unset. Service-specific values take precedence. |
 | Shared BYOT access token | `ATLASSIAN_OAUTH_ACCESS_TOKEN` | Supported | Fallback access token for Jira and Confluence. Cloud mode requires `ATLASSIAN_OAUTH_CLOUD_ID`. |
 | Jira-specific BYOT access token | `JIRA_OAUTH_ACCESS_TOKEN` | Supported | Takes precedence over the shared access token for Jira. Jira Cloud uses `https://api.atlassian.com/ex/jira/{cloud_id}`. |
 | Confluence-specific BYOT access token | `CONFLUENCE_OAUTH_ACCESS_TOKEN` | Supported | Takes precedence over the shared access token for Confluence. Confluence Cloud uses `https://api.atlassian.com/ex/confluence/{cloud_id}/wiki`. |
-| Server/Data Center BYOT fallback | BYOT env token without service PAT | Supported | Server/Data Center keeps the configured service base URL when PAT is absent. |
-| Request-scoped Basic auth | `Authorization: Basic <base64(email:api_token)>` | Supported | Streamable HTTP only; scoped to the request/session. |
+| Server/Data Center BYOT fallback | BYOT env token without service PAT | Supported | Server/Data Center keeps the configured service base URL when PAT is absent and takes precedence over username/password Basic Auth. |
+| Request-scoped Basic auth | `Authorization: Basic <base64(email:api_token)>` or `Authorization: Basic <base64(username:password)>` | Supported | Streamable HTTP only; scoped to the request/session. |
 | Request-scoped Token auth | `Authorization: Token <pat>` | Supported | Streamable HTTP only; PAT-compatible token auth. |
 | Request-scoped Bearer PAT-compatible auth | `Authorization: Bearer <token>` | Supported | Used when no BYOT signal is present. |
 | Request-scoped Bearer BYOT auth | `Authorization: Bearer <token>` plus `X-Atlassian-Cloud-Id` or `ATLASSIAN_OAUTH_ENABLE=true` | Supported | Uses BYOT/OAuth access-token semantics and token-type-aware session fingerprinting. |
@@ -157,7 +160,7 @@ All Confluence rows below are implemented in Rust and are registry-managed busin
 | OAuth Cloud 3LO authorization-code flow | OAuth app flow | Not supported in the current Rust release | Fixed backlog item; not implemented in the current release. |
 | OAuth proxy/DCR | Dynamic client registration/proxy flow | Not supported in the current Rust release | Fixed backlog item; not implemented in the current release. |
 | OAuth refresh/token storage | Refresh tokens and token persistence | Not supported in the current Rust release | Fixed backlog item; BYOT access tokens are accepted but not refreshed or stored. |
-| Data Center OAuth authorization-code/refresh | Data Center OAuth app flow | Not supported in the current Rust release | Fixed backlog item; PAT and BYOT fallback are supported instead. |
+| Data Center OAuth authorization-code/refresh | Data Center OAuth app flow | Not supported in the current Rust release | Fixed backlog item; PAT, BYOT fallback, and username/password Basic Auth are supported instead. |
 
 ## Transport
 
