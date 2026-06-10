@@ -18,7 +18,7 @@ use rmcp::{
 use serde_json::{Value, json};
 
 use super::{
-    AtlassianMcpServer,
+    WorkhubMcpServer,
     confluence_values::{
         confluence_child_page_value, confluence_emoji_missing_page_id_status,
         confluence_expand_list, confluence_page_markdown_content, confluence_page_tool_value,
@@ -48,7 +48,7 @@ const CONFLUENCE_TREE_PAGE_SIZE: u64 = 200;
 pub(super) const CONFLUENCE_DOWNLOAD_CONTENT_ATTACHMENTS_MAX_PAGES: u64 = 10;
 
 #[tool_router(router = confluence_tool_router, vis = "pub(super)")]
-impl AtlassianMcpServer {
+impl WorkhubMcpServer {
     #[tool(name = "confluence_search_content")]
     pub(super) async fn search_content(
         &self,

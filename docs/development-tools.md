@@ -1,12 +1,12 @@
 # Development Tools
 
-This document covers development-only validation commands and variables for `mcp-atlassian-rs`. These commands are not production server commands and are intentionally exposed through `just` and `cargo xtask`, not through the `mcp-atlassian-rs` binary.
+This document covers development-only validation commands and variables for `mcp-workhub-rs`. These commands are not production server commands and are intentionally exposed through `just` and `cargo xtask`, not through the `mcp-workhub-rs` binary.
 
 Production runtime commands remain:
 
 ```bash
-mcp-atlassian-rs stdio
-mcp-atlassian-rs streamhttp --host 127.0.0.1 --port 8000 --path /mcp
+mcp-workhub-rs stdio
+mcp-workhub-rs streamhttp --host 127.0.0.1 --port 8000 --path /mcp
 ```
 
 ## Local Shortcuts
@@ -30,7 +30,7 @@ cargo test mcp::tests::gitlab_handlers
 cargo test mcp::tests::discovery
 ```
 
-Real acceptance shortcuts build `target/debug/mcp-atlassian-rs`, run preflight, then run the selected acceptance suite against that binary:
+Real acceptance shortcuts build `target/debug/mcp-workhub-rs`, run preflight, then run the selected acceptance suite against that binary:
 
 ```bash
 just acceptance-jira
@@ -71,15 +71,15 @@ Run real acceptance preflight or full acceptance:
 cargo xtask acceptance jira --preflight
 cargo xtask acceptance confluence --preflight
 cargo xtask acceptance mcp --preflight
-cargo xtask acceptance jira --run target/debug/mcp-atlassian-rs
-cargo xtask acceptance confluence --run target/debug/mcp-atlassian-rs
-cargo xtask acceptance mcp --run target/debug/mcp-atlassian-rs
+cargo xtask acceptance jira --run target/debug/mcp-workhub-rs
+cargo xtask acceptance confluence --run target/debug/mcp-workhub-rs
+cargo xtask acceptance mcp --run target/debug/mcp-workhub-rs
 ```
 
 Acceptance options:
 
 - `--env-file <path>`: load a dotenv file for this acceptance invocation.
-- `--run <binary>`: run the acceptance suite against the specified `mcp-atlassian-rs` binary.
+- `--run <binary>`: run the acceptance suite against the specified `mcp-workhub-rs` binary.
 - `--preflight`: check required configuration without running the acceptance suite.
 
 ## Acceptance Environment

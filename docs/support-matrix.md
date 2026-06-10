@@ -194,8 +194,8 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 
 | Capability | Surface | Rust status | Notes |
 | --- | --- | --- | --- |
-| stdio transport | `mcp-atlassian-rs stdio` | Supported | Logs go to stderr; stdout remains MCP protocol-only. |
-| Streamable HTTP transport | `mcp-atlassian-rs streamhttp` | Supported | Default endpoint is `/mcp`; path is configurable. |
+| stdio transport | `mcp-workhub-rs stdio` | Supported | Logs go to stderr; stdout remains MCP protocol-only. |
+| Streamable HTTP transport | `mcp-workhub-rs streamhttp` | Supported | Default endpoint is `/mcp`; path is configurable. |
 | Streamable HTTP request auth | HTTP headers listed above | Supported | Request-scoped auth applies only to the current request/session and preserves service/tool filtering. |
 | Health check | `GET /healthz` | Supported | Returns a simple status response for HTTP deployments. |
 | SSE transport | SSE server mode | Not supported in the current Rust release | Fixed unsupported/backlog item; supported transports are stdio and streamable HTTP. |
@@ -231,7 +231,7 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 
 | Capability | Rust status | Notes |
 | --- | --- | --- |
-| Linux release binary artifact | Supported | Tag-driven workflow builds `mcp-atlassian-rs-linux-x86_64.tar.gz` and checksum. |
+| Multi-platform release binary artifacts | Supported | Tag-driven workflow builds Linux, macOS, and Windows `mcp-workhub-rs-*` binaries and checksums. |
 | Docker image build | Supported | Local and CI builds use `Dockerfile`; external image publishing is not part of the current Rust release. |
 | Docker Compose | Supported | `docker-compose.yml` includes streamable HTTP startup and `/healthz` healthcheck. |
 | Helm chart | Not supported in the current Rust release | Rust Helm packaging requires a dedicated future task and remains in `docs/backlog.md`. |

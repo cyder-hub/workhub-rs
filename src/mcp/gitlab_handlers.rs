@@ -19,10 +19,10 @@ use rmcp::{
     ErrorData, handler::server::wrapper::Parameters, model::CallToolResult, tool, tool_router,
 };
 
-use super::{AtlassianMcpServer, wrap_array};
+use super::{WorkhubMcpServer, wrap_array};
 
 #[tool_router(router = gitlab_tool_router, vis = "pub(super)")]
-impl AtlassianMcpServer {
+impl WorkhubMcpServer {
     #[tool(name = "gitlab_get_current_user")]
     pub(super) async fn gitlab_get_current_user(
         &self,

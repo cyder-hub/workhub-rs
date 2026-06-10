@@ -31,7 +31,7 @@ use rmcp::{
 use serde_json::Value;
 
 use super::{
-    AtlassianMcpServer,
+    WorkhubMcpServer,
     jira_payloads::{
         add_worklog_payload_from_args, batch_create_issue_updates_from_args,
         create_issue_fields_from_args, create_sprint_payload_from_args,
@@ -45,7 +45,7 @@ use super::{
 };
 
 #[tool_router(router = jira_tool_router, vis = "pub(super)")]
-impl AtlassianMcpServer {
+impl WorkhubMcpServer {
     #[tool(name = "jira_get_issue")]
     pub(super) async fn get_issue(
         &self,

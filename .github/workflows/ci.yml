@@ -65,6 +65,9 @@ jobs:
       - name: Smoke Confluence mock tools
         run: cargo xtask smoke confluence all
 
+      - name: Smoke GitLab mock tools
+        run: cargo xtask smoke gitlab all
+
   docker:
     name: Docker
     runs-on: ubuntu-latest
@@ -76,19 +79,19 @@ jobs:
         run: docker compose -f docker-compose.yml config
 
       - name: Build image
-        run: docker build -t mcp-atlassian-rs:ci -f Dockerfile .
+        run: docker build -t mcp-workhub-rs:ci -f Dockerfile .
 
       - name: Smoke container health endpoint
         shell: bash
         run: |
-          docker run --rm -d --name mcp-atlassian-rs-ci -p 18080:8000 mcp-atlassian-rs:ci
-          trap 'docker rm -f mcp-atlassian-rs-ci >/dev/null 2>&1 || true' EXIT
+          docker run --rm -d --name mcp-workhub-rs-ci -p 18080:8000 mcp-workhub-rs:ci
+          trap 'docker rm -f mcp-workhub-rs-ci >/dev/null 2>&1 || true' EXIT
           for _ in {1..30}; do
-            if curl -fsS http://127.0.0.1:18080/healthz >/tmp/mcp-atlassian-rs-health.json; then
-              grep -q '"status":"ok"' /tmp/mcp-atlassian-rs-health.json
+            if curl -fsS http://127.0.0.1:18080/healthz >/tmp/mcp-workhub-rs-health.json; then
+              grep -q '"status":"ok"' /tmp/mcp-workhub-rs-health.json
               exit 0
             fi
             sleep 1
           done
-          docker logs mcp-atlassian-rs-ci
+          docker logs mcp-workhub-rs-ci
           exit 1

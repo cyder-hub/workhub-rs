@@ -2,9 +2,9 @@
 
 ## Project Structure & Module Organization
 
-This is a Rust 1.94 / edition 2024 binary crate for `mcp-atlassian-rs`. `src/main.rs` owns startup, production CLI parsing, tracing, transports, and `/healthz`. `src/mcp.rs` owns RMCP handlers and request-scoped auth. Runtime config/context live in `src/config.rs` and `src/context.rs`.
+This is a Rust 1.94 / edition 2024 binary crate for `mcp-workhub-rs`. `src/main.rs` owns startup, production CLI parsing, tracing, transports, and `/healthz`. `src/mcp.rs` owns RMCP handlers and request-scoped auth. Runtime config/context live in `src/config.rs` and `src/context.rs`.
 
-Jira and Confluence code live under `src/jira/` and `src/confluence/`. Shared auth, HTTP, proxy, mTLS, custom headers, request auth, redaction, SSRF, and redirect logic live in `src/atlassian/`. `src/tool_registry.rs` centralizes metadata, discovery, `TOOL_PROFILE`, `TOOLSETS`, `ENABLED_TOOLS`, and `DISABLED_TOOLS`. Development smoke and acceptance tooling lives in `xtask/`; public docs are in `README.md` and `docs/`.
+Jira, Confluence, and GitLab code live under `src/jira/`, `src/confluence/`, and `src/gitlab/`. Atlassian-specific compatibility lives in `src/atlassian/`; provider-agnostic auth, HTTP, proxy, mTLS, custom headers, redaction, SSRF, and redirect logic live in `src/upstream/`. `src/tool_registry.rs` centralizes metadata, discovery, `TOOL_PROFILE`, `TOOLSETS`, `ENABLED_TOOLS`, and `DISABLED_TOOLS`. Development smoke and acceptance tooling lives in `xtask/`; public docs are in `README.md` and `docs/`.
 
 ## Build, Test, and Development Commands
 
@@ -21,7 +21,7 @@ Use `cargo fmt`; `.editorconfig` sets 4-space Rust/TOML indentation and LF endin
 
 ## MCP Tool Changes
 
-When adding or changing a tool, update constants and argument structs in `src/jira/tools.rs` or `src/confluence/tools.rs`, the service client, the handler in `src/mcp.rs`, and metadata in `src/tool_registry.rs`. Preserve service availability, profile filtering, tool filtering, toolsets, and disabled-tool behavior. Update README or `docs/support-matrix.md` when the public tool surface changes.
+When adding or changing a tool, update constants and argument structs in `src/jira/tools.rs`, `src/confluence/tools.rs`, or `src/gitlab/tools.rs`, the service client, the handler in `src/mcp/`, and metadata in `src/tool_registry.rs`. Preserve service availability, profile filtering, tool filtering, toolsets, and disabled-tool behavior. Update README or `docs/support-matrix.md` when the public tool surface changes.
 
 ## Testing Guidelines
 

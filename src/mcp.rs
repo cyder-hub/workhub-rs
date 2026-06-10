@@ -46,16 +46,16 @@ pub(crate) fn wrap_array(value: Value) -> Value {
         other => other,
     }
 }
-pub const SERVER_NAME: &str = "mcp-atlassian-rs";
+pub const SERVER_NAME: &str = "mcp-workhub-rs";
 
 #[derive(Clone)]
-pub struct AtlassianMcpServer {
+pub struct WorkhubMcpServer {
     context: Arc<AppContext>,
     tool_router: ToolRouter<Self>,
     session_auth_fingerprints: RequestAuthSessionStore,
 }
 
-impl AtlassianMcpServer {
+impl WorkhubMcpServer {
     pub fn new(context: Arc<AppContext>) -> Self {
         Self::with_session_auth_store(context, RequestAuthSessionStore::default())
     }
@@ -193,7 +193,7 @@ impl AtlassianMcpServer {
     }
 }
 
-impl Default for AtlassianMcpServer {
+impl Default for WorkhubMcpServer {
     fn default() -> Self {
         Self::new(Arc::new(AppContext::default()))
     }
@@ -240,7 +240,7 @@ fn optional_positive_u64_arg(
 }
 
 #[tool_handler(router = self.tool_router)]
-impl ServerHandler for AtlassianMcpServer {
+impl ServerHandler for WorkhubMcpServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
@@ -320,7 +320,7 @@ impl ServerHandler for AtlassianMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(SERVER_NAME, env!("CARGO_PKG_VERSION")))
             .with_instructions(format!(
-                "Rust MCP Atlassian exposes 88 Jira, Confluence, and GitLab business tools. Tool visibility is controlled by TOOL_PROFILE, TOOLSETS, ENABLED_TOOLS, and DISABLED_TOOLS. Jira, Confluence, and GitLab tools are available when their service configuration and authentication are complete. See docs/support-matrix.md for per-tool and runtime support status."
+                "mcp-workhub-rs exposes 88 Jira, Confluence, and GitLab business tools. Tool visibility is controlled by TOOL_PROFILE, TOOLSETS, ENABLED_TOOLS, and DISABLED_TOOLS. Jira, Confluence, and GitLab tools are available when their service configuration and authentication are complete. See docs/support-matrix.md for per-tool and runtime support status."
             ))
     }
 }

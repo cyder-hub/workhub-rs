@@ -14,8 +14,9 @@ Commands run:
 - [ ] `cargo xtask smoke jira http`
 - [ ] `cargo xtask smoke jira restricted`
 - [ ] `cargo xtask smoke confluence all`
+- [ ] `cargo xtask smoke gitlab all`
 - [ ] `docker compose -f docker-compose.yml config`
-- [ ] `docker build -t mcp-atlassian-rs:ci -f Dockerfile .`
+- [ ] `docker build -t mcp-workhub-rs:ci -f Dockerfile .`
 - [ ] Container `/healthz` smoke
 - [ ] Not run; reason:
 

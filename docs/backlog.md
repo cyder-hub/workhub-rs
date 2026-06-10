@@ -91,7 +91,7 @@ This backlog records fixed future work that is outside the current Rust release.
 ### crates.io Publishing
 
 - Status: backlog.
-- Reason: Current release artifacts are GitHub Actions binary archives and checksums, not crates.io publication.
+- Reason: Current release artifacts are GitHub Actions binary artifacts and checksums, not crates.io publication.
 - Current Rust release behavior: no crates.io publish workflow is configured.
 - Unblock condition: define crate ownership, package metadata, license/docs/readme readiness, semver policy, publish dry-run, and credential handling.
 - Required validation after implementation: run `cargo package --locked`, inspect package contents, run publish dry-run where supported, and publish only from a protected release workflow.

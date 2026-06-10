@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-06-10
+
+### Added
+- Added `mcp-workhub-rs -v` to print only the package version and exit.
+
+### Changed
+- Renamed the released package, binary, and runtime identity from `mcp-atlassian-rs` to `mcp-workhub-rs`, including MCP server metadata, Docker image and Compose service names, release artifact names, `just` shortcuts, and smoke/acceptance tooling paths.
+- Updated the default tracing target namespace from `mcp_atlassian_rs` to `mcp_workhub_rs`; custom `RUST_LOG` filters should use the new module path.
+- Repositioned the project documentation around a provider-neutral Workhub server for Jira, Confluence, and GitLab, with the README focused on quick start, MCP client setup, architecture, Docker, and release usage.
+- Moved the detailed configuration reference into `docs/configuration.md`, with deployment and support documentation updated to use the new binary, Docker, Compose, and artifact names.
+
 ## 0.2.0 - 2026-06-10
 
 ### Added
@@ -41,7 +52,7 @@
 
 ## 0.1.0 - 2026-06-05
 
-- Implemented the Rust MCP Atlassian server with 49 Jira business tools and 24 Confluence business tools.
+- Implemented the Rust MCP server with 49 Jira business tools and 24 Confluence business tools.
 - Added stdio and streamable HTTP transports, `/healthz`, tool filtering, toolset filtering, service availability filtering, and write-tool guards.
 - Added Jira and Confluence Cloud Basic/API-token auth, Server/Data Center PAT auth, BYOT access-token support, request-scoped streamable HTTP auth, SSRF and allowed-domain checks, same-origin redirect protection, proxy/custom outbound headers, and mTLS client cert/key support.
 - Added local mock REST and MCP smoke coverage, plus real acceptance records for representative Jira and Confluence paths.

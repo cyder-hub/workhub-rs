@@ -23,7 +23,7 @@ use axum::{
 };
 use config::HttpConfigOverrides;
 use context::AppContext;
-use mcp::{AtlassianMcpServer, RequestAuthSessionStore};
+use mcp::{RequestAuthSessionStore, WorkhubMcpServer};
 use rmcp::{
     ServiceExt,
     transport::{
@@ -42,19 +42,20 @@ type AppResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const ENV_RUST_LOG: &str = "RUST_LOG";
 const ENV_TOOL_CALL_DEBUG: &str = "MCP_TOOL_CALL_DEBUG";
 const DEFAULT_RUST_LOG: &str = "info";
-const TOOL_CALL_DEBUG_RUST_LOG: &str =
-    "mcp_atlassian_rs::mcp=debug,mcp_atlassian_rs=info,rmcp=info";
+const TOOL_CALL_DEBUG_RUST_LOG: &str = "mcp_workhub_rs::mcp=debug,mcp_workhub_rs=info,rmcp=info";
 
 const USAGE: &str = "\
 Usage:
-  mcp-atlassian-rs [stdio]
-  mcp-atlassian-rs streamhttp [--host <host>] [--port <port>] [--path <path>] [--env-file <path>]
+  mcp-workhub-rs -v
+  mcp-workhub-rs [stdio]
+  mcp-workhub-rs streamhttp [--host <host>] [--port <port>] [--path <path>] [--env-file <path>]
 
 Commands:
   stdio       Run the MCP server over standard input/output.
   streamhttp  Run the MCP server over streamable HTTP.
 
 Options:
+  -v                 Print the package version.
   --env-file <path>  Load environment variables from the specified file (streamhttp only).
                      Alternatively, set the ENV_FILE environment variable.
 
@@ -87,6 +88,11 @@ async fn main() -> AppResult<()> {
 
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         println!("{USAGE}");
+        return Ok(());
+    }
+
+    if args.len() == 1 && args[0] == "-v" {
+        println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
@@ -157,7 +163,7 @@ impl RunMode {
 async fn run_stdio(context: Arc<AppContext>) -> AppResult<()> {
     tracing::info!(server = mcp::SERVER_NAME, "starting MCP stdio server");
 
-    let service = AtlassianMcpServer::new(context)
+    let service = WorkhubMcpServer::new(context)
         .serve(stdio())
         .await
         .inspect_err(|error| {
@@ -176,7 +182,7 @@ async fn run_streamhttp(config: config::HttpConfig, context: Arc<AppContext>) ->
     let service_session_auth_store = session_auth_store.clone();
     let service = StreamableHttpService::new(
         move || {
-            Ok(AtlassianMcpServer::with_session_auth_store(
+            Ok(WorkhubMcpServer::with_session_auth_store(
                 server_context.clone(),
                 service_session_auth_store.clone(),
             ))

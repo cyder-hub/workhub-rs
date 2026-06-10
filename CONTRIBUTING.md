@@ -1,6 +1,6 @@
 # Contributing
 
-This repository contains the Rust implementation of the MCP Atlassian Jira and Confluence server. Contributions should keep the released binary, Docker image, MCP tool surface, support matrix, security posture, and documentation consistent.
+This repository contains the Rust implementation of the mcp-workhub-rs multi-provider MCP server for Jira, Confluence, and GitLab. Contributions should keep the released binary, Docker image, MCP tool surface, support matrix, security posture, and documentation consistent.
 
 ## Local Setup
 
@@ -17,7 +17,7 @@ cargo test
 cargo build --release
 just smoke
 docker compose -f docker-compose.yml config
-docker build -t mcp-atlassian-rs:ci -f Dockerfile .
+docker build -t mcp-workhub-rs:ci -f Dockerfile .
 ```
 
 Also run a container `/healthz` smoke when changing `Dockerfile`, `docker-compose.yml`, transport startup, health handling, or release packaging.
@@ -40,7 +40,7 @@ Before opening a pull request:
 - Do not commit real credentials, tokens, private endpoints, or machine-specific config.
 - Keep the main README in English.
 - Do not add claims for unsupported capabilities, including full OAuth flows, SSE transport, SOCKS proxy, system truststore injection, Helm, external registry publishing, or real acceptance of blocked product paths.
-- Update README, support matrix, backlog, release notes, and task documents when behavior, commands, support status, naming, or deployment automation changes.
+- Update README, support matrix, backlog, release notes, and project documentation when behavior, commands, support status, naming, or deployment automation changes.
 
 ## Code Style
 
@@ -57,7 +57,7 @@ cargo test
 cargo build --release
 just smoke
 docker compose -f docker-compose.yml config
-docker build -t mcp-atlassian-rs:ci -f Dockerfile .
+docker build -t mcp-workhub-rs:ci -f Dockerfile .
 ```
 
 Record any Docker or real-environment checks that were not run and why.

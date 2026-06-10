@@ -1,9 +1,9 @@
 services:
-  mcp-atlassian-rs:
+  mcp-workhub-rs:
     build:
       context: .
       dockerfile: Dockerfile
-    image: mcp-atlassian-rs:local
+    image: mcp-workhub-rs:local
     restart: unless-stopped
     environment:
       MCP_HTTP_PATH: "${MCP_HTTP_PATH:-/mcp}"
