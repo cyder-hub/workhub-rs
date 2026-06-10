@@ -10,7 +10,7 @@ type XtaskResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 #[command(
     name = "xtask",
     bin_name = "cargo xtask",
-    about = "Development-only automation for mcp-atlassian-rs",
+    about = "Development-only automation for mcp-workhub-rs",
     subcommand_required = true,
     arg_required_else_help = true
 )]

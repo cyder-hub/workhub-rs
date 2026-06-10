@@ -8,7 +8,7 @@ Security fixes are handled on the current `master` branch and on published relea
 
 The Rust server includes:
 
-- Unified token, header, URL query, environment secret, and Atlassian error redaction.
+- Unified token, header, URL query, environment secret, and upstream error redaction.
 - Streamable HTTP request-scoped Basic, Token, and Bearer auth.
 - Header-provided Jira and Confluence service URL validation.
 - Optional `MCP_ALLOWED_URL_DOMAINS` allowlisting.

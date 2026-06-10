@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn server_with_config(config: RuntimeConfig) -> AtlassianMcpServer {
-    AtlassianMcpServer::new(Arc::new(AppContext::from_config(&config)))
+pub(super) fn server_with_config(config: RuntimeConfig) -> WorkhubMcpServer {
+    WorkhubMcpServer::new(Arc::new(AppContext::from_config(&config)))
 }
 
 pub(super) const SYNTHETIC_JIRA_READ: ToolMetadata = ToolMetadata {
@@ -167,7 +167,7 @@ pub(super) fn tool(name: &'static str) -> Tool {
     Tool::new(name, "", Arc::<JsonObject>::new(Default::default()))
 }
 
-pub(super) fn current_tool_names(server: &AtlassianMcpServer) -> Vec<String> {
+pub(super) fn current_tool_names(server: &WorkhubMcpServer) -> Vec<String> {
     tool_names(server.current_tools_result().tools)
 }
 
@@ -2617,7 +2617,7 @@ pub(super) fn temp_confluence_upload_file(filename: &str, content: &[u8]) -> Str
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("mcp-atlassian-rs-{nonce}"));
+    let dir = std::env::temp_dir().join(format!("mcp-workhub-rs-{nonce}"));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(filename);
     std::fs::write(&path, content).unwrap();
@@ -2629,7 +2629,7 @@ pub(super) fn oversized_temp_confluence_upload_file(filename: &str) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("mcp-atlassian-rs-oversized-{nonce}"));
+    let dir = std::env::temp_dir().join(format!("mcp-workhub-rs-oversized-{nonce}"));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(filename);
     let file = std::fs::File::create(&path).unwrap();

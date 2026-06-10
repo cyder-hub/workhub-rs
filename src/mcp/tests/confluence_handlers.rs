@@ -1734,7 +1734,7 @@ async fn confluence_upload_content_attachment_handler_sends_local_file_as_multip
     assert!(body.contains("Initial upload"));
     assert!(body.contains("name=\"minorEdit\""));
     assert!(body.contains("true"));
-    assert!(!body.contains("mcp-atlassian-rs-boundary"));
+    assert!(!body.contains("mcp-workhub-rs-boundary"));
     assert!(!body.contains(&file_path));
 }
 
@@ -1781,7 +1781,7 @@ async fn confluence_upload_content_attachments_handler_returns_partial_success_s
     let ok_path = temp_confluence_upload_file("batch-1.txt", b"batch");
     let oversized_path = oversized_temp_confluence_upload_file("batch-too-large.bin");
     let missing_path = std::env::temp_dir()
-        .join("mcp-atlassian-rs-missing-upload.txt")
+        .join("mcp-workhub-rs-missing-upload.txt")
         .to_string_lossy()
         .into_owned();
     let result = server
@@ -1831,7 +1831,7 @@ async fn confluence_upload_content_attachments_handler_returns_partial_success_s
     );
     assert_eq!(
         structured["failed"][1]["filename"],
-        json!("mcp-atlassian-rs-missing-upload.txt")
+        json!("mcp-workhub-rs-missing-upload.txt")
     );
     assert!(
         structured["failed"][1]["error"]

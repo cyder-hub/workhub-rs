@@ -193,7 +193,7 @@ fn build_mcp_binary() -> Result<PathBuf, String> {
         .ok_or_else(|| "xtask manifest directory has no parent".to_string())?
         .to_path_buf();
     let status = Command::new("cargo")
-        .args(["build", "--quiet", "--bin", "mcp-atlassian-rs"])
+        .args(["build", "--quiet", "--bin", "mcp-workhub-rs"])
         .current_dir(&workspace_root)
         .status()
         .map_err(|error| format!("failed to run cargo build: {error}"))?;
@@ -202,9 +202,9 @@ fn build_mcp_binary() -> Result<PathBuf, String> {
     }
 
     let binary_name = if cfg!(windows) {
-        "mcp-atlassian-rs.exe"
+        "mcp-workhub-rs.exe"
     } else {
-        "mcp-atlassian-rs"
+        "mcp-workhub-rs"
     };
     Ok(workspace_root
         .join("target")

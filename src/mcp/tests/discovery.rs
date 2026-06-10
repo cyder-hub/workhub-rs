@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 fn server_info_advertises_tools() {
-    let info = AtlassianMcpServer::default().get_info();
+    let info = WorkhubMcpServer::default().get_info();
 
     assert_eq!(info.server_info.name, SERVER_NAME);
     assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
@@ -17,18 +17,18 @@ fn server_info_uses_app_context() {
     let config = RuntimeConfig {
         ..RuntimeConfig::default()
     };
-    let server = AtlassianMcpServer::new(Arc::new(AppContext::from_config(&config)));
+    let server = WorkhubMcpServer::new(Arc::new(AppContext::from_config(&config)));
     let info = server.get_info();
     let instructions = info.instructions.unwrap_or_default();
 
     assert!(instructions.contains("TOOL_PROFILE"));
-    assert!(instructions.contains("88 Jira, Confluence, and GitLab business tools"));
+    assert!(instructions.contains("mcp-workhub-rs exposes 88 Jira, Confluence, and GitLab"));
     assert!(instructions.contains("docs/support-matrix.md"));
 }
 
 #[test]
 fn tool_discovery_has_no_tools_without_service_config() {
-    let server = AtlassianMcpServer::default();
+    let server = WorkhubMcpServer::default();
 
     assert!(current_tool_names(&server).is_empty());
     assert!(server.get_tool(tools::JIRA_GET_ISSUE_TOOL_NAME).is_none());
@@ -566,7 +566,7 @@ fn confluence_attachments_toolsets_are_split_at_mcp_boundary() {
 
 #[test]
 fn confluence_enabled_tools_filter_and_direct_call_guard_use_registered_metadata() {
-    let unavailable = AtlassianMcpServer::default();
+    let unavailable = WorkhubMcpServer::default();
     let search_only = server_with_config(RuntimeConfig {
         confluence: Some(confluence_config()),
         enabled_tools: Some(BTreeSet::from([
@@ -642,7 +642,7 @@ fn tool_discovery_applies_toolsets_to_business_tools() {
 
 #[test]
 fn tool_discovery_fails_closed_for_unmapped_tools() {
-    let server = AtlassianMcpServer::default();
+    let server = WorkhubMcpServer::default();
     let tools = server.filtered_tools_from([tool("unmapped_tool")]);
     let names: Vec<_> = tools
         .into_iter()
@@ -654,7 +654,7 @@ fn tool_discovery_fails_closed_for_unmapped_tools() {
 
 #[test]
 fn tool_discovery_applies_future_service_and_toolset_policy_at_server_boundary() {
-    let unavailable = AtlassianMcpServer::default();
+    let unavailable = WorkhubMcpServer::default();
     let available = server_with_config(RuntimeConfig {
         jira: Some(jira_config()),
         confluence: Some(confluence_config()),

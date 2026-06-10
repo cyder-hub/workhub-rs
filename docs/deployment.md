@@ -1,6 +1,6 @@
 # Production Deployment
 
-This guide describes the supported runtime shapes for `mcp-atlassian-rs`.
+This guide describes the supported runtime shapes for `mcp-workhub-rs`.
 
 ## Deployment Checklist
 
@@ -8,7 +8,7 @@ This guide describes the supported runtime shapes for `mcp-atlassian-rs`.
 - Configure only the Jira, Confluence, and GitLab services you want exposed.
 - Restrict exposed tools with `TOOL_PROFILE`, `TOOLSETS`, `ENABLED_TOOLS`, or `DISABLED_TOOLS` when the client should not see every configured tool.
 - Set `MCP_ALLOWED_URL_DOMAINS` before accepting request-scoped Atlassian service URLs over streamable HTTP.
-- Keep Atlassian and GitLab credentials in a secret manager, shell environment, or orchestrator secret. Do not commit dotenv files with real credentials.
+- Keep service credentials in a secret manager, shell environment, or orchestrator secret. Do not commit dotenv files with real credentials.
 - Check `GET /healthz` for streamable HTTP deployments.
 - Review `SECURITY.md` before exposing the HTTP endpoint beyond localhost.
 
@@ -17,7 +17,7 @@ This guide describes the supported runtime shapes for `mcp-atlassian-rs`.
 Use stdio when an MCP client starts the server process directly:
 
 ```bash
-mcp-atlassian-rs stdio
+mcp-workhub-rs stdio
 ```
 
 Logs are written to stderr. Stdout is reserved for the MCP protocol.
@@ -25,7 +25,7 @@ Logs are written to stderr. Stdout is reserved for the MCP protocol.
 To include MCP tool call names, elapsed time, failures, and redacted arguments in stderr logs, enable tool-call diagnostics:
 
 ```bash
-MCP_TOOL_CALL_DEBUG=true mcp-atlassian-rs stdio
+MCP_TOOL_CALL_DEBUG=true mcp-workhub-rs stdio
 ```
 
 `RUST_LOG` remains the advanced logging control and takes precedence over `MCP_TOOL_CALL_DEBUG` when set.
@@ -35,7 +35,7 @@ MCP_TOOL_CALL_DEBUG=true mcp-atlassian-rs stdio
 Use streamable HTTP for server deployments:
 
 ```bash
-mcp-atlassian-rs streamhttp --host 0.0.0.0 --port 8000 --path /mcp
+mcp-workhub-rs streamhttp --host 0.0.0.0 --port 8000 --path /mcp
 ```
 
 The health endpoint is:
@@ -49,7 +49,7 @@ The MCP endpoint path defaults to `/mcp` and can be set with `MCP_HTTP_PATH` or 
 To enable tool-call diagnostics for streamable HTTP:
 
 ```bash
-MCP_TOOL_CALL_DEBUG=true mcp-atlassian-rs streamhttp --host 0.0.0.0 --port 8000 --path /mcp
+MCP_TOOL_CALL_DEBUG=true mcp-workhub-rs streamhttp --host 0.0.0.0 --port 8000 --path /mcp
 ```
 
 ## Docker And Compose
@@ -57,19 +57,19 @@ MCP_TOOL_CALL_DEBUG=true mcp-atlassian-rs streamhttp --host 0.0.0.0 --port 8000 
 Build the local image:
 
 ```bash
-docker build -t mcp-atlassian-rs:local -f Dockerfile .
+docker build -t mcp-workhub-rs:local -f Dockerfile .
 ```
 
 Run the image:
 
 ```bash
-docker run --rm -p 8000:8000 mcp-atlassian-rs:local
+docker run --rm -p 8000:8000 mcp-workhub-rs:local
 ```
 
 Run the image with tool-call diagnostics:
 
 ```bash
-docker run --rm -e MCP_TOOL_CALL_DEBUG=true -p 8000:8000 mcp-atlassian-rs:local
+docker run --rm -e MCP_TOOL_CALL_DEBUG=true -p 8000:8000 mcp-workhub-rs:local
 ```
 
 Run with compose:
@@ -99,7 +99,7 @@ MCP_TOOL_CALL_DEBUG=true docker compose up --build
 | `ENV_FILE` | Optional dotenv file loaded at startup. The `--env-file` CLI argument takes precedence. |
 | `IGNORE_HEADER_AUTH` | Set `true` to ignore request-scoped auth/service headers and use only global environment config. |
 | `MCP_ALLOWED_URL_DOMAINS` | Restrict header-provided Jira/Confluence service URLs to exact domains or subdomains. |
-| `MCP_TOOL_CALL_DEBUG` | Set `true` to enable MCP tool-call diagnostics when `RUST_LOG` is unset. Uses `mcp_atlassian_rs::mcp=debug,mcp_atlassian_rs=info,rmcp=info`. |
+| `MCP_TOOL_CALL_DEBUG` | Set `true` to enable MCP tool-call diagnostics when `RUST_LOG` is unset. Uses `mcp_workhub_rs::mcp=debug,mcp_workhub_rs=info,rmcp=info`. |
 | `RUST_LOG` | Advanced tracing filter. Takes precedence over `MCP_TOOL_CALL_DEBUG`. |
 
 ## Jira, Confluence, And GitLab Auth

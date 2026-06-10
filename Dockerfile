@@ -6,7 +6,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
 COPY xtask/ xtask/
-RUN cargo build --release --bin mcp-atlassian-rs
+RUN cargo build --release --bin mcp-workhub-rs
 
 FROM debian:bookworm-slim AS runtime
 
@@ -20,10 +20,10 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=build /build/target/release/mcp-atlassian-rs /usr/local/bin/mcp-atlassian-rs
+COPY --from=build /build/target/release/mcp-workhub-rs /usr/local/bin/mcp-workhub-rs
 
 EXPOSE 8000
 
 USER app
 
-CMD ["mcp-atlassian-rs", "streamhttp", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["mcp-workhub-rs", "streamhttp", "--host", "0.0.0.0", "--port", "8000"]
