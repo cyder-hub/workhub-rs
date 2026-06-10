@@ -7,8 +7,8 @@ This backlog records fixed future work that is outside the current Rust release.
 ### OAuth Cloud 3LO Authorization-Code Flow
 
 - Status: backlog.
-- Reason: The current release implements BYOT access-token compatibility, not a browser authorization-code flow.
-- Current Rust release behavior: Cloud Basic/API token, PAT-compatible request auth, and BYOT access tokens are supported; OAuth Cloud 3LO is not implemented.
+- Reason: The current release uses global Cloud Basic/API-token and Server/Data Center PAT or username/password credentials.
+- Current Rust release behavior: Cloud Basic/API token and Server/Data Center PAT or username/password auth are supported; OAuth Cloud 3LO is not implemented.
 - Unblock condition: define an OAuth app registration model, callback/listener behavior, consent flow, secure token handling, and user-facing setup docs.
 - Required validation after implementation: run unit tests for callback parsing and token exchange, local integration tests with redaction, and real Cloud OAuth acceptance using disposable credentials.
 
@@ -23,15 +23,15 @@ This backlog records fixed future work that is outside the current Rust release.
 ### OAuth Refresh And Token Storage
 
 - Status: backlog.
-- Reason: the current Rust release accepts provided access tokens but does not refresh or persist tokens.
-- Current Rust release behavior: BYOT access tokens are loaded from env or request headers for the current process/request only.
+- Reason: the current Rust release does not implement refreshable OAuth token lifecycle handling.
+- Current Rust release behavior: no OAuth token refresh or persistence surface is exposed.
 - Unblock condition: define refresh-token storage, encryption or secret-manager integration, rotation behavior, expiry handling, and logout/revoke semantics.
 - Required validation after implementation: run token refresh/expiry tests, storage redaction tests, and real refresh acceptance with disposable test credentials.
 
 ### Data Center OAuth Authorization-Code/Refresh
 
 - Status: backlog.
-- Reason: The current release keeps Server/Data Center auth to PAT or BYOT access-token fallback.
+- Reason: The current release keeps Server/Data Center auth to PAT or username/password credentials.
 - Current Rust release behavior: Server/Data Center PAT is supported; Data Center OAuth authorization-code and refresh flows are not implemented.
 - Unblock condition: define supported Data Center OAuth versions, app registration requirements, callback behavior, refresh semantics, and tenant compatibility matrix.
 - Required validation after implementation: run unit/integration tests against a Data Center-compatible OAuth test service and record real acceptance on a disposable instance.
@@ -44,7 +44,7 @@ This backlog records fixed future work that is outside the current Rust release.
 - Reason: the Rust server currently supports stdio and streamable HTTP only.
 - Current Rust release behavior: no SSE endpoint is exposed.
 - Unblock condition: define whether SSE remains needed for target MCP clients, add server routing, lifecycle handling, auth behavior, and smoke scripts.
-- Required validation after implementation: run local SSE initialize/tools/list/call smoke, request-auth regression tests if HTTP auth applies, and compatibility tests with the target MCP client.
+- Required validation after implementation: run local SSE initialize/tools/list/call smoke, endpoint-auth regression tests if HTTP auth applies, and compatibility tests with the target MCP client.
 
 ### SOCKS Proxy
 
@@ -105,14 +105,6 @@ This backlog records fixed future work that is outside the current Rust release.
 - Current Rust release behavior: `jira_get_project_service_desk`, `jira_list_service_desk_queues`, and `jira_list_service_desk_queue_issues` are implemented with local mock coverage and documented as product/permission blocked for real acceptance.
 - Unblock condition: provide a tenant, project, service desk, queue, and test identity with permission to read them.
 - Required validation after implementation: run real acceptance for service desk lookup, queue listing, and queue issue listing without recording customer data or secrets.
-
-### Jira Forms/ProForma Real Acceptance
-
-- Status: backlog.
-- Reason: Real acceptance did not receive an effective Forms API response and did not have a valid real form ID for details/update.
-- Current Rust release behavior: `jira_list_issue_forms`, `jira_get_issue_form`, and `jira_update_issue_form_answers` are implemented with local mock coverage and documented as product/interface blocked for real acceptance.
-- Unblock condition: provide a tenant with Jira Forms/ProForma enabled, a disposable test issue with a form, and a safe test answer update target.
-- Required validation after implementation: run real form listing, form details, and safe answer update acceptance with cleanup and redacted compact errors.
 
 ### Confluence User Search Real Acceptance
 

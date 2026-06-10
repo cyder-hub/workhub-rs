@@ -97,7 +97,7 @@ The common service configuration variables are the same as production developmen
 - Jira Server/Data Center: `JIRA_URL`, `JIRA_PERSONAL_TOKEN`, or `JIRA_URL`, `JIRA_USERNAME`, `JIRA_PASSWORD`.
 - Confluence Cloud: `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_API_TOKEN`.
 - Confluence Server/Data Center: `CONFLUENCE_URL`, `CONFLUENCE_PERSONAL_TOKEN`, or `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_PASSWORD`.
-- GitLab local smoke/mock tests: `GITLAB_URL`, `GITLAB_TOKEN` or `GITLAB_PERSONAL_TOKEN`, `GITLAB_OAUTH_ACCESS_TOKEN`, and `GITLAB_PROJECTS_FILTER` mirror production config, but no real GitLab acceptance suite is currently provided.
+- GitLab local smoke/mock tests: `GITLAB_URL`, `GITLAB_TOKEN` or `GITLAB_PERSONAL_TOKEN`, and `GITLAB_PROJECTS_FILTER` mirror production config, but no real GitLab acceptance suite is currently provided.
 
 Common Jira test-object variables:
 
@@ -107,7 +107,6 @@ Common Jira test-object variables:
 - `JIRA_FIELD_CONTEXT_ID`
 - `JIRA_SERVICE_DESK_ID`
 - `JIRA_QUEUE_ID`
-- `JIRA_FORM_ID`
 
 Common Confluence test-object variables:
 

@@ -6,7 +6,6 @@ use crate::{
     atlassian::compat::{
         ENV_CONFLUENCE_CLIENT_CERT, ENV_CONFLUENCE_CLIENT_KEY, ENV_CONFLUENCE_CUSTOM_HEADERS,
         ENV_CONFLUENCE_HTTP_PROXY, ENV_CONFLUENCE_HTTPS_PROXY, ENV_CONFLUENCE_NO_PROXY,
-        ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN,
     },
     error::ConfigError,
     upstream::{
@@ -36,7 +35,6 @@ pub struct ConfluenceConfig {
     pub base_url: String,
     pub deployment: ConfluenceDeployment,
     pub auth: UpstreamAuth,
-    pub oauth_cloud_id: Option<String>,
     pub ssl_verify: bool,
     pub proxy: ProxyConfig,
     pub custom_headers: CustomHeaders,
@@ -64,27 +62,8 @@ impl ConfluenceConfig {
     pub fn is_auth_configured(&self) -> bool {
         matches!(
             self.auth,
-            UpstreamAuth::Basic { .. }
-                | UpstreamAuth::Pat { .. }
-                | UpstreamAuth::OAuthAccessToken { .. }
+            UpstreamAuth::Basic { .. } | UpstreamAuth::Pat { .. }
         )
-    }
-
-    pub fn with_auth_override(&self, auth: UpstreamAuth, oauth_cloud_id: Option<String>) -> Self {
-        let mut config = self.clone();
-        let effective_cloud_id = if matches!(auth, UpstreamAuth::OAuthAccessToken { .. })
-            && self.deployment == ConfluenceDeployment::Cloud
-        {
-            oauth_cloud_id
-        } else {
-            None
-        };
-        if let Some(cloud_id) = effective_cloud_id.as_ref() {
-            config.base_url = cloud_oauth_api_base_url(cloud_id);
-        }
-        config.auth = auth;
-        config.oauth_cloud_id = effective_cloud_id;
-        config
     }
 
     fn from_parsed(
@@ -95,7 +74,6 @@ impl ConfluenceConfig {
             base_url: parsed.base_url,
             deployment: parsed.deployment,
             auth: parsed.auth,
-            oauth_cloud_id: parsed.oauth_cloud_id,
             ssl_verify: parsed.ssl_verify,
             proxy: parsed.proxy,
             custom_headers: parsed.custom_headers,
@@ -141,14 +119,6 @@ fn non_empty_trimmed(value: String) -> Option<String> {
     }
 }
 
-fn cloud_oauth_api_base_url(cloud_id: &str) -> String {
-    let mut url = Url::parse("https://api.atlassian.com").expect("static URL is valid");
-    url.path_segments_mut()
-        .expect("static URL supports path segments")
-        .extend(["ex", "confluence", cloud_id, "wiki"]);
-    url.to_string().trim_end_matches('/').to_string()
-}
-
 fn parse_spaces_filter(value: Option<String>) -> BTreeSet<String> {
     value
         .unwrap_or_default()
@@ -166,7 +136,6 @@ fn confluence_config_spec() -> UpstreamServiceConfigSpec<ConfluenceDeployment> {
         api_token_variable: ENV_CONFLUENCE_API_TOKEN,
         password_variable: ENV_CONFLUENCE_PASSWORD,
         personal_token_variable: ENV_CONFLUENCE_PERSONAL_TOKEN,
-        oauth_access_token_variable: ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN,
         ssl_verify_variable: ENV_CONFLUENCE_SSL_VERIFY,
         timeout_variable: ENV_CONFLUENCE_TIMEOUT,
         http_proxy_variable: ENV_CONFLUENCE_HTTP_PROXY,
@@ -178,7 +147,6 @@ fn confluence_config_spec() -> UpstreamServiceConfigSpec<ConfluenceDeployment> {
         default_timeout_seconds: DEFAULT_CONFLUENCE_TIMEOUT_SECONDS,
         cloud_deployment: ConfluenceDeployment::Cloud,
         deployment_from_url: ConfluenceDeployment::from_base_url,
-        cloud_oauth_api_base_url,
         missing_url_error: |credential_variables| ConfigError::MissingConfluenceUrl {
             credential_variables,
         },
@@ -188,12 +156,6 @@ fn confluence_config_spec() -> UpstreamServiceConfigSpec<ConfluenceDeployment> {
         },
         missing_personal_token_error: |variable| ConfigError::MissingConfluencePersonalToken {
             variable,
-        },
-        missing_oauth_cloud_id_error: |access_token_variables, cloud_id_variable| {
-            ConfigError::MissingConfluenceOAuthCloudId {
-                access_token_variables,
-                cloud_id_variable,
-            }
         },
         invalid_timeout_error: |variable, value| ConfigError::InvalidConfluenceTimeout {
             variable,
@@ -207,9 +169,8 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use crate::atlassian::compat::{
-        ENV_ATLASSIAN_API_TOKEN, ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN, ENV_ATLASSIAN_OAUTH_CLOUD_ID,
-        ENV_ATLASSIAN_PASSWORD, ENV_ATLASSIAN_PERSONAL_TOKEN, ENV_ATLASSIAN_USERNAME,
-        ENV_HTTP_PROXY, ENV_HTTPS_PROXY, ENV_NO_PROXY,
+        ENV_ATLASSIAN_API_TOKEN, ENV_ATLASSIAN_PASSWORD, ENV_ATLASSIAN_PERSONAL_TOKEN,
+        ENV_ATLASSIAN_USERNAME, ENV_HTTP_PROXY, ENV_HTTPS_PROXY, ENV_NO_PROXY,
     };
 
     use super::*;
@@ -291,7 +252,6 @@ mod tests {
                 api_token: "test-api-token".to_string(),
             }
         );
-        assert_eq!(config.oauth_cloud_id, None);
         assert!(!config.ssl_verify);
         assert_eq!(
             config.spaces_filter,
@@ -349,7 +309,6 @@ mod tests {
                 personal_token: "test-pat-value".to_string(),
             }
         );
-        assert_eq!(config.oauth_cloud_id, None);
         assert!(config.ssl_verify);
         assert!(config.proxy.is_empty());
         assert!(config.spaces_filter.is_empty());
@@ -376,7 +335,6 @@ mod tests {
                 api_token: "test-password".to_string(),
             }
         );
-        assert_eq!(config.oauth_cloud_id, None);
         assert!(config.is_auth_configured());
         assert!(!format!("{:?}", config.auth).contains("test-password"));
     }
@@ -436,6 +394,27 @@ mod tests {
             UpstreamAuth::Basic {
                 username: "user@example.com".to_string(),
                 api_token: "global-api-token".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn confluence_specific_basic_values_override_atlassian_fallbacks() {
+        let config = config_from_pairs(&[
+            (ENV_CONFLUENCE_URL, "https://example.atlassian.net/wiki"),
+            (ENV_ATLASSIAN_USERNAME, "global@example.com"),
+            (ENV_ATLASSIAN_API_TOKEN, "global-api-token"),
+            (ENV_CONFLUENCE_USERNAME, "confluence@example.com"),
+            (ENV_CONFLUENCE_API_TOKEN, "confluence-api-token"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            config.auth,
+            UpstreamAuth::Basic {
+                username: "confluence@example.com".to_string(),
+                api_token: "confluence-api-token".to_string(),
             }
         );
     }
@@ -551,137 +530,6 @@ mod tests {
                 variable: ENV_CONFLUENCE_TIMEOUT,
                 value: "0".to_string(),
             }
-        );
-    }
-
-    #[test]
-    fn cloud_config_builds_oauth_access_token_auth_with_cloud_id() {
-        let config = config_from_pairs(&[
-            (ENV_CONFLUENCE_URL, "https://example.atlassian.net/wiki"),
-            (ENV_ATLASSIAN_OAUTH_CLOUD_ID, " cloud-123 "),
-            (ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN, "test-access-token"),
-            (ENV_CONFLUENCE_USERNAME, "user@example.com"),
-            (ENV_CONFLUENCE_API_TOKEN, "test-api-token"),
-        ])
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(config.deployment, ConfluenceDeployment::Cloud);
-        assert_eq!(
-            config.auth,
-            UpstreamAuth::OAuthAccessToken {
-                access_token: "test-access-token".to_string(),
-            }
-        );
-        assert_eq!(config.oauth_cloud_id.as_deref(), Some("cloud-123"));
-        assert!(!format!("{:?}", config.auth).contains("test-access-token"));
-    }
-
-    #[test]
-    fn shared_oauth_access_token_is_used_when_service_specific_value_is_absent() {
-        let config = config_from_pairs(&[
-            (ENV_CONFLUENCE_URL, "https://example.atlassian.net/wiki"),
-            (ENV_ATLASSIAN_OAUTH_CLOUD_ID, "cloud-123"),
-            (ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN, "shared-access-token"),
-        ])
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(
-            config.auth,
-            UpstreamAuth::OAuthAccessToken {
-                access_token: "shared-access-token".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn cloud_oauth_access_token_requires_cloud_id_without_leaking_secret() {
-        let error = config_from_pairs(&[
-            (ENV_CONFLUENCE_URL, "https://example.atlassian.net/wiki"),
-            (ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN, "test-access-token"),
-        ])
-        .unwrap_err();
-
-        assert_eq!(
-            error,
-            ConfigError::MissingConfluenceOAuthCloudId {
-                access_token_variables: vec![ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN],
-                cloud_id_variable: ENV_ATLASSIAN_OAUTH_CLOUD_ID,
-            }
-        );
-        assert!(!error.to_string().contains("test-access-token"));
-    }
-
-    #[test]
-    fn server_config_prefers_pat_over_oauth_access_token_and_basic() {
-        let config = config_from_pairs(&[
-            (ENV_CONFLUENCE_URL, "https://confluence.example"),
-            (ENV_CONFLUENCE_PERSONAL_TOKEN, "test-pat-value"),
-            (ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN, "test-access-token"),
-            (ENV_CONFLUENCE_USERNAME, "user@example.com"),
-            (ENV_CONFLUENCE_API_TOKEN, "test-api-token"),
-        ])
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(
-            config.auth,
-            UpstreamAuth::Pat {
-                personal_token: "test-pat-value".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn server_config_uses_oauth_access_token_without_pat() {
-        let config = config_from_pairs(&[
-            (ENV_CONFLUENCE_URL, "https://confluence.example"),
-            (ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN, "test-access-token"),
-            (ENV_CONFLUENCE_USERNAME, "user@example.com"),
-            (ENV_CONFLUENCE_API_TOKEN, "test-api-token"),
-        ])
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(
-            config.auth,
-            UpstreamAuth::OAuthAccessToken {
-                access_token: "test-access-token".to_string(),
-            }
-        );
-        assert_eq!(config.base_url, "https://confluence.example");
-    }
-
-    #[test]
-    fn cloud_byot_config_rewrites_base_url_to_atlassian_api_gateway() {
-        let config = config_from_pairs(&[
-            (ENV_CONFLUENCE_URL, "https://example.atlassian.net/wiki"),
-            (ENV_ATLASSIAN_OAUTH_CLOUD_ID, "cloud-123"),
-            (ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN, "test-access-token"),
-        ])
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(
-            config.base_url,
-            "https://api.atlassian.com/ex/confluence/cloud-123/wiki"
-        );
-    }
-
-    #[test]
-    fn cloud_byot_config_percent_encodes_cloud_id_path_segment() {
-        let config = config_from_pairs(&[
-            (ENV_CONFLUENCE_URL, "https://example.atlassian.net/wiki"),
-            (ENV_ATLASSIAN_OAUTH_CLOUD_ID, "cloud id/123"),
-            (ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN, "test-access-token"),
-        ])
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(
-            config.base_url,
-            "https://api.atlassian.com/ex/confluence/cloud%20id%2F123/wiki"
         );
     }
 

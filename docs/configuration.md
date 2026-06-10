@@ -69,10 +69,9 @@ export GITLAB_TOKEN="<personal-project-or-group-access-token>"
 | --- | --- | --- |
 | `GITLAB_TOKEN` | unset | Highest-priority GitLab token. Sent as `PRIVATE-TOKEN`. |
 | `GITLAB_PERSONAL_TOKEN` | unset | Fallback token. Sent as `PRIVATE-TOKEN`. |
-| `GITLAB_OAUTH_ACCESS_TOKEN` | unset | Fallback OAuth access token. Sent as `Authorization: Bearer`. |
 | `GITLAB_PROJECTS_FILTER` | unset | Optional exact allowlist of numeric project IDs or full paths. Every project-scoped GitLab tool rejects projects outside this set before sending HTTP. |
 
-GitLab token precedence is `GITLAB_TOKEN`, then `GITLAB_PERSONAL_TOKEN`, then `GITLAB_OAUTH_ACCESS_TOKEN`. Use `read_api` for read-only tools and `api` for writes, approvals, and merge. GitLab username/password API auth is not supported.
+GitLab token precedence is `GITLAB_TOKEN`, then `GITLAB_PERSONAL_TOKEN`. Use `read_api` for read-only tools and `api` for writes, approvals, and merge. GitLab username/password API auth is not supported.
 
 ## Tool Access
 
@@ -80,7 +79,7 @@ Most users should choose a single profile and leave lower-level controls unset.
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
-| `TOOL_PROFILE` | `basic` | Supports `basic`, `developer`, `manager`, `full`, or `custom`. With Jira, Confluence, and GitLab configured, profiles expose 23, 47, 85, 88, or 0 tools respectively. Service availability filters out tools for unconfigured services. |
+| `TOOL_PROFILE` | `basic` | Supports `basic`, `developer`, `manager`, `full`, or `custom`. With Jira, Confluence, and GitLab configured, profiles expose 23, 47, 82, 85, or 0 tools respectively. Service availability filters out tools for unconfigured services. |
 | `TOOLSETS` | profile defaults | Adds comma-separated registered toolsets to the selected profile. `all` enables every toolset. Unknown names fail startup. |
 | `ENABLED_TOOLS` | unset | Adds comma-separated exact MCP tool names, even when their toolset is not enabled. |
 | `DISABLED_TOOLS` | unset | Removes comma-separated exact MCP tool names. This takes precedence over profile, toolset, and enabled-tool inclusion. |
@@ -103,8 +102,6 @@ Profiles are ordered from least to most capable:
 | `MCP_HTTP_PORT` | `8000` | Streamable HTTP port when not overridden by CLI. |
 | `MCP_HTTP_PATH` | `/mcp` | Streamable HTTP MCP path when not overridden by CLI. A missing leading slash is normalized. |
 | `ENV_FILE` | unset | Optional dotenv file loaded at startup. The `--env-file` CLI argument takes precedence. |
-| `IGNORE_HEADER_AUTH` | `false` | Truthy values ignore request-scoped auth/service headers and use only global environment config. |
-| `MCP_ALLOWED_URL_DOMAINS` | unset | Optional comma-separated domain allowlist for header-provided Jira/Confluence service URLs. Exact domain and subdomain matches are accepted; URL values, IP literals, localhost, and metadata hostnames are rejected. |
 
 Docker Compose also supports `MCP_PORT` for host-to-container port mapping. `MCP_PORT` is a compose wrapper variable, not a Rust runtime variable.
 
@@ -112,22 +109,13 @@ Supported transports are `stdio` and streamable HTTP. SSE is not implemented.
 
 ## Atlassian Auth
 
-BYOT access tokens:
-
-- Cloud Jira with `ATLASSIAN_OAUTH_ACCESS_TOKEN` or `JIRA_OAUTH_ACCESS_TOKEN` requires `ATLASSIAN_OAUTH_CLOUD_ID` and uses `https://api.atlassian.com/ex/jira/{cloud_id}`.
-- Cloud Confluence with `ATLASSIAN_OAUTH_ACCESS_TOKEN` or `CONFLUENCE_OAUTH_ACCESS_TOKEN` requires `ATLASSIAN_OAUTH_CLOUD_ID` and uses `https://api.atlassian.com/ex/confluence/{cloud_id}/wiki`.
-- Server/Data Center PAT takes precedence over BYOT access-token auth. When no PAT is set, Server/Data Center can use the BYOT access token against the configured service URL. When neither PAT nor BYOT is set, Server/Data Center can use Basic username/password auth.
+Jira and Confluence read service-specific credential variables first, then shared `ATLASSIAN_*` fallback variables. Cloud deployments use username/API-token Basic Auth. Server/Data Center deployments use PAT first, then username/password Basic Auth.
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
 | `ATLASSIAN_USERNAME` / `ATLASSIAN_API_TOKEN` | unset | Shared username/API-token fallback for Jira and Confluence when service-specific values are unset. |
 | `ATLASSIAN_USERNAME` / `ATLASSIAN_PASSWORD` | unset | Shared Server/Data Center username/password fallback when service-specific username/password values are unset. |
 | `ATLASSIAN_PERSONAL_TOKEN` | unset | Shared PAT fallback for Jira and Confluence Server/Data Center when service-specific PAT values are unset. |
-| `ATLASSIAN_OAUTH_ACCESS_TOKEN` | unset | Shared BYOT/OAuth access token fallback for Jira and Confluence. |
-| `JIRA_OAUTH_ACCESS_TOKEN` | unset | Jira-specific BYOT/OAuth access token. Takes precedence over `ATLASSIAN_OAUTH_ACCESS_TOKEN` for Jira. |
-| `CONFLUENCE_OAUTH_ACCESS_TOKEN` | unset | Confluence-specific BYOT/OAuth access token. Takes precedence over `ATLASSIAN_OAUTH_ACCESS_TOKEN` for Confluence. |
-| `ATLASSIAN_OAUTH_CLOUD_ID` | unset | Required for Cloud BYOT access-token auth. Also used by Jira Forms/ProForma helpers. |
-| `ATLASSIAN_OAUTH_ENABLE` | `false` | Truthy values interpret streamable HTTP `Authorization: Bearer` as BYOT/OAuth access-token auth instead of PAT-compatible auth. |
 
 Full OAuth Cloud 3LO, OAuth proxy/DCR, refresh/token storage, and Data Center OAuth authorization-code/refresh flows are not implemented.
 
@@ -179,7 +167,7 @@ Proxy and custom headers:
 | `GITLAB_CUSTOM_HEADERS` | GitLab outbound headers as comma-separated `Name=value` pairs. Does not use `ATLASSIAN_CUSTOM_HEADERS`. |
 | `ATLASSIAN_CUSTOM_HEADERS` | Shared custom outbound headers fallback when service-specific custom headers are unset. |
 
-HTTP/HTTPS proxy URLs must use `http` or `https`. Reserved custom header names are rejected: `Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`, `Host`, `Content-Type`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Private-Token`, `Job-Token`, `X-Atlassian-Jira-Personal-Token`, `X-Atlassian-Confluence-Personal-Token`, `X-Atlassian-Jira-Url`, `X-Atlassian-Confluence-Url`, and `X-Atlassian-Cloud-Id`.
+HTTP/HTTPS proxy URLs must use `http` or `https`. Reserved custom header names are rejected: `Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`, `Host`, `Content-Type`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Private-Token`, and `Job-Token`.
 
 mTLS:
 
@@ -201,27 +189,14 @@ SOCKS proxy support is not compiled in.
 
 The equivalent diagnostic filter is `mcp_workhub_rs::mcp=debug,mcp_workhub_rs=info,rmcp=info`.
 
-## Streamable HTTP Request Auth
+## Streamable HTTP Endpoint
 
-Security is active for the streamable HTTP MCP endpoint. Request-scoped Bearer handling supports Atlassian BYOT access tokens. These request-scoped headers do not affect `stdio` global-env behavior except for shared redaction and outbound redirect policy. GitLab request-scoped service headers are not implemented; configure GitLab through global `GITLAB_*` environment variables.
-
-| Header | Behavior |
-| --- | --- |
-| `Authorization: Basic <base64(email:api_token)>` or `Authorization: Basic <base64(username:password)>` | Overrides credentials for already configured Jira/Confluence services in the current HTTP request or MCP session. |
-| `Authorization: Token <pat>` | Uses the token as a PAT-compatible credential for already configured services. |
-| `Authorization: Bearer <token>` | Uses the token as a BYOT/OAuth access token when `X-Atlassian-Cloud-Id` is present or global `ATLASSIAN_OAUTH_ENABLE=true`; otherwise keeps PAT-compatible behavior. |
-| `X-Atlassian-Jira-Url` + `X-Atlassian-Jira-Personal-Token` | Creates or overrides the Jira config for the current request/session after URL validation. |
-| `X-Atlassian-Confluence-Url` + `X-Atlassian-Confluence-Personal-Token` | Creates or overrides the Confluence config for the current request/session after URL validation. |
-| `X-Atlassian-Cloud-Id` | Sets request-scoped Cloud ID context and is a BYOT signal for `Authorization: Bearer`. |
+The streamable HTTP MCP endpoint uses the same process-wide service configuration as stdio. Incoming HTTP headers are handled by the MCP transport and do not change Jira, Confluence, or GitLab upstream identity.
 
 Security behavior:
 
-- Header-provided service URL/token values must be paired. Missing pairs are rejected.
-- Header-provided service URLs must use `http` or `https`, have a hostname, and cannot target localhost, metadata hostnames, private, loopback, link-local, multicast, unspecified, documentation, or DNS-resolved non-global IP addresses.
-- When `MCP_ALLOWED_URL_DOMAINS` is set, header-provided service URLs must match an allowed domain or subdomain.
+- Protect public HTTP deployments with a fronting gateway or network boundary appropriate for your environment.
 - Outbound upstream HTTP redirects are limited to same-origin `http`/`https` redirects, maximum 3 hops.
-- Request-scoped BYOT, service URL, and credential overrides apply only to the current streamable HTTP request or MCP session and do not mutate global env service config.
-- Request auth fingerprint is bound to `Mcp-Session-Id`; changing request auth or token type within the same MCP session is rejected.
 - Logs, MCP debug argument output, acceptance compact errors, HTTP status summaries, and URL query values are redacted for secret-looking header, token, cookie, password, key, signature, and env secret values.
 
 ## Confluence Content Conversion

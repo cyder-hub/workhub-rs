@@ -18,10 +18,10 @@ This matrix is the current release support reference for the Rust MCP server. It
 
 | Service | Expected business tools | Rust business tools | Release status |
 | --- | ---: | ---: | --- |
-| Jira | 49 | 49 | Implemented |
+| Jira | 46 | 46 | Implemented |
 | Confluence | 24 | 24 | Implemented |
 | GitLab | 15 | 15 | Implemented |
-| Total business tools | 88 | 88 | Implemented |
+| Total business tools | 85 | 85 | Implemented |
 | Utility tools | 0 | 0 exposed | No utility tool is exposed in the production MCP tool surface. |
 
 ## Jira Tools
@@ -72,9 +72,6 @@ All Jira rows below are implemented in Rust and are registry-managed business to
 | `jira_get_project_service_desk` | read | `jira_service_desks_read` | Local mock REST coverage for Jira Service Management lookup. | Product blocked; service desk lookup returned 403 in the test tenant. |
 | `jira_list_service_desk_queues` | read | `jira_service_desks_read` | Local mock REST coverage for queue listing. | Product blocked by the same JSM permission/product boundary. |
 | `jira_list_service_desk_queue_issues` | read | `jira_service_desks_read` | Local mock REST coverage for queue issue listing. | Product blocked by the same JSM permission/product boundary. |
-| `jira_list_issue_forms` | read | `jira_issue_forms_read` | Local mock REST coverage for Forms/ProForma listing. | Product blocked; real acceptance did not receive an effective Forms API response. |
-| `jira_get_issue_form` | read | `jira_issue_forms_read` | Local mock REST coverage for form details. | Product blocked; no valid real form ID/interface was available. |
-| `jira_update_issue_form_answers` | write | `jira_issue_forms_write` | Local mock REST, schema, and disabled-tool guard covered. | Product blocked; real answer update was not executed. |
 | `jira_get_issue_timeline` | read | `jira_issue_metrics_read` | Local mock REST coverage for issue date/status timing. | Local only. |
 | `jira_get_issue_sla_metrics` | read | `jira_issue_sla_read` | Local mock REST coverage for SLA extraction and parsing limitation output; no local working-hours filtering. | Real accepted for issue SLA read. |
 | `jira_get_issue_development` | read | `jira_issue_development_read` | Local mock REST coverage for single issue development info. | Real accepted for single development-info read. |
@@ -138,7 +135,6 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 | Area | Current release status | Unblock condition for stronger claim |
 | --- | --- | --- |
 | Jira Service Management | Product/permission blocked. Service desk lookup returned 403 in the test tenant, so `jira_service_desks_read` is not real-accepted. | Run acceptance in a tenant/project where the test identity can resolve a service desk and queue, then record real service desk, queue, and queue issue reads. |
-| Jira Forms/ProForma | Product/interface blocked. Real acceptance did not receive an effective Forms API response and did not have a valid real form ID for details/update. | Run acceptance in a tenant with Jira Forms/ProForma enabled, a test issue with a form, and a safe test answer update target. |
 | Confluence user search | Local only for `confluence_search_users`. Real acceptance did not execute a dedicated user-search row. | Add and run a dedicated real Confluence user-search acceptance row with a non-sensitive test query and expected account result shape. |
 | Confluence destructive writes | Disabled-tool guard only for `confluence_delete_page`, `confluence_move_page`, and `confluence_delete_attachment`. Real acceptance did not delete, move, or delete an attachment on a real object. | Run destructive acceptance only against disposable test pages/attachments with cleanup and explicit object isolation. |
 | GitLab MR tools | Local/mock only. Real GitLab acceptance was not run for reads, writes, approvals, or merge. Approval endpoints can depend on GitLab tier and token permissions. | Add a separate real GitLab acceptance suite with disposable projects/MRs and explicit cleanup before recording real GitLab status. |
@@ -147,17 +143,13 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 
 | Capability | Env or CLI surface | Rust status | Notes |
 | --- | --- | --- | --- |
-| Tool profile | `TOOL_PROFILE` | Supported | Supports `basic`, `developer`, `manager`, `full`, and `custom`; defaults to `basic`. With Jira, Confluence, and GitLab configured, profiles expose 23, 47, 85, 88, and 0 tools respectively. Service availability filters out tools for unconfigured services. Unknown values fail startup. |
+| Tool profile | `TOOL_PROFILE` | Supported | Supports `basic`, `developer`, `manager`, `full`, and `custom`; defaults to `basic`. With Jira, Confluence, and GitLab configured, profiles expose 23, 47, 82, 85, and 0 tools respectively. Service availability filters out tools for unconfigured services. Unknown values fail startup. |
 | Toolset filtering | `TOOLSETS` | Supported | Adds comma-separated registered toolsets to the selected profile. `all` enables every toolset; unknown names fail startup. |
 | Exact tool inclusion | `ENABLED_TOOLS` | Supported | Comma-separated MCP tool names to add exactly. |
 | Exact tool exclusion | `DISABLED_TOOLS` | Supported | Comma-separated MCP tool names to remove exactly. Takes precedence over profile/toolset inclusion. |
 | Streamable HTTP binding | `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_PATH`, `streamhttp --host/--port/--path` | Supported | Parsed only for streamable HTTP startup. Default MCP path is `/mcp`; missing leading slash is normalized. |
 | Health endpoint | `GET /healthz` | Supported | Available for streamable HTTP deployments and compose healthchecks. |
-| Request-scoped auth bypass | `IGNORE_HEADER_AUTH` | Supported | Truthy values ignore request-scoped auth/service headers and use only global environment config. |
-| Header URL allowlist | `MCP_ALLOWED_URL_DOMAINS` | Supported | Restricts header-provided Jira/Confluence service URLs to exact domains or subdomains. |
 | GitLab project allowlist | `GITLAB_PROJECTS_FILTER` | Supported | Optional exact allowlist of numeric project IDs or full paths. Project-scoped GitLab tools reject unlisted projects before sending HTTP. |
-| Global Cloud ID | `ATLASSIAN_OAUTH_CLOUD_ID` | Supported | Used by Cloud BYOT auth and request-scoped Bearer disambiguation. |
-| Bearer BYOT switch | `ATLASSIAN_OAUTH_ENABLE` | Supported | Truthy values interpret streamable HTTP `Authorization: Bearer` as BYOT/OAuth access-token auth. |
 
 ## Authentication
 
@@ -165,30 +157,19 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 | --- | --- | --- | --- |
 | Jira Cloud basic/API token | `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN` | Supported | Used for Jira Cloud URLs ending in `.atlassian.net`. |
 | Jira Server/Data Center PAT | `JIRA_URL`, `JIRA_PERSONAL_TOKEN` | Supported | Used for non-Cloud Jira URLs. |
-| Jira Server/Data Center basic password | `JIRA_URL`, `JIRA_USERNAME`, `JIRA_PASSWORD` | Supported | Used for non-Cloud Jira URLs when PAT and BYOT access-token auth are unset. |
+| Jira Server/Data Center basic password | `JIRA_URL`, `JIRA_USERNAME`, `JIRA_PASSWORD` | Supported | Used for non-Cloud Jira URLs when PAT is unset. |
 | Confluence Cloud basic/API token | `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_API_TOKEN` | Supported | Used for Confluence Cloud URLs ending in `.atlassian.net`. |
 | Confluence Server/Data Center PAT | `CONFLUENCE_URL`, `CONFLUENCE_PERSONAL_TOKEN` | Supported | Used for non-Cloud Confluence URLs. |
-| Confluence Server/Data Center basic password | `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_PASSWORD` | Supported | Used for non-Cloud Confluence URLs when PAT and BYOT access-token auth are unset. |
+| Confluence Server/Data Center basic password | `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_PASSWORD` | Supported | Used for non-Cloud Confluence URLs when PAT is unset. |
 | Shared basic/API token fallback | `ATLASSIAN_USERNAME`, `ATLASSIAN_API_TOKEN` | Supported | Used when service-specific username/API-token variables are unset. Service-specific values take precedence. |
-| Shared Server/Data Center basic password fallback | `ATLASSIAN_USERNAME`, `ATLASSIAN_PASSWORD` | Supported | Used for non-Cloud Jira and Confluence when service-specific username/password variables are unset and PAT/BYOT access-token auth are unset. |
+| Shared Server/Data Center basic password fallback | `ATLASSIAN_USERNAME`, `ATLASSIAN_PASSWORD` | Supported | Used for non-Cloud Jira and Confluence when service-specific username/password variables and PAT are unset. |
 | Shared Server/Data Center PAT fallback | `ATLASSIAN_PERSONAL_TOKEN` | Supported | Used when service-specific PAT variables are unset. Service-specific values take precedence. |
-| Shared BYOT access token | `ATLASSIAN_OAUTH_ACCESS_TOKEN` | Supported | Fallback access token for Jira and Confluence. Cloud mode requires `ATLASSIAN_OAUTH_CLOUD_ID`. |
-| Jira-specific BYOT access token | `JIRA_OAUTH_ACCESS_TOKEN` | Supported | Takes precedence over the shared access token for Jira. Jira Cloud uses `https://api.atlassian.com/ex/jira/{cloud_id}`. |
-| Confluence-specific BYOT access token | `CONFLUENCE_OAUTH_ACCESS_TOKEN` | Supported | Takes precedence over the shared access token for Confluence. Confluence Cloud uses `https://api.atlassian.com/ex/confluence/{cloud_id}/wiki`. |
-| Server/Data Center BYOT fallback | BYOT env token without service PAT | Supported | Server/Data Center keeps the configured service base URL when PAT is absent and takes precedence over username/password Basic Auth. |
 | GitLab token header auth | `GITLAB_URL`, `GITLAB_TOKEN` or `GITLAB_PERSONAL_TOKEN` | Supported | Token is sent as `PRIVATE-TOKEN`. Use `read_api` for read-only tools and `api` for writes, approvals, and merge. |
-| GitLab OAuth access token | `GITLAB_URL`, `GITLAB_OAUTH_ACCESS_TOKEN` | Supported | Token is sent as `Authorization: Bearer`. Used after `GITLAB_TOKEN` and `GITLAB_PERSONAL_TOKEN` precedence. |
 | GitLab username/password auth | `GITLAB_USERNAME`, `GITLAB_PASSWORD` | Not supported in the current Rust release | GitLab API auth is token-only in this implementation. |
-| Request-scoped Basic auth | `Authorization: Basic <base64(email:api_token)>` or `Authorization: Basic <base64(username:password)>` | Supported | Streamable HTTP only; scoped to the request/session. |
-| Request-scoped Token auth | `Authorization: Token <pat>` | Supported | Streamable HTTP only; PAT-compatible token auth. |
-| Request-scoped Bearer PAT-compatible auth | `Authorization: Bearer <token>` | Supported | Used when no BYOT signal is present. |
-| Request-scoped Bearer BYOT auth | `Authorization: Bearer <token>` plus `X-Atlassian-Cloud-Id` or `ATLASSIAN_OAUTH_ENABLE=true` | Supported | Uses BYOT/OAuth access-token semantics and token-type-aware session fingerprinting. |
-| Request-scoped service URL/PAT headers | `X-Atlassian-Jira-Url`, `X-Atlassian-Jira-Personal-Token`, `X-Atlassian-Confluence-Url`, `X-Atlassian-Confluence-Personal-Token` | Supported | Header-provided URLs are validated by the SSRF boundary. |
-| Request-scoped Cloud ID | `X-Atlassian-Cloud-Id` | Supported | Also disambiguates Bearer as BYOT access-token auth. |
 | OAuth Cloud 3LO authorization-code flow | OAuth app flow | Not supported in the current Rust release | Fixed backlog item; not implemented in the current release. |
 | OAuth proxy/DCR | Dynamic client registration/proxy flow | Not supported in the current Rust release | Fixed backlog item; not implemented in the current release. |
-| OAuth refresh/token storage | Refresh tokens and token persistence | Not supported in the current Rust release | Fixed backlog item; BYOT access tokens are accepted but not refreshed or stored. |
-| Data Center OAuth authorization-code/refresh | Data Center OAuth app flow | Not supported in the current Rust release | Fixed backlog item; PAT, BYOT fallback, and username/password Basic Auth are supported instead. |
+| OAuth refresh/token storage | Refresh tokens and token persistence | Not supported in the current Rust release | Fixed backlog item; not implemented in the current release. |
+| Data Center OAuth authorization-code/refresh | Data Center OAuth app flow | Not supported in the current Rust release | Fixed backlog item; PAT and username/password Basic Auth are supported instead. |
 
 ## Transport
 
@@ -196,7 +177,6 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 | --- | --- | --- | --- |
 | stdio transport | `mcp-workhub-rs stdio` | Supported | Logs go to stderr; stdout remains MCP protocol-only. |
 | Streamable HTTP transport | `mcp-workhub-rs streamhttp` | Supported | Default endpoint is `/mcp`; path is configurable. |
-| Streamable HTTP request auth | HTTP headers listed above | Supported | Request-scoped auth applies only to the current request/session and preserves service/tool filtering. |
 | Health check | `GET /healthz` | Supported | Returns a simple status response for HTTP deployments. |
 | SSE transport | SSE server mode | Not supported in the current Rust release | Fixed unsupported/backlog item; supported transports are stdio and streamable HTTP. |
 
@@ -209,7 +189,7 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 | GitLab HTTP/HTTPS proxy | `GITLAB_HTTP_PROXY`, `GITLAB_HTTPS_PROXY`, `GITLAB_NO_PROXY` | Supported | Service-specific values take precedence over standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`; `ATLASSIAN_*` proxy fallback does not apply. |
 | Shared Atlassian proxy fallback | `ATLASSIAN_HTTP_PROXY`, `ATLASSIAN_HTTPS_PROXY`, `ATLASSIAN_NO_PROXY` | Supported | Used when service-specific proxy variables are unset; takes precedence over standard proxy variables. |
 | Global HTTP/HTTPS proxy fallback | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | Supported | Used when service-specific proxy variables and any applicable shared fallback are unset. |
-| Jira custom outbound headers | `JIRA_CUSTOM_HEADERS` | Supported | Validated comma-separated `Name=value` pairs. Reserved auth, cookie, proxy, host, content, connection, and request-scoped Atlassian headers are rejected. |
+| Jira custom outbound headers | `JIRA_CUSTOM_HEADERS` | Supported | Validated comma-separated `Name=value` pairs. Reserved auth, cookie, proxy, host, content, and connection headers are rejected. |
 | Confluence custom outbound headers | `CONFLUENCE_CUSTOM_HEADERS` | Supported | Same validation policy as Jira custom headers. |
 | GitLab custom outbound headers | `GITLAB_CUSTOM_HEADERS` | Supported | Same validation policy as Jira/Confluence custom headers, plus GitLab auth headers such as `Private-Token` and `Job-Token` are reserved. Does not use `ATLASSIAN_CUSTOM_HEADERS`. |
 | Shared custom outbound headers fallback | `ATLASSIAN_CUSTOM_HEADERS` | Supported | Used when service-specific custom headers are unset. |
@@ -222,9 +202,7 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 | GitLab TLS verification toggle | `GITLAB_SSL_VERIFY` | Supported | `false`, `0`, `no`, and `off` disable verification. Does not use shared `ATLASSIAN_SSL_VERIFY`. |
 | Shared TLS verification fallback | `ATLASSIAN_SSL_VERIFY` | Supported | Shared fallback for Jira and Confluence TLS verification. |
 | Service timeout controls | `JIRA_TIMEOUT`, `CONFLUENCE_TIMEOUT`, `ATLASSIAN_TIMEOUT`, `GITLAB_TIMEOUT` | Supported | Positive integer seconds. Jira/Confluence can use shared `ATLASSIAN_TIMEOUT`; GitLab uses only `GITLAB_TIMEOUT` or its 75 second default. |
-| SSRF protection for header URLs | URL validation and optional domain allowlist | Supported | Validates scheme, hostname, blocked hostnames, non-global IP literals, DNS results, and `MCP_ALLOWED_URL_DOMAINS`. |
 | Outbound redirect policy | Upstream HTTP client behavior | Supported | Redirects are same-origin only and limited to 3 hops. |
-| Session auth fingerprint | `Mcp-Session-Id` with auth fingerprint | Supported | Changing auth or token type within a streamable HTTP MCP session is rejected. |
 | Redaction | Logs, debug output, compact errors, env/config/error text | Supported | Redacts auth fragments, access tokens, proxy credentials, custom header values, sensitive headers including GitLab `Private-Token`/`Job-Token`, query values, and upstream error summaries. |
 
 ## Release And Deployment

@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::Instant};
 
 use crate::{
-    atlassian::request_auth::parse_request_auth_headers_with_oauth_bearer,
     confluence::client::ConfluenceClient,
     context::AppContext,
     gitlab::client::GitlabClient,
@@ -10,7 +9,6 @@ use crate::{
     tool_registry,
     upstream::{error::UpstreamError, redaction::redact_text},
 };
-use axum::http::{HeaderMap, request::Parts};
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     handler::server::router::tool::ToolRouter,
@@ -30,10 +28,7 @@ mod gitlab_handlers;
 mod jira_handlers;
 mod jira_payloads;
 mod schema;
-mod session_auth;
 mod tool_log;
-
-pub use session_auth::RequestAuthSessionStore;
 
 use schema::{sanitize_tool_for_clients, sanitize_tools_for_clients};
 use tool_log::sanitize_tool_log_arguments;
@@ -52,65 +47,18 @@ pub const SERVER_NAME: &str = "mcp-workhub-rs";
 pub struct WorkhubMcpServer {
     context: Arc<AppContext>,
     tool_router: ToolRouter<Self>,
-    session_auth_fingerprints: RequestAuthSessionStore,
 }
 
 impl WorkhubMcpServer {
     pub fn new(context: Arc<AppContext>) -> Self {
-        Self::with_session_auth_store(context, RequestAuthSessionStore::default())
-    }
-
-    pub fn with_session_auth_store(
-        context: Arc<AppContext>,
-        session_auth_fingerprints: RequestAuthSessionStore,
-    ) -> Self {
         Self {
             context,
             tool_router: Self::tool_router(),
-            session_auth_fingerprints,
-        }
-    }
-
-    fn with_context(&self, context: Arc<AppContext>) -> Self {
-        Self {
-            context,
-            tool_router: Self::tool_router(),
-            session_auth_fingerprints: self.session_auth_fingerprints.clone(),
         }
     }
 
     fn tool_router() -> ToolRouter<Self> {
         Self::jira_tool_router() + Self::confluence_tool_router() + Self::gitlab_tool_router()
-    }
-
-    fn scoped_for_request_context(
-        &self,
-        request_context: &RequestContext<RoleServer>,
-    ) -> Result<Self, ErrorData> {
-        let Some(parts) = request_context.extensions.get::<Parts>() else {
-            return Ok(self.clone());
-        };
-
-        self.scoped_for_request_headers(&parts.headers)
-    }
-
-    fn scoped_for_request_headers(&self, headers: &HeaderMap) -> Result<Self, ErrorData> {
-        let request_auth = parse_request_auth_headers_with_oauth_bearer(
-            headers,
-            self.context.ignore_header_auth(),
-            self.context.allowed_url_domains(),
-            self.context.atlassian_oauth_enabled(),
-        )
-        .map_err(|error| ErrorData::invalid_params(redact_text(&error.to_string()), None))?;
-
-        self.session_auth_fingerprints
-            .enforce_request_headers(headers, &request_auth.fingerprint)?;
-
-        if request_auth.has_overrides() {
-            Ok(self.with_context(Arc::new(self.context.with_request_auth(&request_auth))))
-        } else {
-            Ok(self.clone())
-        }
     }
 
     fn current_tools_result(&self) -> ListToolsResult {
@@ -260,11 +208,10 @@ impl ServerHandler for WorkhubMcpServer {
         }
 
         let result = async {
-            let scoped_server = self.scoped_for_request_context(&context)?;
-            scoped_server.guard_registered_tool_call(tool_name.as_str())?;
+            self.guard_registered_tool_call(tool_name.as_str())?;
 
-            let tool_call_context = ToolCallContext::new(&scoped_server, request, context);
-            scoped_server.tool_router.call(tool_call_context).await
+            let tool_call_context = ToolCallContext::new(self, request, context);
+            self.tool_router.call(tool_call_context).await
         }
         .await;
         let elapsed_ms = started_at.elapsed().as_millis();
@@ -301,11 +248,9 @@ impl ServerHandler for WorkhubMcpServer {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        context: RequestContext<RoleServer>,
+        _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(self
-            .scoped_for_request_context(&context)?
-            .current_tools_result())
+        Ok(self.current_tools_result())
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
@@ -320,7 +265,7 @@ impl ServerHandler for WorkhubMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(SERVER_NAME, env!("CARGO_PKG_VERSION")))
             .with_instructions(format!(
-                "mcp-workhub-rs exposes 88 Jira, Confluence, and GitLab business tools. Tool visibility is controlled by TOOL_PROFILE, TOOLSETS, ENABLED_TOOLS, and DISABLED_TOOLS. Jira, Confluence, and GitLab tools are available when their service configuration and authentication are complete. See docs/support-matrix.md for per-tool and runtime support status."
+                "mcp-workhub-rs exposes 85 Jira, Confluence, and GitLab business tools. Tool visibility is controlled by TOOL_PROFILE, TOOLSETS, ENABLED_TOOLS, and DISABLED_TOOLS. Jira, Confluence, and GitLab tools are available when their service configuration and authentication are complete. See docs/support-matrix.md for per-tool and runtime support status."
             ))
     }
 }

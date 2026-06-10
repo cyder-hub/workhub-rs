@@ -13,17 +13,10 @@ mod upstream;
 
 use std::{net::SocketAddr, sync::Arc};
 
-use axum::{
-    Json, Router,
-    extract::{Request, State},
-    http::StatusCode,
-    middleware::{self, Next},
-    response::{IntoResponse, Response},
-    routing::get,
-};
+use axum::{Json, Router, routing::get};
 use config::HttpConfigOverrides;
 use context::AppContext;
-use mcp::{RequestAuthSessionStore, WorkhubMcpServer};
+use mcp::WorkhubMcpServer;
 use rmcp::{
     ServiceExt,
     transport::{
@@ -35,7 +28,6 @@ use rmcp::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
-use upstream::redaction::redact_text;
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -74,12 +66,6 @@ enum RunMode {
 #[derive(Debug, serde::Serialize)]
 struct HealthResponse {
     status: &'static str,
-}
-
-#[derive(Clone)]
-struct StreamHttpAuthState {
-    context: Arc<AppContext>,
-    session_auth_store: RequestAuthSessionStore,
 }
 
 #[tokio::main]
@@ -178,28 +164,13 @@ async fn run_streamhttp(config: config::HttpConfig, context: Arc<AppContext>) ->
     let address: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     let cancellation = CancellationToken::new();
     let server_context = context.clone();
-    let session_auth_store = RequestAuthSessionStore::default();
-    let service_session_auth_store = session_auth_store.clone();
     let service = StreamableHttpService::new(
-        move || {
-            Ok(WorkhubMcpServer::with_session_auth_store(
-                server_context.clone(),
-                service_session_auth_store.clone(),
-            ))
-        },
+        move || Ok(WorkhubMcpServer::new(server_context.clone())),
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default().with_cancellation_token(cancellation.child_token()),
     );
-    let auth_state = StreamHttpAuthState {
-        context,
-        session_auth_store,
-    };
     let app = Router::new()
         .nest_service(config.path.as_str(), service)
-        .route_layer(middleware::from_fn_with_state(
-            auth_state,
-            streamhttp_request_auth,
-        ))
         .route("/healthz", get(healthz));
     let listener = tokio::net::TcpListener::bind(address).await?;
 
@@ -224,34 +195,6 @@ async fn run_streamhttp(config: config::HttpConfig, context: Arc<AppContext>) ->
 
 async fn healthz() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
-}
-
-async fn streamhttp_request_auth(
-    State(state): State<StreamHttpAuthState>,
-    request: Request,
-    next: Next,
-) -> Response {
-    let fingerprint = match state
-        .session_auth_store
-        .parse_and_enforce_headers(request.headers(), &state.context)
-    {
-        Ok(fingerprint) => fingerprint,
-        Err(error) => return request_auth_error_response(error),
-    };
-
-    let response = next.run(request).await;
-    if let Err(error) = state
-        .session_auth_store
-        .bind_response_headers(response.headers(), &fingerprint)
-    {
-        return request_auth_error_response(error);
-    }
-
-    response
-}
-
-fn request_auth_error_response(error: rmcp::ErrorData) -> Response {
-    (StatusCode::BAD_REQUEST, redact_text(error.message.as_ref())).into_response()
 }
 
 fn init_tracing() -> AppResult<()> {

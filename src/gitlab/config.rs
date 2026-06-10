@@ -13,7 +13,6 @@ use crate::{
 pub const ENV_GITLAB_URL: &str = "GITLAB_URL";
 pub const ENV_GITLAB_TOKEN: &str = "GITLAB_TOKEN";
 pub const ENV_GITLAB_PERSONAL_TOKEN: &str = "GITLAB_PERSONAL_TOKEN";
-pub const ENV_GITLAB_OAUTH_ACCESS_TOKEN: &str = "GITLAB_OAUTH_ACCESS_TOKEN";
 pub const ENV_GITLAB_PROJECTS_FILTER: &str = "GITLAB_PROJECTS_FILTER";
 pub const ENV_GITLAB_SSL_VERIFY: &str = "GITLAB_SSL_VERIFY";
 pub const ENV_GITLAB_TIMEOUT: &str = "GITLAB_TIMEOUT";
@@ -44,14 +43,7 @@ impl GitlabConfig {
         F: FnMut(&str) -> Result<String, E>,
     {
         let base_url = optional_named_var(get_var, ENV_GITLAB_URL);
-        let token = first_named_var(
-            get_var,
-            [
-                ENV_GITLAB_TOKEN,
-                ENV_GITLAB_PERSONAL_TOKEN,
-                ENV_GITLAB_OAUTH_ACCESS_TOKEN,
-            ],
-        );
+        let token = first_named_var(get_var, [ENV_GITLAB_TOKEN, ENV_GITLAB_PERSONAL_TOKEN]);
 
         let Some(base_url) = base_url else {
             if let Some(token) = token {
@@ -102,12 +94,7 @@ impl GitlabConfig {
     }
 
     pub fn is_auth_configured(&self) -> bool {
-        matches!(
-            self.auth,
-            UpstreamAuth::HeaderToken { .. }
-                | UpstreamAuth::Bearer { .. }
-                | UpstreamAuth::OAuthAccessToken { .. }
-        )
+        matches!(self.auth, UpstreamAuth::HeaderToken { .. })
     }
 }
 
@@ -156,13 +143,9 @@ fn non_empty_trimmed(value: String) -> Option<String> {
 }
 
 fn auth_from_token(token: NamedEnvValue) -> UpstreamAuth {
-    if token.variable == ENV_GITLAB_OAUTH_ACCESS_TOKEN {
-        UpstreamAuth::Bearer { token: token.value }
-    } else {
-        UpstreamAuth::HeaderToken {
-            header_name: HeaderName::from_static("private-token"),
-            token: token.value,
-        }
+    UpstreamAuth::HeaderToken {
+        header_name: HeaderName::from_static("private-token"),
+        token: token.value,
     }
 }
 
@@ -314,29 +297,11 @@ mod tests {
     }
 
     #[test]
-    fn accepts_oauth_access_token_as_bearer() {
-        let config = config_from_pairs(&[
-            (ENV_GITLAB_URL, "https://gitlab.example"),
-            (ENV_GITLAB_OAUTH_ACCESS_TOKEN, "oauth-token"),
-        ])
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(
-            config.auth,
-            UpstreamAuth::Bearer {
-                token: "oauth-token".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn token_precedence_prefers_gitlab_token_then_personal_then_oauth() {
+    fn token_precedence_prefers_gitlab_token_then_personal_token() {
         let config = config_from_pairs(&[
             (ENV_GITLAB_URL, "https://gitlab.example"),
             (ENV_GITLAB_TOKEN, "primary-token"),
             (ENV_GITLAB_PERSONAL_TOKEN, "personal-token"),
-            (ENV_GITLAB_OAUTH_ACCESS_TOKEN, "oauth-token"),
         ])
         .unwrap()
         .unwrap();
@@ -349,7 +314,6 @@ mod tests {
         let config = config_from_pairs(&[
             (ENV_GITLAB_URL, "https://gitlab.example"),
             (ENV_GITLAB_PERSONAL_TOKEN, "personal-token"),
-            (ENV_GITLAB_OAUTH_ACCESS_TOKEN, "oauth-token"),
         ])
         .unwrap()
         .unwrap();

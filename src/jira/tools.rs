@@ -80,9 +80,6 @@ pub const JIRA_GET_SERVICE_DESK_FOR_PROJECT_TOOL_NAME: &str = "jira_get_project_
 pub const JIRA_LIST_SERVICE_DESK_QUEUES_TOOL_NAME: &str = "jira_list_service_desk_queues";
 pub const JIRA_LIST_SERVICE_DESK_QUEUE_ISSUES_TOOL_NAME: &str =
     "jira_list_service_desk_queue_issues";
-pub const JIRA_LIST_ISSUE_FORMS_TOOL_NAME: &str = "jira_list_issue_forms";
-pub const JIRA_GET_ISSUE_FORM_TOOL_NAME: &str = "jira_get_issue_form";
-pub const JIRA_UPDATE_ISSUE_FORM_ANSWERS_TOOL_NAME: &str = "jira_update_issue_form_answers";
 pub const JIRA_GET_ISSUE_TIMELINE_TOOL_NAME: &str = "jira_get_issue_timeline";
 pub const JIRA_GET_ISSUE_SLA_METRICS_TOOL_NAME: &str = "jira_get_issue_sla_metrics";
 pub const JIRA_GET_ISSUE_DEVELOPMENT_TOOL_NAME: &str = "jira_get_issue_development";
@@ -123,9 +120,6 @@ pub const JIRA_EXTENSION_TOOL_NAMES: &[&str] = &[
     JIRA_GET_SERVICE_DESK_FOR_PROJECT_TOOL_NAME,
     JIRA_LIST_SERVICE_DESK_QUEUES_TOOL_NAME,
     JIRA_LIST_SERVICE_DESK_QUEUE_ISSUES_TOOL_NAME,
-    JIRA_LIST_ISSUE_FORMS_TOOL_NAME,
-    JIRA_GET_ISSUE_FORM_TOOL_NAME,
-    JIRA_UPDATE_ISSUE_FORM_ANSWERS_TOOL_NAME,
     JIRA_GET_ISSUE_TIMELINE_TOOL_NAME,
     JIRA_GET_ISSUE_SLA_METRICS_TOOL_NAME,
     JIRA_GET_ISSUE_DEVELOPMENT_TOOL_NAME,
@@ -691,30 +685,6 @@ pub struct JiraListServiceDeskQueueIssuesArgs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct JiraListIssueFormsArgs {
-    pub issue_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct JiraGetIssueFormArgs {
-    pub issue_key: String,
-    #[schemars(description = "Jira Forms or ProForma form id attached to the issue.")]
-    pub form_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct JiraUpdateIssueFormAnswersArgs {
-    pub issue_key: String,
-    #[schemars(description = "Jira Forms or ProForma form id attached to the issue.")]
-    pub form_id: String,
-    #[schemars(
-        description = "Answer objects to update on the form. The required keys depend on Jira Forms or ProForma field definitions."
-    )]
-    #[schemars(schema_with = "object_list_schema")]
-    pub answers: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct JiraGetIssueTimelineArgs {
     pub issue_key: String,
     #[serde(default)]
@@ -783,8 +753,8 @@ mod tests {
     fn jira_extension_tool_names_are_complete_and_unique() {
         let unique = JIRA_EXTENSION_TOOL_NAMES.iter().collect::<BTreeSet<_>>();
 
-        assert_eq!(JIRA_EXTENSION_TOOL_NAMES.len(), 40);
-        assert_eq!(unique.len(), 40);
+        assert_eq!(JIRA_EXTENSION_TOOL_NAMES.len(), 37);
+        assert_eq!(unique.len(), 37);
         assert!(unique.contains(&&JIRA_CREATE_ISSUE_TOOL_NAME));
         assert!(unique.contains(&&JIRA_GET_ISSUES_DEVELOPMENT_TOOL_NAME));
     }

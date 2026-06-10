@@ -16,11 +16,6 @@ pub const CUSTOM_HEADER_RESERVED_NAMES: &[&str] = &[
     "connection",
     "private-token",
     "job-token",
-    "x-atlassian-jira-personal-token",
-    "x-atlassian-confluence-personal-token",
-    "x-atlassian-jira-url",
-    "x-atlassian-confluence-url",
-    "x-atlassian-cloud-id",
 ];
 
 #[derive(Clone, Default, PartialEq, Eq)]

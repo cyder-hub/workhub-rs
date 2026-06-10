@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a Rust 1.94 / edition 2024 binary crate for `mcp-workhub-rs`. `src/main.rs` owns startup, production CLI parsing, tracing, transports, and `/healthz`. `src/mcp.rs` owns RMCP handlers and request-scoped auth. Runtime config/context live in `src/config.rs` and `src/context.rs`.
+This is a Rust 1.94 / edition 2024 binary crate for `mcp-workhub-rs`. `src/main.rs` owns startup, production CLI parsing, tracing, transports, and `/healthz`. `src/mcp.rs` owns RMCP handlers, tool dispatch, and schema handling. Runtime config/context live in `src/config.rs` and `src/context.rs`.
 
 Jira, Confluence, and GitLab code live under `src/jira/`, `src/confluence/`, and `src/gitlab/`. Atlassian-specific compatibility lives in `src/atlassian/`; provider-agnostic auth, HTTP, proxy, mTLS, custom headers, redaction, SSRF, and redirect logic live in `src/upstream/`. `src/tool_registry.rs` centralizes metadata, discovery, `TOOL_PROFILE`, `TOOLSETS`, `ENABLED_TOOLS`, and `DISABLED_TOOLS`. Development smoke and acceptance tooling lives in `xtask/`; public docs are in `README.md` and `docs/`.
 
@@ -35,4 +35,4 @@ Pull requests should include a concise summary, verification commands run, and f
 
 ## Security & Configuration Tips
 
-Preserve redaction, SSRF validation, allowed-domain checks, same-origin redirect limits, custom-header reserved-name checks, and MCP session auth fingerprint behavior. Do not claim unsupported features unless implemented and validated.
+Preserve redaction, same-origin redirect limits, custom-header reserved-name checks, proxy/TLS/mTLS behavior, and global credential handling. Do not claim unsupported features unless implemented and validated.

@@ -22,7 +22,7 @@ fn server_info_uses_app_context() {
     let instructions = info.instructions.unwrap_or_default();
 
     assert!(instructions.contains("TOOL_PROFILE"));
-    assert!(instructions.contains("mcp-workhub-rs exposes 88 Jira, Confluence, and GitLab"));
+    assert!(instructions.contains("mcp-workhub-rs exposes 85 Jira, Confluence, and GitLab"));
     assert!(instructions.contains("docs/support-matrix.md"));
 }
 
@@ -206,13 +206,12 @@ fn jira_product_dependent_tools_have_routes_and_registered_metadata() {
     let server = server_with_config(RuntimeConfig {
         jira: Some(jira_config()),
         enabled_toolsets: tool_registry::all_toolsets(),
-        atlassian_oauth_cloud_id: Some("cloud-123".to_string()),
         ..runtime_config()
     });
     let names = current_tool_names(&server);
     let jira_product_tools = jira_product_extension_tool_names();
 
-    assert_eq!(jira_product_tools.len(), 17);
+    assert_eq!(jira_product_tools.len(), 14);
     for name in jira_product_tools {
         assert!(
             tool_registry::metadata_for(name).is_some(),
@@ -266,17 +265,6 @@ fn jira_product_dependent_toolsets_filter_to_expected_tools() {
             ],
         ),
         (
-            "jira_issue_forms_read",
-            vec![
-                tools::JIRA_LIST_ISSUE_FORMS_TOOL_NAME,
-                tools::JIRA_GET_ISSUE_FORM_TOOL_NAME,
-            ],
-        ),
-        (
-            "jira_issue_forms_write",
-            vec![tools::JIRA_UPDATE_ISSUE_FORM_ANSWERS_TOOL_NAME],
-        ),
-        (
             "jira_issue_metrics_read",
             vec![tools::JIRA_GET_ISSUE_TIMELINE_TOOL_NAME],
         ),
@@ -298,7 +286,6 @@ fn jira_product_dependent_toolsets_filter_to_expected_tools() {
         let server = server_with_config(RuntimeConfig {
             jira: Some(jira_config()),
             enabled_toolsets: BTreeSet::from([toolset.to_string()]),
-            atlassian_oauth_cloud_id: Some("cloud-123".to_string()),
             ..runtime_config()
         });
         let names = current_tool_names(&server);
@@ -338,24 +325,23 @@ fn all_business_tools_have_metadata_routes_docs_and_control_plane_policy() {
         confluence: Some(confluence_config()),
         gitlab: Some(gitlab_config()),
         enabled_toolsets: tool_registry::all_toolsets(),
-        atlassian_oauth_cloud_id: Some("cloud-123".to_string()),
         ..runtime_config()
     });
     let read_write_names = current_tool_names(&read_write);
 
-    assert_eq!(jira_names.len(), 49);
+    assert_eq!(jira_names.len(), 46);
     assert_eq!(confluence_names.len(), 24);
     assert_eq!(gitlab_names.len(), 15);
-    assert_eq!(all_names.len(), 88);
+    assert_eq!(all_names.len(), 85);
     assert_eq!(unique_names.len(), all_names.len());
-    assert_eq!(support_matrix_rows.len(), 88);
+    assert_eq!(support_matrix_rows.len(), 85);
     assert_eq!(support_matrix_names.len(), support_matrix_rows.len());
     assert_eq!(
         support_matrix_names
             .iter()
             .filter(|name| name.starts_with("jira_"))
             .count(),
-        49
+        46
     );
     assert_eq!(
         support_matrix_names
@@ -418,7 +404,6 @@ fn tool_discovery_uses_registry_metadata_as_single_source() {
         jira: Some(jira_config()),
         confluence: Some(confluence_config()),
         enabled_toolsets: tool_registry::all_toolsets(),
-        atlassian_oauth_cloud_id: Some("cloud-123".to_string()),
         ..runtime_config()
     });
 

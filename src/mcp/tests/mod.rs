@@ -17,7 +17,7 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::State,
-    http::{HeaderMap, HeaderValue, Method, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::any,
 };
@@ -36,6 +36,5 @@ mod confluence_handlers;
 mod discovery;
 mod gitlab_handlers;
 mod jira_handlers;
-mod request_auth;
 mod schema_logging;
 mod support;
