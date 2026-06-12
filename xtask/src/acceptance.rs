@@ -27,15 +27,12 @@ const SECRET_KEYS: &[&str] = &[
     "JIRA_API_TOKEN",
     "JIRA_PASSWORD",
     "JIRA_PERSONAL_TOKEN",
-    "JIRA_OAUTH_ACCESS_TOKEN",
     "CONFLUENCE_API_TOKEN",
     "CONFLUENCE_PASSWORD",
     "CONFLUENCE_PERSONAL_TOKEN",
-    "CONFLUENCE_OAUTH_ACCESS_TOKEN",
     "ATLASSIAN_API_TOKEN",
     "ATLASSIAN_PASSWORD",
     "ATLASSIAN_PERSONAL_TOKEN",
-    "ATLASSIAN_OAUTH_ACCESS_TOKEN",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, ValueEnum)]
@@ -336,15 +333,8 @@ fn missing_base_env(mode: &AcceptanceMode, env: &EnvMap) -> Vec<&'static str> {
 }
 
 fn has_jira_auth(env: &EnvMap) -> bool {
-    has_any_token(
-        env,
-        &[
-            "JIRA_PERSONAL_TOKEN",
-            "JIRA_OAUTH_ACCESS_TOKEN",
-            "ATLASSIAN_PERSONAL_TOKEN",
-            "ATLASSIAN_OAUTH_ACCESS_TOKEN",
-        ],
-    ) || has_basic_auth(env, "JIRA_USERNAME", "JIRA_API_TOKEN")
+    has_any_token(env, &["JIRA_PERSONAL_TOKEN", "ATLASSIAN_PERSONAL_TOKEN"])
+        || has_basic_auth(env, "JIRA_USERNAME", "JIRA_API_TOKEN")
         || has_basic_auth(env, "JIRA_USERNAME", "JIRA_PASSWORD")
         || has_basic_auth(env, "ATLASSIAN_USERNAME", "ATLASSIAN_API_TOKEN")
         || has_basic_auth(env, "ATLASSIAN_USERNAME", "ATLASSIAN_PASSWORD")
@@ -353,12 +343,7 @@ fn has_jira_auth(env: &EnvMap) -> bool {
 fn has_confluence_auth(env: &EnvMap) -> bool {
     has_any_token(
         env,
-        &[
-            "CONFLUENCE_PERSONAL_TOKEN",
-            "CONFLUENCE_OAUTH_ACCESS_TOKEN",
-            "ATLASSIAN_PERSONAL_TOKEN",
-            "ATLASSIAN_OAUTH_ACCESS_TOKEN",
-        ],
+        &["CONFLUENCE_PERSONAL_TOKEN", "ATLASSIAN_PERSONAL_TOKEN"],
     ) || has_basic_auth(env, "CONFLUENCE_USERNAME", "CONFLUENCE_API_TOKEN")
         || has_basic_auth(env, "CONFLUENCE_USERNAME", "CONFLUENCE_PASSWORD")
         || has_basic_auth(env, "ATLASSIAN_USERNAME", "ATLASSIAN_API_TOKEN")
@@ -452,7 +437,6 @@ fn jira_rows(env: &EnvMap) -> Vec<Row> {
     let watcher = env_value(env, "JIRA_WATCHER_USER");
     let service_desk = env_value(env, "JIRA_SERVICE_DESK_ID");
     let queue = env_value(env, "JIRA_QUEUE_ID");
-    let form = env_value(env, "JIRA_FORM_ID");
 
     vec![
         row(
@@ -560,24 +544,6 @@ fn jira_rows(env: &EnvMap) -> Vec<Row> {
             "jira/product/jsm_queue_issues",
             &["JIRA_SERVICE_DESK_ID", "JIRA_QUEUE_ID"],
             json!({"service_desk_id": service_desk, "queue_id": queue, "limit": 5}),
-            false,
-            false,
-        ),
-        row(
-            "jira_issue_forms_read",
-            "jira_list_issue_forms",
-            "jira/product/forms",
-            &["JIRA_READ_ISSUE"],
-            json!({"issue_key": issue}),
-            false,
-            false,
-        ),
-        row(
-            "jira_issue_forms_read",
-            "jira_get_issue_form",
-            "jira/product/form_details",
-            &["JIRA_READ_ISSUE", "JIRA_FORM_ID"],
-            json!({"issue_key": issue, "form_id": form}),
             false,
             false,
         ),

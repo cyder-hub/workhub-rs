@@ -93,24 +93,6 @@ pub(super) fn gitlab_config_with_base_url(base_url: String) -> GitlabConfig {
     }
 }
 
-pub(super) fn jira_cloud_config_with_base_url(base_url: String) -> JiraConfig {
-    JiraConfig {
-        base_url,
-        deployment: JiraDeployment::Cloud,
-        auth: UpstreamAuth::Basic {
-            username: "test-user".to_string(),
-            api_token: "test-api-token".to_string(),
-        },
-        oauth_cloud_id: None,
-        ssl_verify: true,
-        proxy: ProxyConfig::default(),
-        custom_headers: CustomHeaders::default(),
-        mtls: None,
-        projects_filter: BTreeSet::new(),
-        timeout_seconds: 75,
-    }
-}
-
 pub(super) fn confluence_cloud_config_with_base_url(base_url: String) -> ConfluenceConfig {
     ConfluenceConfig {
         base_url,
@@ -119,7 +101,6 @@ pub(super) fn confluence_cloud_config_with_base_url(base_url: String) -> Conflue
             username: "test-user".to_string(),
             api_token: "test-api-token".to_string(),
         },
-        oauth_cloud_id: None,
         ssl_verify: true,
         proxy: ProxyConfig::default(),
         custom_headers: CustomHeaders::default(),
@@ -136,7 +117,6 @@ pub(super) fn confluence_config_with_base_url(base_url: String) -> ConfluenceCon
         auth: UpstreamAuth::Pat {
             personal_token: "test-pat-value".to_string(),
         },
-        oauth_cloud_id: None,
         ssl_verify: true,
         proxy: ProxyConfig::default(),
         custom_headers: CustomHeaders::default(),
@@ -153,7 +133,6 @@ pub(super) fn jira_config_with_base_url(base_url: String) -> JiraConfig {
         auth: UpstreamAuth::Pat {
             personal_token: "test-pat-value".to_string(),
         },
-        oauth_cloud_id: None,
         ssl_verify: true,
         proxy: ProxyConfig::default(),
         custom_headers: CustomHeaders::default(),
@@ -176,26 +155,6 @@ pub(super) fn tool_names(tools: Vec<Tool>) -> Vec<String> {
         .into_iter()
         .map(|tool| tool.name.to_string())
         .collect()
-}
-
-pub(super) fn header_map(headers: &[(&'static str, &'static str)]) -> HeaderMap {
-    let mut header_map = HeaderMap::new();
-    for (name, value) in headers {
-        header_map.insert(*name, HeaderValue::from_static(value));
-    }
-    header_map
-}
-
-pub(super) fn request_service_headers() -> HeaderMap {
-    header_map(&[
-        ("X-Atlassian-Jira-Url", "https://8.8.8.8"),
-        ("X-Atlassian-Jira-Personal-Token", "request-jira-token"),
-        ("X-Atlassian-Confluence-Url", "https://8.8.4.4"),
-        (
-            "X-Atlassian-Confluence-Personal-Token",
-            "request-confluence-token",
-        ),
-    ])
 }
 
 pub(super) fn query_value(path: &str, key: &str) -> Option<String> {
@@ -226,7 +185,6 @@ pub(super) fn assert_registered_output_schema_declares_properties(
         jira: Some(jira_config()),
         confluence: Some(confluence_config()),
         enabled_toolsets: tool_registry::all_toolsets(),
-        atlassian_oauth_cloud_id: Some("cloud-123".to_string()),
         ..runtime_config()
     });
     let tools = server.current_tools_result().tools;
@@ -393,9 +351,6 @@ pub(super) fn jira_product_extension_tool_names() -> Vec<&'static str> {
         tools::JIRA_GET_SERVICE_DESK_FOR_PROJECT_TOOL_NAME,
         tools::JIRA_LIST_SERVICE_DESK_QUEUES_TOOL_NAME,
         tools::JIRA_LIST_SERVICE_DESK_QUEUE_ISSUES_TOOL_NAME,
-        tools::JIRA_LIST_ISSUE_FORMS_TOOL_NAME,
-        tools::JIRA_GET_ISSUE_FORM_TOOL_NAME,
-        tools::JIRA_UPDATE_ISSUE_FORM_ANSWERS_TOOL_NAME,
         tools::JIRA_GET_ISSUE_TIMELINE_TOOL_NAME,
         tools::JIRA_GET_ISSUE_SLA_METRICS_TOOL_NAME,
         tools::JIRA_GET_ISSUE_DEVELOPMENT_TOOL_NAME,
@@ -734,16 +689,6 @@ pub(super) fn high_risk_input_fields() -> Vec<HighRiskInputField> {
             reason: "service desk queue issue page size",
         },
         HighRiskInputField {
-            tool_name: tools::JIRA_GET_ISSUE_FORM_TOOL_NAME,
-            field_name: "form_id",
-            reason: "Jira Forms product form selector",
-        },
-        HighRiskInputField {
-            tool_name: tools::JIRA_UPDATE_ISSUE_FORM_ANSWERS_TOOL_NAME,
-            field_name: "form_id",
-            reason: "Jira Forms product form selector",
-        },
-        HighRiskInputField {
             tool_name: tools::JIRA_GET_ISSUE_SLA_METRICS_TOOL_NAME,
             field_name: "metrics",
             reason: "string-or-array SLA metric selector",
@@ -792,11 +737,6 @@ pub(super) fn high_risk_input_fields() -> Vec<HighRiskInputField> {
             tool_name: tools::JIRA_GET_ISSUE_IMAGES_TOOL_NAME,
             field_name: "max_bytes",
             reason: "bounded inline image attachment content",
-        },
-        HighRiskInputField {
-            tool_name: tools::JIRA_UPDATE_ISSUE_FORM_ANSWERS_TOOL_NAME,
-            field_name: "answers",
-            reason: "forms answer object list",
         },
         HighRiskInputField {
             tool_name: confluence_tools::CONFLUENCE_SEARCH_TOOL_NAME,
@@ -1053,10 +993,6 @@ pub(super) fn high_risk_output_tools() -> Vec<HighRiskOutputTool> {
         },
         HighRiskOutputTool {
             tool_name: tools::JIRA_GET_SERVICE_DESK_FOR_PROJECT_TOOL_NAME,
-            reason: "product dependency unavailable payload",
-        },
-        HighRiskOutputTool {
-            tool_name: tools::JIRA_LIST_ISSUE_FORMS_TOOL_NAME,
             reason: "product dependency unavailable payload",
         },
         HighRiskOutputTool {
@@ -1703,53 +1639,6 @@ pub(super) async fn mock_jira_handler(
                     {"id": "10001", "key": "ABC-1", "fields": {"summary": "Customer request"}}
                 ]
             })),
-        )
-            .into_response();
-    }
-    if method == Method::GET && path == "/jira/forms/cloud/cloud-123/issue/ABC-1/form" {
-        return (
-            StatusCode::OK,
-            Json(json!({
-                "forms": [
-                    {
-                        "id": "form-1",
-                        "name": "Request form",
-                        "state": {"status": "o"},
-                        "submitted": false
-                    }
-                ]
-            })),
-        )
-            .into_response();
-    }
-    if method == Method::GET && path == "/jira/forms/cloud/cloud-123/issue/ABC-1/form/form-1" {
-        return (
-            StatusCode::OK,
-            Json(json!({
-                "id": "form-1",
-                "name": "Request form",
-                "state": {"status": "o"},
-                "design": {"content": []},
-                "answers": {"q1": {"text": "Existing"}}
-            })),
-        )
-            .into_response();
-    }
-    if method == Method::PUT && path == "/jira/forms/cloud/cloud-123/issue/ABC-1/form/form-1" {
-        return (
-            StatusCode::OK,
-            Json(json!({
-                "id": "form-1",
-                "updated": true,
-                "answers": parsed_body["answers"]
-            })),
-        )
-            .into_response();
-    }
-    if method == Method::GET && path_only.starts_with("/jira/forms/cloud/forms-down/") {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"errorMessages": ["Jira Forms is not available"]})),
         )
             .into_response();
     }

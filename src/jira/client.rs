@@ -1,6 +1,5 @@
 use std::collections::BTreeSet;
 
-use reqwest::Url;
 use serde_json::{Map, Value, json};
 
 #[cfg(test)]
@@ -28,13 +27,11 @@ use crate::{
 
 pub const DEFAULT_LIMIT: u64 = 50;
 pub const DEFAULT_ATTACHMENT_MAX_BYTES: u64 = 1_048_576;
-const ATLASSIAN_API_BASE_URL: &str = "https://api.atlassian.com";
 
 #[derive(Clone, Debug)]
 pub struct JiraClient {
     config: JiraConfig,
     http: UpstreamHttpClient,
-    atlassian_api_http: UpstreamHttpClient,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -93,7 +90,6 @@ mod attachments;
 mod comments;
 mod development;
 mod fields;
-mod forms;
 mod issues;
 mod metrics;
 mod projects;
@@ -112,20 +108,7 @@ impl JiraClient {
             config.custom_headers.clone(),
             config.mtls.clone(),
         )?;
-        let atlassian_api_http = UpstreamHttpClient::new_with_proxy_headers_and_mtls(
-            &atlassian_api_base_url(&config),
-            config.auth.clone(),
-            config.timeout_seconds,
-            config.ssl_verify,
-            config.proxy.clone(),
-            config.custom_headers.clone(),
-            config.mtls.clone(),
-        )?;
-        Ok(Self {
-            config,
-            http,
-            atlassian_api_http,
-        })
+        Ok(Self { config, http })
     }
 
     pub async fn get_user_profile(&self, user_identifier: String) -> Result<Value, UpstreamError> {
@@ -307,23 +290,6 @@ fn optional_query_params<const N: usize>(
         .collect()
 }
 
-fn atlassian_api_base_url(config: &JiraConfig) -> String {
-    let Ok(url) = Url::parse(&config.base_url) else {
-        return ATLASSIAN_API_BASE_URL.to_string();
-    };
-
-    if url.host_str().is_some_and(|host| {
-        matches!(
-            host.to_ascii_lowercase().as_str(),
-            "localhost" | "127.0.0.1" | "::1"
-        )
-    }) {
-        config.base_url.clone()
-    } else {
-        ATLASSIAN_API_BASE_URL.to_string()
-    }
-}
-
 fn jira_software_agile_unavailable(error: UpstreamError) -> Result<Value, UpstreamError> {
     match error {
         UpstreamError::HttpStatus {
@@ -352,20 +318,6 @@ fn jira_service_management_unavailable(error: UpstreamError) -> Result<Value, Up
     }
 }
 
-fn jira_forms_unavailable(error: UpstreamError) -> Result<Value, UpstreamError> {
-    match error {
-        UpstreamError::HttpStatus {
-            status: 403 | 404,
-            message,
-        } => Ok(JiraOperationResult::product_unavailable(
-            "Jira Forms/ProForma",
-            format!("Jira Forms API is unavailable: {message}"),
-        )
-        .to_simplified_value()),
-        error => Err(error),
-    }
-}
-
 fn jira_development_unavailable(error: UpstreamError) -> Result<Value, UpstreamError> {
     match error {
         UpstreamError::HttpStatus {
@@ -378,26 +330,6 @@ fn jira_development_unavailable(error: UpstreamError) -> Result<Value, UpstreamE
         .to_simplified_value()),
         error => Err(error),
     }
-}
-
-fn forms_cloud_id_or_unavailable(cloud_id: Option<&str>) -> Result<Option<String>, UpstreamError> {
-    let Some(cloud_id) = cloud_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(None);
-    };
-
-    safe_path_segment(cloud_id, "cloud_id").map(Some)
-}
-
-fn forms_cloud_id_missing_result() -> Value {
-    JiraOperationResult::product_unavailable(
-        "Jira Forms/ProForma Cloud ID",
-        "ATLASSIAN_OAUTH_CLOUD_ID is required before calling the Jira Forms API.",
-    )
-    .to_simplified_value()
-}
-
-fn forms_cloud_api_path(cloud_id: &str, endpoint: &str) -> String {
-    format!("/jira/forms/cloud/{cloud_id}{endpoint}")
 }
 
 fn extract_sla_metric_values(
@@ -487,58 +419,6 @@ fn simplify_sla_value(value: &Value, include_raw_dates: bool) -> Value {
         simplified.remove(key);
     }
     Value::Object(simplified)
-}
-
-fn issue_form_answers_payload(answers: Vec<Value>) -> Result<Value, UpstreamError> {
-    let mut payload_answers = serde_json::Map::new();
-
-    for answer in answers {
-        let Value::Object(answer) = answer else {
-            return Err(UpstreamError::invalid_input(
-                "answers must be an array of JSON objects",
-            ));
-        };
-        let Some(question_id) = answer
-            .get("questionId")
-            .or_else(|| answer.get("question_id"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return Err(UpstreamError::invalid_input(
-                "each answer must include a non-empty questionId",
-            ));
-        };
-
-        let answer_type = answer
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("TEXT")
-            .trim()
-            .to_ascii_uppercase();
-        let field_name = match answer_type.as_str() {
-            "NUMBER" => "number",
-            "DATE" | "DATETIME" => "date",
-            "TIME" => "time",
-            "SELECT" | "MULTI_SELECT" | "CHECKBOX" => "choices",
-            "USER" | "MULTI_USER" => "users",
-            _ => "text",
-        };
-        let mut value = answer.get("value").cloned().unwrap_or(Value::Null);
-        if matches!(field_name, "choices" | "users") {
-            value = match value {
-                Value::Array(_) => value,
-                Value::Null => Value::Array(Vec::new()),
-                value => Value::Array(vec![value]),
-            };
-        }
-
-        let mut typed_answer = serde_json::Map::new();
-        typed_answer.insert(field_name.to_string(), value);
-        payload_answers.insert(question_id.to_string(), Value::Object(typed_answer));
-    }
-
-    Ok(json!({ "answers": payload_answers }))
 }
 
 fn insert_optional(target: &mut Value, key: &'static str, value: Option<Value>) {

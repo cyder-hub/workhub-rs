@@ -13,8 +13,6 @@ pub const SENSITIVE_HEADER_NAMES: &[&str] = &[
     "cookie",
     "set-cookie",
     "proxy-authorization",
-    "x-atlassian-jira-personal-token",
-    "x-atlassian-confluence-personal-token",
 ];
 
 pub const SENSITIVE_QUERY_KEYS: &[&str] = &[
@@ -325,8 +323,6 @@ mod tests {
     #[test]
     fn redaction_contract_exposes_sensitive_inputs() {
         assert!(SENSITIVE_HEADER_NAMES.contains(&"authorization"));
-        assert!(SENSITIVE_HEADER_NAMES.contains(&"x-atlassian-jira-personal-token"));
-        assert!(SENSITIVE_HEADER_NAMES.contains(&"x-atlassian-confluence-personal-token"));
         assert!(SENSITIVE_QUERY_KEYS.contains(&"access_token"));
         assert!(SENSITIVE_QUERY_KEYS.contains(&"client_secret"));
         assert!(SECRET_ENV_SUFFIXES.contains(&"_TOKEN"));
@@ -391,10 +387,6 @@ mod tests {
             AUTHORIZATION,
             HeaderValue::from_static("Bearer secret-token"),
         );
-        headers.insert(
-            "x-atlassian-jira-personal-token",
-            HeaderValue::from_static("jira-secret-token"),
-        );
         headers.insert("x-request-id", HeaderValue::from_static("req-1"));
 
         let output = redact_header_map(&headers);
@@ -403,10 +395,6 @@ mod tests {
             output.get("authorization"),
             Some(&"Bearer <redacted>".to_string())
         );
-        assert_eq!(
-            output.get("x-atlassian-jira-personal-token"),
-            Some(&"<redacted>".to_string())
-        );
         assert_eq!(output.get("x-request-id"), Some(&"req-1".to_string()));
     }
 
@@ -414,10 +402,6 @@ mod tests {
     fn redaction_negative_matrix_covers_sensitive_inputs() {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, HeaderValue::from_static("Token pat-secret"));
-        headers.insert(
-            "x-atlassian-confluence-personal-token",
-            HeaderValue::from_static("conf-pat-secret"),
-        );
         headers.insert(
             "x-page-token",
             HeaderValue::from_static("visible-page-token"),
@@ -441,7 +425,6 @@ mod tests {
         assert!(combined.contains("client_secret=%3Credacted%3E"));
         assert!(combined.contains("visible-page-token"));
         assert!(!combined.contains("pat-secret"));
-        assert!(!combined.contains("conf-pat-secret"));
         assert!(!combined.contains("auth-secret"));
         assert!(!combined.contains("query-secret"));
         assert!(!combined.contains("client-secret"));

@@ -366,33 +366,6 @@ pub(super) async fn jira_extension_handler(
         path if path.ends_with("/servicedesk/4/queue/47/issue") => {
             Json(json!({"values": [{"key": "ABC-1"}]})).into_response()
         }
-        "/jira/forms/cloud/cloud-123/issue/ABC-1/form" if method == Method::GET => {
-            Json(json!({"forms": [{
-                "id": "form-1",
-                "name": "Request form",
-                "state": {"status": "o"},
-                "submitted": false
-            }]}))
-            .into_response()
-        }
-        "/jira/forms/cloud/cloud-123/issue/ABC-1/form/form-1" if method == Method::GET => {
-            Json(json!({
-                "id": "form-1",
-                "name": "Request form",
-                "state": {"status": "o"},
-                "design": {"content": []},
-                "answers": {"q1": {"text": "Existing"}}
-            }))
-            .into_response()
-        }
-        "/jira/forms/cloud/cloud-123/issue/ABC-1/form/form-1" if method == Method::PUT => {
-            Json(json!({"id": "form-1", "updated": true})).into_response()
-        }
-        path if path.starts_with("/jira/forms/cloud/forms-down/") => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"errorMessages": ["Jira Forms is not available"]})),
-        )
-            .into_response(),
         "/rest/dev-status/1.0/issue/detail" => {
             Json(json!({"detail": [{"branches": [], "pullRequests": []}]})).into_response()
         }
@@ -564,7 +537,6 @@ pub(super) fn config(base_url: String, deployment: JiraDeployment) -> JiraConfig
                 personal_token: "test-pat-value".to_string(),
             },
         },
-        oauth_cloud_id: None,
         ssl_verify: true,
         proxy: ProxyConfig::default(),
         custom_headers: CustomHeaders::default(),

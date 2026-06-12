@@ -1,8 +1,5 @@
 #![allow(dead_code)]
 
-pub const ENV_ATLASSIAN_OAUTH_ENABLE: &str = "ATLASSIAN_OAUTH_ENABLE";
-pub const ENV_ATLASSIAN_OAUTH_CLOUD_ID: &str = "ATLASSIAN_OAUTH_CLOUD_ID";
-pub const ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN: &str = "ATLASSIAN_OAUTH_ACCESS_TOKEN";
 pub const ENV_ATLASSIAN_USERNAME: &str = "ATLASSIAN_USERNAME";
 pub const ENV_ATLASSIAN_API_TOKEN: &str = "ATLASSIAN_API_TOKEN";
 pub const ENV_ATLASSIAN_PASSWORD: &str = "ATLASSIAN_PASSWORD";
@@ -15,8 +12,6 @@ pub const ENV_ATLASSIAN_NO_PROXY: &str = "ATLASSIAN_NO_PROXY";
 pub const ENV_ATLASSIAN_CUSTOM_HEADERS: &str = "ATLASSIAN_CUSTOM_HEADERS";
 pub const ENV_ATLASSIAN_CLIENT_CERT: &str = "ATLASSIAN_CLIENT_CERT";
 pub const ENV_ATLASSIAN_CLIENT_KEY: &str = "ATLASSIAN_CLIENT_KEY";
-pub const ENV_JIRA_OAUTH_ACCESS_TOKEN: &str = "JIRA_OAUTH_ACCESS_TOKEN";
-pub const ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN: &str = "CONFLUENCE_OAUTH_ACCESS_TOKEN";
 
 pub const ENV_HTTP_PROXY: &str = "HTTP_PROXY";
 pub const ENV_HTTPS_PROXY: &str = "HTTPS_PROXY";
@@ -51,24 +46,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn byot_contract_exposes_access_token_env_names() {
-        assert_eq!(ENV_ATLASSIAN_OAUTH_ENABLE, "ATLASSIAN_OAUTH_ENABLE");
-        assert_eq!(ENV_ATLASSIAN_OAUTH_CLOUD_ID, "ATLASSIAN_OAUTH_CLOUD_ID");
-        assert_eq!(
-            ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN,
-            "ATLASSIAN_OAUTH_ACCESS_TOKEN"
-        );
+    fn shared_atlassian_contract_exposes_global_env_names() {
         assert_eq!(ENV_ATLASSIAN_USERNAME, "ATLASSIAN_USERNAME");
         assert_eq!(ENV_ATLASSIAN_API_TOKEN, "ATLASSIAN_API_TOKEN");
         assert_eq!(ENV_ATLASSIAN_PASSWORD, "ATLASSIAN_PASSWORD");
         assert_eq!(ENV_ATLASSIAN_PERSONAL_TOKEN, "ATLASSIAN_PERSONAL_TOKEN");
         assert_eq!(ENV_ATLASSIAN_SSL_VERIFY, "ATLASSIAN_SSL_VERIFY");
         assert_eq!(ENV_ATLASSIAN_TIMEOUT, "ATLASSIAN_TIMEOUT");
-        assert_eq!(ENV_JIRA_OAUTH_ACCESS_TOKEN, "JIRA_OAUTH_ACCESS_TOKEN");
-        assert_eq!(
-            ENV_CONFLUENCE_OAUTH_ACCESS_TOKEN,
-            "CONFLUENCE_OAUTH_ACCESS_TOKEN"
-        );
         assert_eq!(CapabilityStatus::Included, CapabilityStatus::Included);
     }
 
@@ -99,7 +83,6 @@ mod tests {
         assert!(CUSTOM_HEADER_RESERVED_NAMES.contains(&"content-type"));
         assert!(CUSTOM_HEADER_RESERVED_NAMES.contains(&"private-token"));
         assert!(CUSTOM_HEADER_RESERVED_NAMES.contains(&"job-token"));
-        assert!(CUSTOM_HEADER_RESERVED_NAMES.contains(&"x-atlassian-cloud-id"));
     }
 
     #[test]

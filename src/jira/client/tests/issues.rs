@@ -195,10 +195,6 @@ async fn jira_extension_changelog_and_product_dependency_helpers_are_safe() {
         .batch_get_changelogs(vec!["ABC-1".to_string()], None, None)
         .await
         .unwrap();
-    let forms = server
-        .get_issue_forms("ABC-1".to_string(), None)
-        .await
-        .unwrap();
     let sla = server
         .get_issue_sla("ABC-1".to_string(), None, false)
         .await
@@ -207,7 +203,6 @@ async fn jira_extension_changelog_and_product_dependency_helpers_are_safe() {
 
     assert_eq!(unsupported["success"], false);
     assert_eq!(unsupported["product_dependency"]["available"], false);
-    assert_eq!(forms["product_dependency"]["available"], false);
     assert_eq!(sla["success"], true);
     assert_eq!(sla["product_dependency"]["available"], true);
     assert_eq!(sla["metrics"][0]["field_id"], "customfield_sla");

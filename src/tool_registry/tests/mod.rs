@@ -93,7 +93,6 @@ fn jira_config() -> JiraConfig {
         auth: UpstreamAuth::Pat {
             personal_token: "test-pat-value".to_string(),
         },
-        oauth_cloud_id: None,
         ssl_verify: true,
         proxy: ProxyConfig::default(),
         custom_headers: CustomHeaders::default(),
@@ -110,7 +109,6 @@ fn confluence_config() -> ConfluenceConfig {
         auth: UpstreamAuth::Pat {
             personal_token: "test-pat-value".to_string(),
         },
-        oauth_cloud_id: None,
         ssl_verify: true,
         proxy: ProxyConfig::default(),
         custom_headers: CustomHeaders::default(),
@@ -123,7 +121,8 @@ fn confluence_config() -> ConfluenceConfig {
 fn gitlab_config() -> GitlabConfig {
     GitlabConfig {
         base_url: "https://gitlab.example".to_string(),
-        auth: UpstreamAuth::Bearer {
+        auth: UpstreamAuth::HeaderToken {
+            header_name: reqwest::header::HeaderName::from_static("private-token"),
             token: "test-token".to_string(),
         },
         ssl_verify: true,
@@ -147,7 +146,7 @@ fn toolsets_and_profiles_match_control_plane_contract() {
     let all = all_toolsets();
     let defaults = default_toolsets();
 
-    assert_eq!(all.len(), 52);
+    assert_eq!(all.len(), 50);
     assert_eq!(defaults.len(), 11);
     assert!(defaults.is_subset(&all));
     assert!(all.contains("jira_issues_read"));
@@ -242,8 +241,8 @@ fn profile_tool_counts_match_registered_taxonomy() {
 
     assert_eq!(count("basic"), 23);
     assert_eq!(count("developer"), 47);
-    assert_eq!(count("manager"), 85);
-    assert_eq!(count("full"), 88);
+    assert_eq!(count("manager"), 82);
+    assert_eq!(count("full"), 85);
     assert_eq!(count("custom"), 0);
 }
 
@@ -254,7 +253,7 @@ fn registered_tool_metadata_is_complete_unique_and_uses_known_toolsets() {
     let mut used_toolsets = BTreeSet::new();
     let tools = registered_tools().collect::<Vec<_>>();
 
-    assert_eq!(tools.len(), 88);
+    assert_eq!(tools.len(), 85);
     for metadata in tools {
         assert!(
             names.insert(metadata.name),
@@ -470,7 +469,6 @@ fn destructive_annotation_set_matches_reviewed_write_tools() {
             tools::JIRA_DELETE_ISSUE_LINK_TOOL_NAME,
             tools::JIRA_UPDATE_SPRINT_TOOL_NAME,
             tools::JIRA_ADD_ISSUES_TO_SPRINT_TOOL_NAME,
-            tools::JIRA_UPDATE_ISSUE_FORM_ANSWERS_TOOL_NAME,
             confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME,
             confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME,
             confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME,

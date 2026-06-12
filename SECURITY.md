@@ -9,11 +9,9 @@ Security fixes are handled on the current `master` branch and on published relea
 The Rust server includes:
 
 - Unified token, header, URL query, environment secret, and upstream error redaction.
-- Streamable HTTP request-scoped Basic, Token, and Bearer auth.
-- Header-provided Jira and Confluence service URL validation.
-- Optional `MCP_ALLOWED_URL_DOMAINS` allowlisting.
+- Single-instance global Jira, Confluence, and GitLab credential configuration.
 - Same-origin outbound redirect protection.
-- MCP session auth fingerprint enforcement.
+- Proxy, TLS verification, custom outbound header, and mTLS controls.
 - Explicit rejection for unsupported SOCKS proxy, system truststore injection, and encrypted mTLS key password envs.
 
 The current Rust release does not implement full OAuth Cloud 3LO, OAuth proxy/DCR, OAuth token refresh/storage, Data Center OAuth authorization-code/refresh, SSE transport, Helm, or external registry publishing.

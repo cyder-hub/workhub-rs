@@ -412,36 +412,6 @@ jira_metadata!(
     JiraProductDependencyResult
 );
 jira_metadata!(
-    JIRA_LIST_ISSUE_FORMS_METADATA,
-    tools::JIRA_LIST_ISSUE_FORMS_TOOL_NAME,
-    Read,
-    "jira_issue_forms_read",
-    read_only,
-    "List Jira issue forms",
-    "List Jira Forms or ProForma forms attached to an issue; requires Forms API availability and a Cloud ID.",
-    JiraProductDependencyResult
-);
-jira_metadata!(
-    JIRA_GET_ISSUE_FORM_METADATA,
-    tools::JIRA_GET_ISSUE_FORM_TOOL_NAME,
-    Read,
-    "jira_issue_forms_read",
-    read_only,
-    "Get Jira issue form",
-    "Get details and answers for one Jira Form or ProForma form; requires Forms API availability and a Cloud ID.",
-    JiraProductDependencyResult
-);
-jira_metadata!(
-    JIRA_UPDATE_ISSUE_FORM_ANSWERS_METADATA,
-    tools::JIRA_UPDATE_ISSUE_FORM_ANSWERS_TOOL_NAME,
-    Write,
-    "jira_issue_forms_write",
-    destructive_write,
-    "Update Jira issue form answers",
-    "Update answers on one Jira Form or ProForma form; requires Forms API availability and a Cloud ID.",
-    JiraProductDependencyResult
-);
-jira_metadata!(
     JIRA_GET_ISSUE_TIMELINE_METADATA,
     tools::JIRA_GET_ISSUE_TIMELINE_TOOL_NAME,
     Read,
@@ -524,9 +494,6 @@ pub(super) const TOOLS: &[ToolMetadata] = &[
     JIRA_GET_SERVICE_DESK_FOR_PROJECT_METADATA,
     JIRA_LIST_SERVICE_DESK_QUEUES_METADATA,
     JIRA_LIST_SERVICE_DESK_QUEUE_ISSUES_METADATA,
-    JIRA_LIST_ISSUE_FORMS_METADATA,
-    JIRA_GET_ISSUE_FORM_METADATA,
-    JIRA_UPDATE_ISSUE_FORM_ANSWERS_METADATA,
     JIRA_GET_ISSUE_TIMELINE_METADATA,
     JIRA_GET_ISSUE_SLA_METRICS_METADATA,
     JIRA_GET_ISSUE_DEVELOPMENT_METADATA,

@@ -185,7 +185,6 @@ fn high_risk_output_schemas_declare_representative_payload_keys() {
         jira: Some(jira_config()),
         confluence: Some(confluence_config()),
         enabled_toolsets: tool_registry::all_toolsets(),
-        atlassian_oauth_cloud_id: Some("cloud-123".to_string()),
         ..runtime_config()
     });
     let discovered_tools = server.current_tools_result().tools;

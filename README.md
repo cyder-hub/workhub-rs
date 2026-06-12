@@ -2,7 +2,7 @@
 
 Rust-native MCP server for work systems. It currently exposes Jira, Confluence, and GitLab merge-request tools through stdio or streamable HTTP.
 
-`mcp-workhub-rs` provides 88 business tools: 49 Jira tools, 24 Confluence tools, and 15 GitLab merge-request tools. Jira and Confluence have representative real acceptance coverage; GitLab support is currently local/mock validated only. See [docs/support-matrix.md](docs/support-matrix.md) for exact per-tool status.
+`mcp-workhub-rs` provides 85 business tools: 46 Jira tools, 24 Confluence tools, and 15 GitLab merge-request tools. Jira and Confluence have representative real acceptance coverage; GitLab support is currently local/mock validated only. See [docs/support-matrix.md](docs/support-matrix.md) for exact per-tool status.
 
 ## Quick Start
 
@@ -124,11 +124,11 @@ See [docs/configuration.md](docs/configuration.md) for the full configuration re
 
 This project was inspired by [sooperset/mcp-atlassian](https://github.com/sooperset/mcp-atlassian), a Python MCP server for Atlassian Jira and Confluence. The first Rust version was a migration/reference implementation of the Jira and Confluence surface from that project.
 
-Since then, this project has diverged in a few practical ways: it uses a Rust-native RMCP runtime, typed provider clients, centralized tool metadata and profile filtering, stricter redaction/SSRF/redirect handling, request-scoped streamable HTTP auth, bounded attachment and diff responses, adjusted tool behavior based on real validation, and a GitLab merge-request extension surface.
+Since then, this project has diverged in a few practical ways: it uses a Rust-native RMCP runtime, typed provider clients, centralized tool metadata and profile filtering, stricter redaction and redirect handling, bounded attachment and diff responses, adjusted tool behavior based on real validation, and a GitLab merge-request extension surface.
 
 ## Documentation
 
-- [Configuration](docs/configuration.md): service credentials, tool access, request auth, network/TLS, diagnostics, and content conversion notes.
+- [Configuration](docs/configuration.md): service credentials, tool access, network/TLS, diagnostics, and content conversion notes.
 - [Deployment](docs/deployment.md): stdio, streamable HTTP, Docker, compose, auth, security, and unsupported deployment capabilities.
 - [Support matrix](docs/support-matrix.md): every Jira, Confluence, and GitLab tool with local/real acceptance status.
 - [Development tools](docs/development-tools.md): `xtask`, local smoke checks, and real acceptance variables.
@@ -140,9 +140,9 @@ Since then, this project has diverged in a few practical ways: it uses a Rust-na
 The codebase is a Rust 1.94 / edition 2024 workspace:
 
 - `src/main.rs`: CLI parsing, tracing, stdio, streamable HTTP, and `/healthz`.
-- `src/mcp.rs` and `src/mcp/`: RMCP server glue, handlers, request-scoped auth, schema sanitization, and tool-call diagnostics.
+- `src/mcp.rs` and `src/mcp/`: RMCP server glue, handlers, schema sanitization, and tool-call diagnostics.
 - `src/jira/`, `src/confluence/`, `src/gitlab/`: provider-specific config, clients, tools, models, formatting, and tests.
-- `src/upstream/`: provider-agnostic HTTP, auth, proxy, mTLS, custom headers, redaction, SSRF, redirect, and error helpers.
+- `src/upstream/`: provider-agnostic HTTP, auth, proxy, mTLS, custom headers, redaction, same-origin redirect, and error helpers.
 - `src/atlassian/`: Atlassian-specific compatibility and shared Jira/Confluence behavior.
 - `src/tool_registry.rs` and `src/tool_registry/`: tool metadata, service availability, profile filtering, toolset filtering, enabled-tools inclusion, and disabled-tools exclusion.
 - `xtask/`: development-only smoke and real acceptance automation.

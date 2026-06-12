@@ -948,10 +948,6 @@ fn smoke_env(service: SmokeService, url: &str, restricted: bool) -> EnvMap {
                     "jira_create_issue".to_string(),
                 );
             }
-            env.insert(
-                "ATLASSIAN_OAUTH_CLOUD_ID".to_string(),
-                "cloud-smoke".to_string(),
-            );
         }
         SmokeService::Confluence => {
             env.insert("CONFLUENCE_URL".to_string(), url.to_string());

@@ -466,29 +466,11 @@ mod tests {
     }
 
     #[test]
-    fn joins_api_paths_under_jira_cloud_byot_gateway_base_url() {
+    fn joins_api_paths_under_confluence_wiki_base_path() {
         let client = UpstreamHttpClient::new(
-            "https://api.atlassian.com/ex/jira/cloud-123",
-            UpstreamAuth::OAuthAccessToken {
-                access_token: "test-access-token".to_string(),
-            },
-            75,
-            true,
-        )
-        .unwrap();
-
-        assert_eq!(
-            client.join_api_path("/rest/api/3/issue/ABC-1").as_str(),
-            "https://api.atlassian.com/ex/jira/cloud-123/rest/api/3/issue/ABC-1"
-        );
-    }
-
-    #[test]
-    fn joins_api_paths_under_confluence_cloud_byot_gateway_base_url() {
-        let client = UpstreamHttpClient::new(
-            "https://api.atlassian.com/ex/confluence/cloud-123/wiki",
-            UpstreamAuth::OAuthAccessToken {
-                access_token: "test-access-token".to_string(),
+            "https://confluence.example/wiki",
+            UpstreamAuth::Pat {
+                personal_token: "test-pat-value".to_string(),
             },
             75,
             true,
@@ -497,7 +479,7 @@ mod tests {
 
         assert_eq!(
             client.join_api_path("/rest/api/content/123").as_str(),
-            "https://api.atlassian.com/ex/confluence/cloud-123/wiki/rest/api/content/123"
+            "https://confluence.example/wiki/rest/api/content/123"
         );
     }
 

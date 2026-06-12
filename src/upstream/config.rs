@@ -4,9 +4,8 @@ use crate::{
     atlassian::compat::{
         ENV_ATLASSIAN_API_TOKEN, ENV_ATLASSIAN_CLIENT_CERT, ENV_ATLASSIAN_CLIENT_KEY,
         ENV_ATLASSIAN_CUSTOM_HEADERS, ENV_ATLASSIAN_HTTP_PROXY, ENV_ATLASSIAN_HTTPS_PROXY,
-        ENV_ATLASSIAN_NO_PROXY, ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN, ENV_ATLASSIAN_OAUTH_CLOUD_ID,
-        ENV_ATLASSIAN_PASSWORD, ENV_ATLASSIAN_PERSONAL_TOKEN, ENV_ATLASSIAN_SSL_VERIFY,
-        ENV_ATLASSIAN_TIMEOUT, ENV_ATLASSIAN_USERNAME,
+        ENV_ATLASSIAN_NO_PROXY, ENV_ATLASSIAN_PASSWORD, ENV_ATLASSIAN_PERSONAL_TOKEN,
+        ENV_ATLASSIAN_SSL_VERIFY, ENV_ATLASSIAN_TIMEOUT, ENV_ATLASSIAN_USERNAME,
     },
     error::ConfigError,
     upstream::{
@@ -20,7 +19,6 @@ pub struct ParsedUpstreamServiceConfig<D> {
     pub base_url: String,
     pub deployment: D,
     pub auth: UpstreamAuth,
-    pub oauth_cloud_id: Option<String>,
     pub ssl_verify: bool,
     pub proxy: ProxyConfig,
     pub custom_headers: CustomHeaders,
@@ -34,7 +32,6 @@ pub struct UpstreamServiceConfigSpec<D> {
     pub api_token_variable: &'static str,
     pub password_variable: &'static str,
     pub personal_token_variable: &'static str,
-    pub oauth_access_token_variable: &'static str,
     pub ssl_verify_variable: &'static str,
     pub timeout_variable: &'static str,
     pub http_proxy_variable: &'static str,
@@ -46,12 +43,10 @@ pub struct UpstreamServiceConfigSpec<D> {
     pub default_timeout_seconds: u64,
     pub cloud_deployment: D,
     pub deployment_from_url: fn(&Url) -> D,
-    pub cloud_oauth_api_base_url: fn(&str) -> String,
     pub missing_url_error: fn(Vec<&'static str>) -> ConfigError,
     pub invalid_url_error: fn(&'static str) -> ConfigError,
     pub missing_cloud_credentials_error: fn(Vec<&'static str>) -> ConfigError,
     pub missing_personal_token_error: fn(&'static str) -> ConfigError,
-    pub missing_oauth_cloud_id_error: fn(Vec<&'static str>, &'static str) -> ConfigError,
     pub invalid_timeout_error: fn(&'static str, String) -> ConfigError,
 }
 
@@ -78,16 +73,6 @@ where
         spec.personal_token_variable,
         ENV_ATLASSIAN_PERSONAL_TOKEN,
     );
-    let service_oauth_access_token = optional_named_var(get_var, spec.oauth_access_token_variable);
-    let shared_oauth_access_token = optional_named_var(get_var, ENV_ATLASSIAN_OAUTH_ACCESS_TOKEN);
-    let oauth_access_token = service_oauth_access_token
-        .clone()
-        .or_else(|| shared_oauth_access_token.clone());
-    let oauth_access_token_variables = present_variables([
-        service_oauth_access_token.as_ref(),
-        shared_oauth_access_token.as_ref(),
-    ]);
-    let oauth_cloud_id = optional_named_var(get_var, ENV_ATLASSIAN_OAUTH_CLOUD_ID);
 
     let Some(base_url) = base_url else {
         let credential_variables = present_variables([
@@ -95,7 +80,6 @@ where
             service_specific_variable(api_token.as_ref(), spec.api_token_variable),
             service_specific_variable(password.as_ref(), spec.password_variable),
             service_specific_variable(personal_token.as_ref(), spec.personal_token_variable),
-            service_oauth_access_token.as_ref(),
         ]);
 
         if credential_variables.is_empty() {
@@ -107,69 +91,33 @@ where
 
     let parsed_url = parse_base_url(&base_url.value, spec.url_variable, spec.invalid_url_error)?;
     let deployment = (spec.deployment_from_url)(&parsed_url);
-    let (auth, oauth_cloud_id) = if deployment == spec.cloud_deployment {
-        if let Some(access_token) = oauth_access_token {
-            let Some(cloud_id) = oauth_cloud_id else {
-                return Err((spec.missing_oauth_cloud_id_error)(
-                    oauth_access_token_variables,
-                    ENV_ATLASSIAN_OAUTH_CLOUD_ID,
-                ));
-            };
+    let auth = if deployment == spec.cloud_deployment {
+        let missing_variables = missing_service_variables([
+            (spec.username_variable, username.as_ref()),
+            (spec.api_token_variable, api_token.as_ref()),
+        ]);
 
-            (
-                UpstreamAuth::OAuthAccessToken {
-                    access_token: access_token.value,
-                },
-                Some(cloud_id.value),
-            )
-        } else {
-            let missing_variables = missing_service_variables([
-                (spec.username_variable, username.as_ref()),
-                (spec.api_token_variable, api_token.as_ref()),
-            ]);
+        if !missing_variables.is_empty() {
+            return Err((spec.missing_cloud_credentials_error)(missing_variables));
+        }
 
-            if !missing_variables.is_empty() {
-                return Err((spec.missing_cloud_credentials_error)(missing_variables));
-            }
-
-            (
-                UpstreamAuth::Basic {
-                    username: username.expect("missing variables were checked").value,
-                    api_token: api_token.expect("missing variables were checked").value,
-                },
-                None,
-            )
+        UpstreamAuth::Basic {
+            username: username.expect("missing variables were checked").value,
+            api_token: api_token.expect("missing variables were checked").value,
         }
     } else if let Some(personal_token) = personal_token {
-        (
-            UpstreamAuth::Pat {
-                personal_token: personal_token.value,
-            },
-            None,
-        )
-    } else if let Some(access_token) = oauth_access_token {
-        (
-            UpstreamAuth::OAuthAccessToken {
-                access_token: access_token.value,
-            },
-            None,
-        )
+        UpstreamAuth::Pat {
+            personal_token: personal_token.value,
+        }
     } else if let Some(auth) = server_basic_auth(username, password, api_token, spec) {
-        (auth, None)
+        auth
     } else {
         return Err((spec.missing_personal_token_error)(
             spec.personal_token_variable,
         ));
     };
 
-    let base_url = normalize_effective_base_url(
-        parsed_url,
-        deployment,
-        spec.cloud_deployment,
-        &auth,
-        &oauth_cloud_id,
-        spec.cloud_oauth_api_base_url,
-    );
+    let base_url = normalize_base_url(parsed_url);
     let proxy = ProxyConfig::from_var_provider_with_fallback(
         get_var,
         spec.http_proxy_variable,
@@ -210,7 +158,6 @@ where
         base_url,
         deployment,
         auth,
-        oauth_cloud_id,
         ssl_verify,
         proxy,
         custom_headers,
@@ -319,27 +266,6 @@ fn parse_base_url(
     }
 
     Ok(url)
-}
-
-fn normalize_effective_base_url<D>(
-    url: Url,
-    deployment: D,
-    cloud_deployment: D,
-    auth: &UpstreamAuth,
-    oauth_cloud_id: &Option<String>,
-    cloud_oauth_api_base_url: fn(&str) -> String,
-) -> String
-where
-    D: Eq,
-{
-    if deployment == cloud_deployment
-        && matches!(auth, UpstreamAuth::OAuthAccessToken { .. })
-        && let Some(cloud_id) = oauth_cloud_id
-    {
-        return cloud_oauth_api_base_url(cloud_id);
-    }
-
-    normalize_base_url(url)
 }
 
 fn normalize_base_url(mut url: Url) -> String {

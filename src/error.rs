@@ -6,10 +6,6 @@ pub enum ConfigError {
         variable: &'static str,
         value: String,
     },
-    InvalidAllowedUrlDomain {
-        variable: &'static str,
-        value: String,
-    },
     InvalidToolProfile {
         variable: &'static str,
         value: String,
@@ -51,10 +47,6 @@ pub enum ConfigError {
     MissingJiraPersonalToken {
         variable: &'static str,
     },
-    MissingJiraOAuthCloudId {
-        access_token_variables: Vec<&'static str>,
-        cloud_id_variable: &'static str,
-    },
     InvalidJiraTimeout {
         variable: &'static str,
         value: String,
@@ -70,10 +62,6 @@ pub enum ConfigError {
     },
     MissingConfluencePersonalToken {
         variable: &'static str,
-    },
-    MissingConfluenceOAuthCloudId {
-        access_token_variables: Vec<&'static str>,
-        cloud_id_variable: &'static str,
     },
     InvalidConfluenceTimeout {
         variable: &'static str,
@@ -99,9 +87,6 @@ impl Display for ConfigError {
         match self {
             Self::InvalidHttpPort { variable, value } => {
                 write!(formatter, "invalid {variable} value `{value}`")
-            }
-            Self::InvalidAllowedUrlDomain { variable, value } => {
-                write!(formatter, "invalid {variable} domain `{value}`")
             }
             Self::InvalidToolProfile { variable, value } => {
                 write!(formatter, "invalid {variable} value `{value}`")
@@ -167,17 +152,9 @@ impl Display for ConfigError {
             Self::MissingJiraPersonalToken { variable } => {
                 write!(
                     formatter,
-                    "missing Jira Server/Data Center credential variables: {variable}, JIRA_OAUTH_ACCESS_TOKEN, or JIRA_USERNAME with JIRA_PASSWORD"
+                    "missing Jira Server/Data Center credential variables: {variable} or JIRA_USERNAME with JIRA_PASSWORD"
                 )
             }
-            Self::MissingJiraOAuthCloudId {
-                access_token_variables,
-                cloud_id_variable,
-            } => write!(
-                formatter,
-                "missing {cloud_id_variable} while Jira OAuth/BYOT access token variables are set: {}",
-                access_token_variables.join(", ")
-            ),
             Self::InvalidJiraTimeout { variable, value } => {
                 write!(formatter, "invalid {variable} value `{value}`")
             }
@@ -203,17 +180,9 @@ impl Display for ConfigError {
             Self::MissingConfluencePersonalToken { variable } => {
                 write!(
                     formatter,
-                    "missing Confluence Server/Data Center credential variables: {variable}, CONFLUENCE_OAUTH_ACCESS_TOKEN, or CONFLUENCE_USERNAME with CONFLUENCE_PASSWORD"
+                    "missing Confluence Server/Data Center credential variables: {variable} or CONFLUENCE_USERNAME with CONFLUENCE_PASSWORD"
                 )
             }
-            Self::MissingConfluenceOAuthCloudId {
-                access_token_variables,
-                cloud_id_variable,
-            } => write!(
-                formatter,
-                "missing {cloud_id_variable} while Confluence OAuth/BYOT access token variables are set: {}",
-                access_token_variables.join(", ")
-            ),
             Self::InvalidConfluenceTimeout { variable, value } => {
                 write!(formatter, "invalid {variable} value `{value}`")
             }
@@ -232,7 +201,7 @@ impl Display for ConfigError {
             Self::MissingGitlabToken { variable } => {
                 write!(
                     formatter,
-                    "missing GitLab credential variables: {variable}, GITLAB_PERSONAL_TOKEN, or GITLAB_OAUTH_ACCESS_TOKEN"
+                    "missing GitLab credential variables: {variable} or GITLAB_PERSONAL_TOKEN"
                 )
             }
             Self::InvalidGitlabTimeout { variable, value } => {

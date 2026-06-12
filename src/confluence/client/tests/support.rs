@@ -157,7 +157,6 @@ pub(super) fn cloud_client(base_url: String) -> ConfluenceClient {
             username: "test-user".to_string(),
             api_token: "test-api-token".to_string(),
         },
-        oauth_cloud_id: None,
         ssl_verify: true,
         proxy: ProxyConfig::default(),
         custom_headers: CustomHeaders::default(),
@@ -178,7 +177,6 @@ pub(super) fn client_with_spaces_filter(
         auth: UpstreamAuth::Pat {
             personal_token: "test-pat-value".to_string(),
         },
-        oauth_cloud_id: None,
         ssl_verify: true,
         proxy: ProxyConfig::default(),
         custom_headers: CustomHeaders::default(),

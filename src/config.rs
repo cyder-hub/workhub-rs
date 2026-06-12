@@ -1,12 +1,11 @@
-use std::{collections::BTreeSet, net::IpAddr};
+use std::collections::BTreeSet;
 
 use crate::tool_registry::{
     DEFAULT_TOOL_PROFILE, all_toolsets, default_toolsets, toolsets_for_profile,
 };
-use crate::upstream::security::BLOCKED_HOSTNAMES;
 use crate::{
-    atlassian::compat::ENV_ATLASSIAN_OAUTH_ENABLE, confluence::config::ConfluenceConfig,
-    error::ConfigError, gitlab::config::GitlabConfig, jira::config::JiraConfig,
+    confluence::config::ConfluenceConfig, error::ConfigError, gitlab::config::GitlabConfig,
+    jira::config::JiraConfig,
 };
 
 pub const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
@@ -17,12 +16,9 @@ pub const ENV_TOOL_PROFILE: &str = "TOOL_PROFILE";
 pub const ENV_ENABLED_TOOLS: &str = "ENABLED_TOOLS";
 pub const ENV_DISABLED_TOOLS: &str = "DISABLED_TOOLS";
 pub const ENV_TOOLSETS: &str = "TOOLSETS";
-pub const ENV_ATLASSIAN_OAUTH_CLOUD_ID: &str = "ATLASSIAN_OAUTH_CLOUD_ID";
 pub const ENV_HTTP_HOST: &str = "MCP_HTTP_HOST";
 pub const ENV_HTTP_PORT: &str = "MCP_HTTP_PORT";
 pub const ENV_HTTP_PATH: &str = "MCP_HTTP_PATH";
-pub use crate::atlassian::request_auth::ENV_IGNORE_HEADER_AUTH;
-pub use crate::upstream::security::ENV_ALLOWED_URL_DOMAINS;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -32,10 +28,6 @@ pub struct RuntimeConfig {
     pub jira: Option<JiraConfig>,
     pub confluence: Option<ConfluenceConfig>,
     pub gitlab: Option<GitlabConfig>,
-    pub atlassian_oauth_cloud_id: Option<String>,
-    pub atlassian_oauth_enabled: bool,
-    pub allowed_url_domains: Option<Vec<String>>,
-    pub ignore_header_auth: bool,
     pub http: HttpConfig,
 }
 
@@ -68,13 +60,6 @@ impl RuntimeConfig {
         let jira = JiraConfig::from_var_provider(&mut get_var)?;
         let confluence = ConfluenceConfig::from_var_provider(&mut get_var)?;
         let gitlab = GitlabConfig::from_var_provider(&mut get_var)?;
-        let atlassian_oauth_cloud_id =
-            parse_optional_string(get_var(ENV_ATLASSIAN_OAUTH_CLOUD_ID).ok());
-        let atlassian_oauth_enabled =
-            parse_extended_truthy(get_var(ENV_ATLASSIAN_OAUTH_ENABLE).ok().as_deref());
-        let allowed_url_domains = parse_allowed_url_domains(get_var(ENV_ALLOWED_URL_DOMAINS).ok())?;
-        let ignore_header_auth =
-            parse_extended_truthy(get_var(ENV_IGNORE_HEADER_AUTH).ok().as_deref());
         let http = match http_source {
             HttpConfigSource::Default => HttpConfig::default(),
             HttpConfigSource::Env(overrides) => {
@@ -89,10 +74,6 @@ impl RuntimeConfig {
             jira,
             confluence,
             gitlab,
-            atlassian_oauth_cloud_id,
-            atlassian_oauth_enabled,
-            allowed_url_domains,
-            ignore_header_auth,
             http,
         })
     }
@@ -113,10 +94,6 @@ impl Default for RuntimeConfig {
             jira: None,
             confluence: None,
             gitlab: None,
-            atlassian_oauth_cloud_id: None,
-            atlassian_oauth_enabled: false,
-            allowed_url_domains: None,
-            ignore_header_auth: false,
             http: HttpConfig::default(),
         }
     }
@@ -255,10 +232,6 @@ fn parse_csv_tokens(value: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-fn parse_optional_string(value: Option<String>) -> Option<String> {
-    value.and_then(non_empty_trimmed)
-}
-
 fn non_empty_trimmed(value: String) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -277,62 +250,6 @@ fn parse_optional_http_port(value: Option<String>) -> Result<u16, ConfigError> {
         variable: ENV_HTTP_PORT,
         value,
     })
-}
-
-fn parse_allowed_url_domains(value: Option<String>) -> Result<Option<Vec<String>>, ConfigError> {
-    let Some(value) = value.and_then(non_empty_trimmed) else {
-        return Ok(None);
-    };
-
-    let mut domains = parse_csv_tokens(Some(&value));
-    if domains.is_empty() {
-        return Ok(None);
-    }
-
-    let mut normalized = BTreeSet::new();
-    for domain in domains.drain(..) {
-        let domain = normalize_allowed_domain_token(&domain)?;
-        normalized.insert(domain);
-    }
-
-    if normalized.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(normalized.into_iter().collect()))
-    }
-}
-
-fn normalize_allowed_domain_token(value: &str) -> Result<String, ConfigError> {
-    let normalized = value
-        .trim()
-        .trim_start_matches('.')
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-
-    if normalized.is_empty()
-        || normalized.contains("://")
-        || normalized.contains('/')
-        || normalized.contains(':')
-        || normalized.parse::<IpAddr>().is_ok()
-        || BLOCKED_HOSTNAMES.contains(&normalized.as_str())
-        || !normalized.split('.').all(is_valid_domain_label)
-    {
-        return Err(ConfigError::InvalidAllowedUrlDomain {
-            variable: ENV_ALLOWED_URL_DOMAINS,
-            value: value.to_string(),
-        });
-    }
-
-    Ok(normalized)
-}
-
-fn is_valid_domain_label(label: &str) -> bool {
-    !label.is_empty()
-        && !label.starts_with('-')
-        && !label.ends_with('-')
-        && label
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '-')
 }
 
 fn normalize_http_path(value: Option<String>) -> String {
@@ -398,10 +315,6 @@ mod tests {
         assert_eq!(config.enabled_toolsets, default_toolsets());
         assert_eq!(config.jira, None);
         assert_eq!(config.confluence, None);
-        assert_eq!(config.atlassian_oauth_cloud_id, None);
-        assert!(!config.atlassian_oauth_enabled);
-        assert_eq!(config.allowed_url_domains, None);
-        assert!(!config.ignore_header_auth);
         assert_eq!(config.http, HttpConfig::default());
     }
 
@@ -510,7 +423,6 @@ mod tests {
             (ENV_JIRA_URL, " https://jira.example "),
             (ENV_JIRA_PERSONAL_TOKEN, "test-pat-value"),
             (ENV_CONFLUENCE_URL, " "),
-            (ENV_ATLASSIAN_OAUTH_CLOUD_ID, " cloud-123 "),
         ])
         .unwrap();
         let jira = config.jira.unwrap();
@@ -524,11 +436,6 @@ mod tests {
             }
         );
         assert_eq!(config.confluence, None);
-        assert_eq!(
-            config.atlassian_oauth_cloud_id.as_deref(),
-            Some("cloud-123")
-        );
-        assert!(!config.atlassian_oauth_enabled);
     }
 
     #[test]
@@ -601,109 +508,6 @@ mod tests {
                 credential_variables: vec![ENV_CONFLUENCE_PERSONAL_TOKEN],
             }
         );
-    }
-
-    #[test]
-    fn atlassian_oauth_cloud_id_is_trimmed_and_optional() {
-        assert_eq!(
-            config_from_pairs(&[(ENV_ATLASSIAN_OAUTH_CLOUD_ID, " cloud-123 ")])
-                .unwrap()
-                .atlassian_oauth_cloud_id
-                .as_deref(),
-            Some("cloud-123")
-        );
-        assert_eq!(
-            config_from_pairs(&[(ENV_ATLASSIAN_OAUTH_CLOUD_ID, " ")])
-                .unwrap()
-                .atlassian_oauth_cloud_id,
-            None
-        );
-    }
-
-    #[test]
-    fn atlassian_oauth_enable_uses_extended_truthy_values() {
-        for value in ["true", "1", "yes", "y", "on", "TRUE", " On "] {
-            let config = config_from_pairs(&[(ENV_ATLASSIAN_OAUTH_ENABLE, value)]).unwrap();
-            assert!(
-                config.atlassian_oauth_enabled,
-                "value `{value}` should enable OAuth/BYOT request mode"
-            );
-        }
-
-        for value in ["false", "0", "no", "off", ""] {
-            let config = config_from_pairs(&[(ENV_ATLASSIAN_OAUTH_ENABLE, value)]).unwrap();
-            assert!(
-                !config.atlassian_oauth_enabled,
-                "value `{value}` should leave OAuth/BYOT request mode disabled"
-            );
-        }
-    }
-
-    #[test]
-    fn allowed_url_domains_are_trimmed_normalized_and_deduplicated() {
-        let config = config_from_pairs(&[(
-            ENV_ALLOWED_URL_DOMAINS,
-            " Example.Atlassian.Net, .atlassian.net. ,example.atlassian.net ",
-        )])
-        .unwrap();
-
-        assert_eq!(
-            config.allowed_url_domains,
-            Some(vec![
-                "atlassian.net".to_string(),
-                "example.atlassian.net".to_string()
-            ])
-        );
-    }
-
-    #[test]
-    fn allowed_url_domains_empty_values_are_unset() {
-        let config = config_from_pairs(&[(ENV_ALLOWED_URL_DOMAINS, " , ")]).unwrap();
-
-        assert_eq!(config.allowed_url_domains, None);
-    }
-
-    #[test]
-    fn allowed_url_domains_reject_unsafe_or_malformed_values() {
-        for value in [
-            "https://jira.example",
-            "127.0.0.1",
-            "localhost",
-            "metadata.google.internal",
-            "bad/domain",
-            "-bad.example",
-            "bad-.example",
-            "bad..example",
-        ] {
-            let error = config_from_pairs(&[(ENV_ALLOWED_URL_DOMAINS, value)]).unwrap_err();
-
-            assert_eq!(
-                error,
-                ConfigError::InvalidAllowedUrlDomain {
-                    variable: ENV_ALLOWED_URL_DOMAINS,
-                    value: value.to_string(),
-                }
-            );
-        }
-    }
-
-    #[test]
-    fn ignore_header_auth_uses_extended_truthy_values() {
-        for value in ["true", "1", "yes", "y", "on", "TRUE", " On "] {
-            let config = config_from_pairs(&[(ENV_IGNORE_HEADER_AUTH, value)]).unwrap();
-            assert!(
-                config.ignore_header_auth,
-                "value `{value}` should be truthy"
-            );
-        }
-
-        for value in ["false", "0", "no", "off", ""] {
-            let config = config_from_pairs(&[(ENV_IGNORE_HEADER_AUTH, value)]).unwrap();
-            assert!(
-                !config.ignore_header_auth,
-                "value `{value}` should be false"
-            );
-        }
     }
 
     #[test]

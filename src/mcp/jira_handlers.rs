@@ -11,16 +11,16 @@ use crate::{
             JiraCreateRemoteIssueLinkArgs, JiraCreateSprintArgs, JiraDeleteIssueArgs,
             JiraDeleteIssueLinkArgs, JiraEditCommentArgs, JiraGetFieldOptionsArgs,
             JiraGetIssueArgs, JiraGetIssueAttachmentsArgs, JiraGetIssueChangelogsArgs,
-            JiraGetIssueDevelopmentArgs, JiraGetIssueFormArgs, JiraGetIssueImagesArgs,
-            JiraGetIssueSlaMetricsArgs, JiraGetIssueTimelineArgs, JiraGetIssuesDevelopmentArgs,
-            JiraGetProjectIssuesArgs, JiraGetServiceDeskForProjectArgs, JiraGetTransitionsArgs,
-            JiraGetUserArgs, JiraListAgileBoardsArgs, JiraListBoardIssuesArgs,
-            JiraListBoardSprintsArgs, JiraListIssueFormsArgs, JiraListIssueLinkTypesArgs,
-            JiraListIssueWatchersArgs, JiraListIssueWorklogsArgs, JiraListProjectComponentsArgs,
-            JiraListProjectVersionsArgs, JiraListProjectsArgs, JiraListServiceDeskQueueIssuesArgs,
-            JiraListServiceDeskQueuesArgs, JiraListSprintIssuesArgs, JiraRemoveWatcherArgs,
-            JiraSearchArgs, JiraSearchFieldsArgs, JiraSetIssueParentArgs, JiraTransitionIssueArgs,
-            JiraUpdateIssueArgs, JiraUpdateIssueFormAnswersArgs, JiraUpdateSprintArgs,
+            JiraGetIssueDevelopmentArgs, JiraGetIssueImagesArgs, JiraGetIssueSlaMetricsArgs,
+            JiraGetIssueTimelineArgs, JiraGetIssuesDevelopmentArgs, JiraGetProjectIssuesArgs,
+            JiraGetServiceDeskForProjectArgs, JiraGetTransitionsArgs, JiraGetUserArgs,
+            JiraListAgileBoardsArgs, JiraListBoardIssuesArgs, JiraListBoardSprintsArgs,
+            JiraListIssueLinkTypesArgs, JiraListIssueWatchersArgs, JiraListIssueWorklogsArgs,
+            JiraListProjectComponentsArgs, JiraListProjectVersionsArgs, JiraListProjectsArgs,
+            JiraListServiceDeskQueueIssuesArgs, JiraListServiceDeskQueuesArgs,
+            JiraListSprintIssuesArgs, JiraRemoveWatcherArgs, JiraSearchArgs, JiraSearchFieldsArgs,
+            JiraSetIssueParentArgs, JiraTransitionIssueArgs, JiraUpdateIssueArgs,
+            JiraUpdateSprintArgs,
         },
     },
     mcp_errors::upstream_error,
@@ -762,61 +762,6 @@ impl WorkhubMcpServer {
                 args.queue_id,
                 args.start_at,
                 args.limit,
-            )
-            .await
-            .map_err(upstream_error)?;
-
-        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
-    }
-
-    #[tool(name = "jira_list_issue_forms")]
-    pub(super) async fn list_issue_forms(
-        &self,
-        Parameters(args): Parameters<JiraListIssueFormsArgs>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let value = self
-            .jira_client()?
-            .get_issue_forms(
-                required_non_empty_arg(args.issue_key, "issue_key")?,
-                self.context.atlassian_oauth_cloud_id(),
-            )
-            .await
-            .map_err(upstream_error)?;
-
-        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
-    }
-
-    #[tool(name = "jira_get_issue_form")]
-    pub(super) async fn get_issue_form(
-        &self,
-        Parameters(args): Parameters<JiraGetIssueFormArgs>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let value = self
-            .jira_client()?
-            .get_issue_form(
-                required_non_empty_arg(args.issue_key, "issue_key")?,
-                required_non_empty_arg(args.form_id, "form_id")?,
-                self.context.atlassian_oauth_cloud_id(),
-            )
-            .await
-            .map_err(upstream_error)?;
-
-        Ok(CallToolResult::structured(crate::mcp::wrap_array(value)))
-    }
-
-    #[tool(name = "jira_update_issue_form_answers")]
-    pub(super) async fn update_issue_form_answers(
-        &self,
-        Parameters(args): Parameters<JiraUpdateIssueFormAnswersArgs>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let answers = parse_required_object_list_arg(args.answers, "answers")?;
-        let value = self
-            .jira_client()?
-            .update_issue_form_answers(
-                required_non_empty_arg(args.issue_key, "issue_key")?,
-                required_non_empty_arg(args.form_id, "form_id")?,
-                answers,
-                self.context.atlassian_oauth_cloud_id(),
             )
             .await
             .map_err(upstream_error)?;
