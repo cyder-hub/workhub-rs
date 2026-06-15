@@ -1,6 +1,6 @@
 ---
 name: workhub-rs
-description: User-facing business command guide for the installed workhub CLI. Use when a user wants to operate Jira, Confluence, or GitLab with `workhub cli ...`: choose the right business command, form arguments/body/file/stdin/JSON inputs, and explain default text or JSON returns. Do not use for installation, builds, server/MCP runtime, deployment, environment setup, credential configuration, or `workhub cli config` guidance.
+description: "User-facing business command guide for the installed workhub CLI. Use when a user wants to operate Jira, Confluence, or GitLab with `workhub cli ...`: choose the right business command, form arguments/body/file/stdin/JSON inputs, and explain default text or JSON returns. Do not use for installation, builds, server/MCP runtime, deployment, environment setup, credential configuration, or `workhub cli config` guidance."
 ---
 
 # Workhub Business CLI Guide
