@@ -151,7 +151,8 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 | Streamable HTTP binding | `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_PATH`, `streamhttp --host/--port/--path` | Supported | Parsed only for streamable HTTP startup. Default MCP path is `/mcp`; missing leading slash is normalized. |
 | Resource CLI | `workhub cli ...` | Supported | Covers all 85 business capabilities as resource-oriented commands for configured services. It ignores `MCP_TOOL_PROFILE`, `MCP_TOOLSETS`, `MCP_ENABLED_TOOLS`, and `MCP_DISABLED_TOOLS`; no raw MCP tool-call, schema, or tools-list fallback is exposed. |
 | CLI JSON output | `workhub cli --json ...` and `--pretty` | Supported | Successful JSON goes to stdout; errors go to stderr. `--pretty` requires `--json`. |
-| CLI env file loading | `workhub cli --env-file <path>`, `ENV_FILE`, `.env` | Supported | Same dotenv priority as `streamhttp`; `stdio` intentionally does not load dotenv files. |
+| CLI env file loading | `workhub cli --env-file <path>`, `ENV_FILE`, global `.env`, `./.env` | Supported | CLI priority is explicit env file, `ENV_FILE`, global CLI `.env`, strict current-directory `./.env`; `stdio` intentionally does not load dotenv files. |
+| CLI global config management | `workhub cli config path/show/setup/set/unset` | Supported | Operates on the global CLI `.env` before normal runtime config is loaded. `setup` is a lightweight authorization wizard; advanced settings can be changed with `set`. Secret values are redacted by `show`. |
 | Health endpoint | `GET /healthz` | Supported | Available for streamable HTTP deployments and compose healthchecks. |
 | GitLab project allowlist | `GITLAB_PROJECTS_FILTER` | Supported | Optional exact allowlist of numeric project IDs or full paths. Project-scoped GitLab tools reject unlisted projects before sending HTTP. |
 

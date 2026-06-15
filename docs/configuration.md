@@ -101,7 +101,7 @@ Profiles are ordered from least to most capable:
 | `MCP_HTTP_HOST` | `127.0.0.1` | Streamable HTTP host when not overridden by CLI. |
 | `MCP_HTTP_PORT` | `8000` | Streamable HTTP port when not overridden by CLI. |
 | `MCP_HTTP_PATH` | `/mcp` | Streamable HTTP MCP path when not overridden by CLI. A missing leading slash is normalized. |
-| `ENV_FILE` | unset | Optional dotenv file loaded by `streamhttp` and `cli` startup. The explicit `--env-file <path>` argument takes precedence. |
+| `ENV_FILE` | unset | Optional dotenv file loaded by `streamhttp` and `cli` startup. The explicit `--env-file <path>` argument takes precedence. For `cli`, the global CLI `.env` and strict current-directory `./.env` are lower-priority fallbacks. |
 
 Docker Compose also supports `MCP_PORT` for host-to-container port mapping. `MCP_PORT` is a compose wrapper variable, not a Rust runtime variable.
 
@@ -111,6 +111,7 @@ The production resource CLI is available through:
 
 ```bash
 workhub cli [--env-file <path>] [--json] [--pretty] <provider> ...
+workhub cli config <path|show|setup|set|unset> ...
 ```
 
 Startup dotenv behavior is intentionally mode-specific:
@@ -118,10 +119,12 @@ Startup dotenv behavior is intentionally mode-specific:
 | Mode | Dotenv behavior |
 | --- | --- |
 | `stdio` | Does not load `.env`, `ENV_FILE`, or `--env-file`; stdout remains protocol-only. |
-| `streamhttp` | Loads explicit `--env-file`, then `ENV_FILE`, then current directory `.env`; missing default `.env` is ignored. |
-| `cli` | Uses the same dotenv priority as `streamhttp`. |
+| `streamhttp` | Loads explicit `--env-file`, then `ENV_FILE`, then current directory or parent `.env`; missing default `.env` is ignored. |
+| `cli` | Loads explicit `--env-file`, then `ENV_FILE`, then global CLI `.env`, then strict current directory `./.env`. |
 
 The CLI has no provider URL, token, password, proxy, custom-header, TLS, or mTLS override flags. Use environment variables, `ENV_FILE`, or `--env-file` so credentials do not enter shell history or process arguments.
+
+The global CLI `.env` path is `${XDG_CONFIG_HOME:-$HOME/.config}/workhub/.env` on Linux/Unix, `$HOME/Library/Application Support/workhub/.env` on macOS, and `%APPDATA%\workhub\.env` on Windows. Use `workhub cli config path` to print the exact path, `workhub cli config setup` to run a lightweight authorization wizard, `workhub cli config set <KEY> <VALUE>` for scripted updates or advanced settings, and `workhub cli config show` to view redacted values. The `config` commands operate before normal runtime config is loaded. The default setup wizard covers Jira, Confluence, and GitLab; shared `ATLASSIAN_*` credentials are configured only with `workhub cli config setup atlassian`.
 
 ## Atlassian Auth
 

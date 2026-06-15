@@ -10,6 +10,7 @@ Run commands as:
 
 ```bash
 workhub cli [--env-file <path>] [--json] [--pretty] <provider> <resource> <action> ...
+workhub cli config <path|show|setup|set|unset> ...
 ```
 
 Global flags:
@@ -23,10 +24,34 @@ Global flags:
 Environment loading:
 
 - `stdio` does not load `.env`, `ENV_FILE`, or `--env-file`.
-- `streamhttp` and `cli` load environment in this order: explicit `--env-file`, `ENV_FILE`, current directory `.env`.
-- Missing default `.env` is ignored. An explicit env file that cannot be read is a configuration error.
+- `streamhttp` loads environment in this order: explicit `--env-file`, `ENV_FILE`, current directory or parent `.env`.
+- `cli` loads environment in this order: explicit `--env-file`, `ENV_FILE`, global CLI `.env`, current directory `./.env`.
+- Missing default `.env` files are ignored. Explicit env files and existing global/current-directory files that cannot be read are configuration errors.
 
 Credentials and service endpoint URLs are configured only through environment variables or env files. The CLI intentionally has no provider endpoint, token, password, proxy, custom-header, TLS, or mTLS override flags.
+
+Global CLI config paths:
+
+| Platform | Path |
+| --- | --- |
+| Linux / Unix | `${XDG_CONFIG_HOME:-$HOME/.config}/workhub/.env` |
+| macOS | `$HOME/Library/Application Support/workhub/.env` |
+| Windows | `%APPDATA%\workhub\.env` |
+
+Manage the global CLI `.env` with:
+
+| Command | Behavior |
+| --- | --- |
+| `workhub cli config path` | Print the global CLI `.env` path and whether it exists. |
+| `workhub cli config show` | Show parsed global config values with token/password values redacted. |
+| `workhub cli config setup [jira|confluence|gitlab|all]` | Run a lightweight authorization wizard for Jira, Confluence, and/or GitLab. The default `all` scope asks whether to configure each service. |
+| `workhub cli config setup atlassian` | Configure shared `ATLASSIAN_*` credentials explicitly. The default `all` scope does not prompt for shared Atlassian credentials. |
+| `workhub cli config set <KEY> <VALUE>` | Create or update one dotenv variable in the global CLI `.env`. |
+| `workhub cli config unset <KEY>` | Remove a variable from the global CLI `.env`. |
+
+The `config` commands operate on the global CLI `.env` directly and run before normal runtime configuration is loaded, so they can be used to repair invalid CLI config.
+
+The setup wizard reads existing global `.env` values first. If a service already has config, it prints a redacted summary and asks whether to modify that service. Jira and Confluence choose Cloud username/API-token auth for `*.atlassian.net` URLs and Server/Data Center personal-token auth for other URLs. GitLab prompts for one primary token. Existing secret values are kept when the prompt is left blank. Optional values such as `*_SSL_VERIFY`, `*_TIMEOUT`, and project/space filters are prompted only when they already exist; add new advanced values with `config set`.
 
 Output and exits:
 

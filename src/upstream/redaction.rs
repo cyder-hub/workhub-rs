@@ -29,7 +29,7 @@ pub const SENSITIVE_QUERY_KEYS: &[&str] = &[
     "signature",
 ];
 
-pub const SECRET_ENV_SUFFIXES: &[&str] = &["_TOKEN", "_SECRET", "_PASSWORD"];
+pub const SECRET_ENV_SUFFIXES: &[&str] = &["_TOKEN", "_SECRET", "_PASSWORD", "_CUSTOM_HEADERS"];
 
 pub fn redact_text(text: &str) -> String {
     redact_text_with_secrets(text, current_env_secret_values())
@@ -327,6 +327,7 @@ mod tests {
         assert!(SENSITIVE_QUERY_KEYS.contains(&"access_token"));
         assert!(SENSITIVE_QUERY_KEYS.contains(&"client_secret"));
         assert!(SECRET_ENV_SUFFIXES.contains(&"_TOKEN"));
+        assert!(SECRET_ENV_SUFFIXES.contains(&"_CUSTOM_HEADERS"));
         assert_eq!(REDACTED, "<redacted>");
     }
 
@@ -335,12 +336,15 @@ mod tests {
         let secrets = env_secret_values_from_pairs([
             ("JIRA_API_TOKEN", "jira-secret-token"),
             ("CONFLUENCE_PERSONAL_TOKEN", "conf-secret-token"),
+            ("JIRA_CUSTOM_HEADERS", "X-Team=custom-secret"),
             ("UNRELATED", "visible-value"),
         ]);
-        let output =
-            redact_text_with_secrets("jira-secret-token conf-secret-token visible-value", secrets);
+        let output = redact_text_with_secrets(
+            "jira-secret-token conf-secret-token X-Team=custom-secret visible-value",
+            secrets,
+        );
 
-        assert_eq!(output, "<redacted> <redacted> visible-value");
+        assert_eq!(output, "<redacted> <redacted> <redacted> visible-value");
     }
 
     #[test]

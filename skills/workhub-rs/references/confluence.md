@@ -1,38 +1,10 @@
 # Confluence Commands
 
-This module covers `workhub cli confluence ...` commands.
+Use these commands for Confluence content search, page lifecycle work, comments, labels, users, versions, analytics, and attachments.
 
-## Example Input Files
+## Input Payloads
 
-Markdown page file `/tmp/workhub-page.md`:
-
-```markdown
-# Roadmap
-
-Status: draft
-
-- Milestone A
-- Milestone B
-```
-
-Storage-format page file `/tmp/workhub-page.storage`:
-
-```html
-<p>Status: draft</p><ul><li>Milestone A</li><li>Milestone B</li></ul>
-```
-
-Comment file `/tmp/workhub-comment.md`:
-
-```markdown
-Please review the updated roadmap section.
-```
-
-Attachment path examples:
-
-```text
-/tmp/workhub-report.pdf
-/tmp/workhub-screenshot.png
-```
+Page and comment bodies can come from inline text, a file, or stdin. Page content supports `markdown`, `wiki`, or `storage` format. Attachment upload commands read file paths from the machine or container running the CLI.
 
 ## Content, Labels, And Users
 
@@ -57,8 +29,8 @@ Content input uses one source at a time: `--content`, `--content-file`, or `--co
 
 | Command | Use | Example | Returns |
 | --- | --- | --- | --- |
-| `cli confluence page create --space <key> --title <title> (--content <text> \| --content-file <path> \| --content-stdin) [--parent-id <id>] [--format <markdown\|wiki\|storage>] [--include-content] [--emoji <emoji>]` | Create a page. | `workhub cli confluence page create --space ENG --title 'Roadmap' --content-file /tmp/workhub-page.md --format markdown --parent-id 123456 --include-content` | Created page summary by default, usually including id, title, and URL. With `--include-content`, content fields are included. `--json` returns the page object. |
-| `cli confluence page update <page-id> --title <title> (--content <text> \| --content-file <path> \| --content-stdin) [--minor-edit <bool>] [--version-comment <text>] [--parent-id <id>] [--format <markdown\|wiki\|storage>] [--include-content] [--emoji <emoji>]` | Update a page title and content. | `workhub cli confluence page update 123456 --title 'Roadmap' --content-file /tmp/workhub-page.md --format markdown --minor-edit true --version-comment 'Refresh roadmap'` | Updated page summary by default. With `--include-content`, content fields are included. `--json` returns the page object. |
+| `cli confluence page create --space <key> --title <title> (--content <text> \| --content-file <path> \| --content-stdin) [--parent-id <id>] [--format <markdown\|wiki\|storage>] [--include-content] [--emoji <emoji>]` | Create a page. | `workhub cli confluence page create --space ENG --title 'Roadmap' --content-file ./page.md --format markdown --parent-id 123456 --include-content` | Created page summary by default, usually including id, title, and URL. With `--include-content`, content fields are included. `--json` returns the page object. |
+| `cli confluence page update <page-id> --title <title> (--content <text> \| --content-file <path> \| --content-stdin) [--minor-edit <bool>] [--version-comment <text>] [--parent-id <id>] [--format <markdown\|wiki\|storage>] [--include-content] [--emoji <emoji>]` | Update a page title and content. | `workhub cli confluence page update 123456 --title 'Roadmap' --content-file ./page.md --format markdown --minor-edit true --version-comment 'Refresh roadmap'` | Updated page summary by default. With `--include-content`, content fields are included. `--json` returns the page object. |
 | `cli confluence page delete <page-id>` | Delete a page. | `workhub cli confluence page delete 123456` | Delete operation summary by default; operation result with `--json`. |
 | `cli confluence page move <page-id> [--target-parent-id <id>] [--target-space <key>] [--position <append\|before\|after>]` | Move a page to a target parent or space. | `workhub cli confluence page move 123456 --target-parent-id 789012 --position append` | Move operation summary by default; operation result or moved page data with `--json`. |
 
@@ -69,7 +41,7 @@ Comment body input uses one source at a time: `--body`, `--body-file`, or `--bod
 | Command | Use | Example | Returns |
 | --- | --- | --- | --- |
 | `cli confluence page comment list <page-id>` | List page comments. | `workhub cli confluence page comment list 123456` | Comment table by default; comment list with `--json`. |
-| `cli confluence page comment add <page-id> (--body <text> \| --body-file <path> \| --body-stdin)` | Add a page comment. | `workhub cli confluence page comment add 123456 --body-file /tmp/workhub-comment.md` | New comment summary by default; comment object with `--json`. |
+| `cli confluence page comment add <page-id> (--body <text> \| --body-file <path> \| --body-stdin)` | Add a page comment. | `workhub cli confluence page comment add 123456 --body-file ./comment.md` | New comment summary by default; comment object with `--json`. |
 | `cli confluence page comment reply <page-id> <comment-id> (--body <text> \| --body-file <path> \| --body-stdin)` | Reply to an existing comment. | `workhub cli confluence page comment reply 123456 98765 --body 'Thanks, updated.'` | Reply summary by default; comment object with `--json`. |
 
 ## Page Versions And Analytics
@@ -86,8 +58,8 @@ Upload paths are resolved on the machine or container running the CLI. Download 
 
 | Command | Use | Example | Returns |
 | --- | --- | --- | --- |
-| `cli confluence attachment upload <content-id> <file-path> [--comment <text>] [--minor-edit <bool>]` | Upload one attachment. | `workhub cli confluence attachment upload 123456 /tmp/workhub-report.pdf --comment 'Report' --minor-edit true` | Uploaded attachment summary by default; attachment object with `--json`. |
-| `cli confluence attachment upload-batch <content-id> --files <csv> [--comment <text>] [--minor-edit <bool>]` | Upload multiple attachments. | `workhub cli confluence attachment upload-batch 123456 --files /tmp/a.png,/tmp/b.png --comment 'Screenshots' --minor-edit true` | Per-file upload results by default; batch upload result with `--json`. |
+| `cli confluence attachment upload <content-id> <file-path> [--comment <text>] [--minor-edit <bool>]` | Upload one attachment. | `workhub cli confluence attachment upload 123456 ./report.pdf --comment 'Report' --minor-edit true` | Uploaded attachment summary by default; attachment object with `--json`. |
+| `cli confluence attachment upload-batch <content-id> --files <csv> [--comment <text>] [--minor-edit <bool>]` | Upload multiple attachments. | `workhub cli confluence attachment upload-batch 123456 --files ./a.png,./b.png --comment 'Screenshots' --minor-edit true` | Per-file upload results by default; batch upload result with `--json`. |
 | `cli confluence attachment list <content-id> [--filename-contains <text>] [--media-type <type>] [--start <n>] [--limit <n>]` | List content attachments with optional filters. | `workhub cli confluence attachment list 123456 --filename-contains report --media-type application/pdf --limit 20` | Attachment table by default; attachment list and paging fields with `--json`. |
 | `cli confluence attachment download <attachment-id> [--max-bytes <n>]` | Download one attachment into command output. | `workhub cli confluence attachment download att123 --max-bytes 1048576` | Attachment metadata and bounded content fields by default; download object with `--json`. |
 | `cli confluence attachment download-content <content-id> [--filename-contains <text>] [--media-type <type>] [--max-bytes <n>] [--limit <n>]` | Download matching attachments for content into command output. | `workhub cli confluence attachment download-content 123456 --media-type image/png --max-bytes 1048576 --limit 5` | Matching attachments and content fields by default; batch download object with `--json`. |

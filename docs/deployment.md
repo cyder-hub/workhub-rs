@@ -112,7 +112,7 @@ MCP_TOOL_CALL_DEBUG=true docker compose up --build
 | `MCP_DISABLED_TOOLS` | Remove comma-separated exact tool names. Takes precedence over profile/toolset inclusion. |
 | `MCP_HTTP_HOST` / `MCP_HTTP_PORT` / `MCP_HTTP_PATH` | Configure streamable HTTP when CLI flags are not used. Ignored by stdio startup. |
 | `MCP_PORT` | Compose-only host port mapping. Does not configure the Rust process itself. |
-| `ENV_FILE` | Optional dotenv file loaded by `streamhttp` and `cli` startup. The explicit `--env-file <path>` argument takes precedence. Ignored by `stdio`. |
+| `ENV_FILE` | Optional dotenv file loaded by `streamhttp` and `cli` startup. The explicit `--env-file <path>` argument takes precedence. For `cli`, the global CLI `.env` and strict `./.env` are lower-priority fallbacks. Ignored by `stdio`. |
 | `MCP_TOOL_CALL_DEBUG` | Set `true` to enable MCP tool-call diagnostics when `RUST_LOG` is unset. Uses `workhub_rs::mcp=debug,workhub_rs=info,rmcp=info`. |
 | `RUST_LOG` | Advanced tracing filter. Takes precedence over `MCP_TOOL_CALL_DEBUG`. |
 

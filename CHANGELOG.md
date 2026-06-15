@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.4.1 - 2026-06-15
+
+### Added
+- Added global CLI config management commands for path discovery, redacted display, guided setup, and scripted set/unset updates.
+
+### Changed
+- Refocused the bundled Workhub skill guide on Jira, Confluence, and GitLab business command usage, input forms, and return behavior.
+
+### Fixed
+- Redacted custom header values in CLI config display.
+- Rejected setup URLs that the runtime would later reject, including non-HTTP(S), hostless, and malformed GitLab, Jira, and Confluence URLs.
+
 ## 0.4.0 - 2026-06-12
 
 ### Added
