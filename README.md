@@ -74,10 +74,13 @@ The streamable HTTP MCP endpoint is `http://127.0.0.1:8000/mcp`; the health endp
 Run a CLI command with the same environment configuration:
 
 ```bash
+workhub cli config setup jira
 cargo run -- cli jira issue get ABC-1 --fields summary,status
 cargo run -- cli --json confluence page get --id 123456
 cargo run -- cli gitlab mr list group/project --state opened
 ```
+
+For globally installed binaries, `workhub cli ...` reads `${XDG_CONFIG_HOME:-$HOME/.config}/workhub/.env` on Linux/Unix, `$HOME/Library/Application Support/workhub/.env` on macOS, or `%APPDATA%\workhub\.env` on Windows before falling back to strict `./.env`. Use `workhub cli config path`, `show`, `setup`, `set`, and `unset` to manage the global CLI config.
 
 See [docs/cli.md](docs/cli.md) for the full command reference and output contract.
 

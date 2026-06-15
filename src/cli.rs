@@ -12,6 +12,7 @@ use crate::{
     },
 };
 
+pub mod config_command;
 pub mod confluence;
 #[cfg(test)]
 pub mod contract;
@@ -32,6 +33,8 @@ pub struct CliArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum ProviderCommand {
+    #[command(name = "config")]
+    Config(config_command::ConfigArgs),
     Jira(jira::JiraArgs),
     Confluence(confluence::ConfluenceArgs),
     Gitlab(gitlab::GitlabArgs),
@@ -49,6 +52,12 @@ impl CliRunError {
     }
 }
 
+impl CliArgs {
+    pub fn is_config_command(&self) -> bool {
+        matches!(self.command, ProviderCommand::Config(_))
+    }
+}
+
 impl Display for CliRunError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "{}", self.message)
@@ -60,11 +69,39 @@ impl std::error::Error for CliRunError {}
 pub async fn run(args: CliArgs, context: Arc<AppContext>) -> Result<(), CliRunError> {
     let options = output_options(&args);
     let result = match args.command {
+        ProviderCommand::Config(_) => {
+            return Err(render_operation_error(
+                &OperationError::invalid_input("config commands do not use runtime context"),
+                options,
+            ));
+        }
         ProviderCommand::Jira(args) => jira::execute(args, &context).await,
         ProviderCommand::Confluence(args) => confluence::execute(args, &context).await,
         ProviderCommand::Gitlab(args) => gitlab::execute(args, &context).await,
     };
 
+    render_cli_result(result, options)
+}
+
+pub fn run_config(args: CliArgs) -> Result<(), CliRunError> {
+    let options = output_options(&args);
+    let result = match args.command {
+        ProviderCommand::Config(args) => config_command::execute(args),
+        ProviderCommand::Jira(_) | ProviderCommand::Confluence(_) | ProviderCommand::Gitlab(_) => {
+            return Err(render_operation_error(
+                &OperationError::invalid_input("expected a config command"),
+                options,
+            ));
+        }
+    };
+
+    render_cli_result(result, options)
+}
+
+fn render_cli_result(
+    result: Result<OperationResult, OperationError>,
+    options: CliOutputOptions,
+) -> Result<(), CliRunError> {
     match result {
         Ok(result) if result.is_error => Err(render_business_error(result, options)),
         Ok(result) => {
@@ -156,6 +193,13 @@ mod tests {
         let error = parse_cli_args(["jira", "issue", "--help"]).unwrap_err();
 
         assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+    }
+
+    #[test]
+    fn cli_parse_accepts_config_subcommands() {
+        let args = parse_cli_args(["config", "path"]).unwrap();
+
+        assert!(args.is_config_command());
     }
 
     #[test]

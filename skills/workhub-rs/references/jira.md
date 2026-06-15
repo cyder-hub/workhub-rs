@@ -1,103 +1,12 @@
 # Jira Commands
 
-This module covers `workhub cli jira ...` commands.
+Use these commands for Jira issue tracking, Agile, project metadata, service desk, and related-data workflows.
 
 When `jira issue search` omits `--fields`, the default fields are `key,summary,status,assignee,reporter,issuetype,priority,project`.
 
-## Example Input Files
+## Input Payloads
 
-Description file `/tmp/workhub-jira-description.md`:
-
-```markdown
-Implement the CLI example.
-
-- Add validation
-- Update the user guide
-```
-
-Field update file `/tmp/workhub-jira-fields.json`:
-
-```json
-{
-  "summary": "Updated summary",
-  "description": "Updated plain text description",
-  "assignee": "account-id-or-username"
-}
-```
-
-Additional fields file `/tmp/workhub-jira-additional-fields.json`:
-
-```json
-{
-  "customfield_10000": "Example value",
-  "duedate": "2026-07-01"
-}
-```
-
-Visibility file `/tmp/workhub-jira-visibility.json`:
-
-```json
-{
-  "type": "role",
-  "value": "Developers"
-}
-```
-
-Transition fields file `/tmp/workhub-jira-transition-fields.json`:
-
-```json
-{
-  "resolution": {
-    "name": "Done"
-  }
-}
-```
-
-Batch issue create file `/tmp/workhub-jira-issues.json`:
-
-```json
-[
-  {
-    "project_key": "ABC",
-    "issue_type": "Task",
-    "summary": "First task",
-    "description": "Create the first task",
-    "priority": "Medium",
-    "labels": ["cli", "example"]
-  },
-  {
-    "project_key": "ABC",
-    "issue_type": "Bug",
-    "summary": "Second issue",
-    "customfield_10000": "Extra value"
-  }
-]
-```
-
-Batch versions file `/tmp/workhub-jira-versions.json`:
-
-```json
-[
-  {
-    "name": "2026.07",
-    "description": "July release",
-    "releaseDate": "2026-07-31",
-    "released": false
-  }
-]
-```
-
-Remote-link status file `/tmp/workhub-jira-remote-status.json`:
-
-```json
-{
-  "resolved": false,
-  "icon": {
-    "url16x16": "https://example.invalid/icon.png",
-    "title": "External status"
-  }
-}
-```
+Use text input flags for descriptions, comments, and worklog comments: inline text, file, or stdin. Use JSON flags/files for field updates, transition fields, visibility, additional fields, batch issue creation, batch version creation, and remote-link status. Keep payloads focused on the Jira fields the user intends to change.
 
 ## Issue Reads
 
@@ -113,7 +22,7 @@ Comment body input uses one source at a time: `--body`, `--body-file`, or `--bod
 
 | Command | Use | Example | Returns |
 | --- | --- | --- | --- |
-| `cli jira issue comment add <issue-key> (--body <text> \| --body-file <path> \| --body-stdin) [--visibility-json <json> \| --visibility-file <path>]` | Add an issue comment. | `workhub cli jira issue comment add ABC-1 --body-file /tmp/comment.md --visibility-file /tmp/workhub-jira-visibility.json` | Created comment summary by default; comment object with `--json`. |
+| `cli jira issue comment add <issue-key> (--body <text> \| --body-file <path> \| --body-stdin) [--visibility-json <json> \| --visibility-file <path>]` | Add an issue comment. | `workhub cli jira issue comment add ABC-1 --body-file ./comment.md --visibility-file ./jira-visibility.json` | Created comment summary by default; comment object with `--json`. |
 | `cli jira issue comment update <issue-key> <comment-id> (--body <text> \| --body-file <path> \| --body-stdin) [--visibility-json <json> \| --visibility-file <path>]` | Update an existing issue comment. | `workhub cli jira issue comment update ABC-1 10010 --body 'Updated comment'` | Updated comment summary by default; comment object with `--json`. |
 
 ## Issue Transitions
@@ -121,15 +30,15 @@ Comment body input uses one source at a time: `--body`, `--body-file`, or `--bod
 | Command | Use | Example | Returns |
 | --- | --- | --- | --- |
 | `cli jira issue transition list <issue-key>` | List available transitions for an issue. | `workhub cli jira issue transition list ABC-1` | Transition table by default; transition list with `--json`. |
-| `cli jira issue transition apply <issue-key> <transition-id> [--fields-json <json> \| --fields-file <path>] [--comment <text> \| --comment-file <path> \| --comment-stdin]` | Apply a transition, optionally with fields and a comment. | `workhub cli jira issue transition apply ABC-1 31 --fields-file /tmp/workhub-jira-transition-fields.json --comment 'Moving to Done'` | Mutation summary by default; operation result with `--json`. |
+| `cli jira issue transition apply <issue-key> <transition-id> [--fields-json <json> \| --fields-file <path>] [--comment <text> \| --comment-file <path> \| --comment-stdin]` | Apply a transition, optionally with fields and a comment. | `workhub cli jira issue transition apply ABC-1 31 --fields-file ./jira-transition-fields.json --comment 'Moving to Done'` | Mutation summary by default; operation result with `--json`. |
 
 ## Issue Writes
 
 | Command | Use | Example | Returns |
 | --- | --- | --- | --- |
-| `cli jira issue create --project <key> --issue-type <name> --summary <text> [--description <text> \| --description-file <path> \| --description-stdin] [--assignee <id-or-name>] [--priority <name>] [--labels <csv>] [--components <csv>] [--fix-versions <csv>] [--additional-fields-json <json> \| --additional-fields-file <path>]` | Create one issue. | `workhub cli jira issue create --project ABC --issue-type Task --summary 'Add CLI example' --description-file /tmp/workhub-jira-description.md --priority Medium --labels cli,docs --additional-fields-file /tmp/workhub-jira-additional-fields.json` | Created issue summary by default, usually including key and id; create result with `--json`. |
-| `cli jira issue create-batch --issues-file <path> [--validate-only]` | Create issues from a JSON file. With `--validate-only`, validate without creating. | `workhub cli jira issue create-batch --issues-file /tmp/workhub-jira-issues.json --validate-only` | Per-issue create or validation results by default; batch result object with `--json`. |
-| `cli jira issue update <issue-key> (--fields-json <json> \| --fields-file <path>) [--notify-users <bool>]` | Update issue fields. | `workhub cli jira issue update ABC-1 --fields-file /tmp/workhub-jira-fields.json --notify-users false` | Mutation summary by default; update result with `--json`. |
+| `cli jira issue create --project <key> --issue-type <name> --summary <text> [--description <text> \| --description-file <path> \| --description-stdin] [--assignee <id-or-name>] [--priority <name>] [--labels <csv>] [--components <csv>] [--fix-versions <csv>] [--additional-fields-json <json> \| --additional-fields-file <path>]` | Create one issue. | `workhub cli jira issue create --project ABC --issue-type Task --summary 'Add CLI example' --description-file ./jira-description.md --priority Medium --labels cli,docs --additional-fields-file ./jira-additional-fields.json` | Created issue summary by default, usually including key and id; create result with `--json`. |
+| `cli jira issue create-batch --issues-file <path> [--validate-only]` | Create issues from a JSON file. With `--validate-only`, validate without creating. | `workhub cli jira issue create-batch --issues-file ./jira-issues.json --validate-only` | Per-issue create or validation results by default; batch result object with `--json`. |
+| `cli jira issue update <issue-key> (--fields-json <json> \| --fields-file <path>) [--notify-users <bool>]` | Update issue fields. | `workhub cli jira issue update ABC-1 --fields-file ./jira-fields.json --notify-users false` | Mutation summary by default; update result with `--json`. |
 | `cli jira issue delete <issue-key> [--delete-subtasks]` | Delete an issue, optionally including subtasks. | `workhub cli jira issue delete ABC-99 --delete-subtasks` | Delete summary by default; operation result with `--json`. |
 
 ## History, Watchers, And Worklogs
@@ -151,7 +60,7 @@ Comment body input uses one source at a time: `--body`, `--body-file`, or `--bod
 | `cli jira issue parent set <issue-key> <parent-key>` | Set an issue parent. | `workhub cli jira issue parent set ABC-2 ABC-1` | Operation summary by default; operation result with `--json`. |
 | `cli jira issue link create --type <name> --inward <issue-key> --outward <issue-key> [--comment <text> \| --comment-file <path> \| --comment-stdin]` | Create an issue link. | `workhub cli jira issue link create --type Blocks --inward ABC-1 --outward ABC-2 --comment 'Blocks release'` | Operation summary by default; link result with `--json`. |
 | `cli jira issue link delete <link-id>` | Delete an issue link. | `workhub cli jira issue link delete 10001` | Delete summary by default; operation result with `--json`. |
-| `cli jira issue remote-link create <issue-key> --url <url> --title <title> [--global-id <id>] [--relationship <text>] [--summary <text>] [--icon-url <url>] [--icon-title <title>] [--status-json <json> \| --status-file <path>]` | Add a remote link to an issue. | `workhub cli jira issue remote-link create ABC-1 --url https://example.invalid/external/42 --title 'External item 42' --relationship 'relates to' --status-file /tmp/workhub-jira-remote-status.json` | Remote-link summary by default; remote-link object with `--json`. |
+| `cli jira issue remote-link create <issue-key> --url <url> --title <title> [--global-id <id>] [--relationship <text>] [--summary <text>] [--icon-url <url>] [--icon-title <title>] [--status-json <json> \| --status-file <path>]` | Add a remote link to an issue. | `workhub cli jira issue remote-link create ABC-1 --url https://example.invalid/external/42 --title 'External item 42' --relationship 'relates to' --status-file ./jira-remote-status.json` | Remote-link summary by default; remote-link object with `--json`. |
 
 ## Attachments, Timeline, SLA, And Related Data
 
@@ -171,7 +80,7 @@ Comment body input uses one source at a time: `--body`, `--body-file`, or `--bod
 | `cli jira project list [--include-archived]` | List projects. | `workhub cli jira project list --include-archived` | Project table by default; project list with `--json`. |
 | `cli jira project version list <project-key>` | List project versions. | `workhub cli jira project version list ABC` | Version table by default; version list with `--json`. |
 | `cli jira project version create <project-key> --name <name> [--description <text>] [--start-date <date>] [--release-date <date>] [--released <bool>] [--archived <bool>]` | Create a project version. | `workhub cli jira project version create ABC --name 2026.07 --description 'July release' --release-date 2026-07-31 --released false` | Created version summary by default; version object with `--json`. |
-| `cli jira project version create-batch <project-key> --versions-file <path>` | Create project versions from a JSON file. | `workhub cli jira project version create-batch ABC --versions-file /tmp/workhub-jira-versions.json` | Per-version create results by default; batch result object with `--json`. |
+| `cli jira project version create-batch <project-key> --versions-file <path>` | Create project versions from a JSON file. | `workhub cli jira project version create-batch ABC --versions-file ./jira-versions.json` | Per-version create results by default; batch result object with `--json`. |
 | `cli jira project component list <project-key>` | List project components. | `workhub cli jira project component list ABC` | Component table by default; component list with `--json`. |
 
 ## Fields And Users

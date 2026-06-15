@@ -46,6 +46,7 @@ Usage:
   workhub [stdio]
   workhub streamhttp [--host <host>] [--port <port>] [--path <path>] [--env-file <path>]
   workhub cli [--env-file <path>] [--json] [--pretty] <provider> <resource> <action> ...
+  workhub cli config <path|show|setup|set|unset> ...
 
 Commands:
   stdio       Run the MCP server over standard input/output.
@@ -128,8 +129,24 @@ async fn main() -> AppResult<()> {
         return Ok(());
     }
 
+    if let RunMode::Cli(args) = &mode
+        && args.is_config_command()
+    {
+        let RunMode::Cli(args) = mode else {
+            unreachable!("checked CLI mode");
+        };
+        if let Err(error) = cli::run_config(*args) {
+            exit_cli_error(error);
+        }
+        return Ok(());
+    }
+
     if mode.loads_dotenv() {
-        match env_loader::load_dotenv(mode.explicit_env_file()) {
+        let loaded = match &mode {
+            RunMode::Cli(args) => env_loader::load_cli_dotenv(args.env_file.as_deref()),
+            _ => env_loader::load_dotenv(mode.explicit_env_file()),
+        };
+        match loaded {
             Ok(Some(path)) if mode.reports_dotenv_success() => {
                 eprintln!("Loaded environment variables from: {}", path.display())
             }
@@ -477,6 +494,15 @@ mod tests {
         assert!(!mode.reports_dotenv_success());
         assert_eq!(mode.explicit_env_file(), Some("workhub.env"));
         assert!(matches!(mode, RunMode::Cli(_)));
+    }
+
+    #[test]
+    fn parse_args_accepts_cli_config_mode() {
+        let mode = parse_args(["cli", "config", "path"]).unwrap();
+
+        assert!(mode.loads_dotenv());
+        assert!(!mode.reports_dotenv_success());
+        assert!(matches!(&mode, RunMode::Cli(args) if args.is_config_command()));
     }
 
     #[test]
