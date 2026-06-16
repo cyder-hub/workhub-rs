@@ -3,7 +3,14 @@ $ErrorActionPreference = "Stop"
 $Repo = "cyder-hub/workhub-rs"
 $RepoUrl = "https://github.com/$Repo"
 $ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
-$InstallDir = Join-Path $env:LOCALAPPDATA "Programs\workhub\bin"
+$LocalAppData = $env:LOCALAPPDATA
+if ([string]::IsNullOrWhiteSpace($LocalAppData)) {
+    $LocalAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+}
+if ([string]::IsNullOrWhiteSpace($LocalAppData)) {
+    throw "Unable to find the Windows LocalApplicationData directory"
+}
+$InstallDir = Join-Path $LocalAppData "Programs\workhub\bin"
 $InstallPath = Join-Path $InstallDir "workhub.exe"
 $Headers = @{ "User-Agent" = "workhub-installer" }
 
@@ -26,9 +33,17 @@ function Get-AssetName {
         Fail "this installer is for Windows; use install.sh on Linux or macOS"
     }
 
-    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    $arch = $env:PROCESSOR_ARCHITEW6432
+    if ([string]::IsNullOrWhiteSpace($arch)) {
+        $arch = $env:PROCESSOR_ARCHITECTURE
+    }
+    if ([string]::IsNullOrWhiteSpace($arch)) {
+        Fail "unable to detect Windows CPU architecture"
+    }
+
     switch ($arch) {
-        "X64" { return "workhub-windows-x86_64.exe" }
+        "AMD64" { return "workhub-windows-x86_64.exe" }
+        "x86_64" { return "workhub-windows-x86_64.exe" }
         default { Fail "unsupported Windows CPU architecture: $arch" }
     }
 }
@@ -97,8 +112,12 @@ function Test-Checksum {
         [string] $ChecksumPath
     )
 
-    $checksumLine = (Get-Content -LiteralPath $ChecksumPath -TotalCount 1).Trim()
-    $expected = ($checksumLine -split "\s+")[0].ToLowerInvariant()
+    $checksumLine = Get-Content -LiteralPath $ChecksumPath -TotalCount 1
+    if ([string]::IsNullOrWhiteSpace($checksumLine)) {
+        Fail "checksum file is empty"
+    }
+
+    $expected = (([string]$checksumLine).Trim() -split "\s+")[0].ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($expected)) {
         Fail "checksum file is empty"
     }
@@ -278,7 +297,10 @@ function Prompt-UninstallOrCancel {
 
 $AssetName = Get-AssetName
 $LatestTag = Get-LatestTag
-$LatestVersion = $LatestTag.TrimStart("v")
+if ([string]::IsNullOrWhiteSpace($LatestTag)) {
+    Fail "latest GitHub release tag is empty"
+}
+$LatestVersion = ([string]$LatestTag).TrimStart([char]"v")
 $InstalledVersion = Get-InstalledVersion
 $InstalledDisplay = if ($null -eq $InstalledVersion) { "not installed" } else { $InstalledVersion }
 
