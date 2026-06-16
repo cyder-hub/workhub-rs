@@ -44,6 +44,20 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --check
 
+      - name: Check installer scripts
+        shell: bash
+        run: |
+          bash -n scripts/install.sh
+          pwsh -NoProfile -Command '
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile("scripts/install.ps1", [ref]$tokens, [ref]$errors) > $null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_ }
+              exit 1
+            }
+          '
+
       - name: Check MCP server without warnings
         run: RUSTFLAGS="-Dwarnings" cargo check
 

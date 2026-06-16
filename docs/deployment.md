@@ -4,6 +4,7 @@ This guide describes the supported runtime shapes for `workhub-rs`.
 
 ## Deployment Checklist
 
+- For local stdio users, install or update the release binary with the interactive installer.
 - Choose one supported transport: `stdio` for local MCP clients or streamable HTTP for server deployments.
 - Use `workhub cli ...` for production command-line automation against the same Jira, Confluence, and GitLab operation layer.
 - Configure only the Jira, Confluence, and GitLab services you want exposed.
@@ -11,6 +12,22 @@ This guide describes the supported runtime shapes for `workhub-rs`.
 - Keep service credentials in a secret manager, shell environment, or orchestrator secret. Do not commit dotenv files with real credentials.
 - Check `GET /healthz` for streamable HTTP deployments.
 - Review `SECURITY.md` before exposing the HTTP endpoint beyond localhost.
+
+## Local Binary Installer
+
+Linux and macOS users can install, update, or uninstall the default local binary with:
+
+```bash
+curl -fsSL https://github.com/cyder-hub/workhub-rs/releases/latest/download/install.sh | sh
+```
+
+Windows PowerShell users can run:
+
+```powershell
+irm https://github.com/cyder-hub/workhub-rs/releases/latest/download/install.ps1 | iex
+```
+
+The installer is interactive. It detects the platform, checks the default install path, reads the latest GitHub Release version, and then prompts for the relevant action. It manages only the default binary path and does not remove Workhub configuration files.
 
 ## Stdio
 

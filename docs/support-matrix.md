@@ -215,7 +215,7 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 
 | Capability | Rust status | Notes |
 | --- | --- | --- |
-| Multi-platform release binary artifacts | Supported | Tag-driven workflow builds Linux, macOS, and Windows `workhub-*` binaries and checksums. |
+| Multi-platform release binary artifacts | Supported | Tag-driven workflow builds Linux, macOS, and Windows `workhub-*` binaries and checksums, plus interactive `install.sh` and `install.ps1` installers. |
 | Docker image build | Supported | Local and CI builds use `Dockerfile`; external image publishing is not part of the current Rust release. |
 | Docker Compose | Supported | `docker-compose.yml` includes streamable HTTP startup and `/healthz` healthcheck. |
 | Helm chart | Not supported in the current Rust release | Rust Helm packaging requires a dedicated future task and remains in `docs/backlog.md`. |
