@@ -6,17 +6,19 @@ Rust-native MCP server and resource-oriented CLI for work systems. It exposes Ji
 
 ## Quick Start
 
-Build the binary from the repository:
+Install or upgrade the latest release with the interactive installer.
 
 ```bash
-cargo build --release
+curl -fsSL https://github.com/cyder-hub/workhub-rs/releases/latest/download/install.sh | sh
 ```
 
-The binary will be available at:
+On Windows PowerShell:
 
-```text
-target/release/workhub
+```powershell
+irm https://github.com/cyder-hub/workhub-rs/releases/latest/download/install.ps1 | iex
 ```
+
+The installer detects the current platform, compares the installed version with the latest GitHub Release, then prompts to install, update, uninstall, or cancel. It manages only the default binary path: `$HOME/.local/bin/workhub` on Linux/macOS and `%LOCALAPPDATA%\Programs\workhub\bin\workhub.exe` on Windows. It does not remove Workhub configuration files.
 
 Configure only the services you want to expose through MCP. `MCP_TOOL_PROFILE` defaults to `basic`, so the smallest setup only needs service credentials.
 
@@ -60,13 +62,13 @@ export GITLAB_TOKEN="<personal-project-or-group-access-token>"
 Run stdio locally:
 
 ```bash
-cargo run -- stdio
+workhub stdio
 ```
 
 Run streamable HTTP locally:
 
 ```bash
-cargo run -- streamhttp --host 127.0.0.1 --port 8000 --path /mcp
+workhub streamhttp --host 127.0.0.1 --port 8000 --path /mcp
 ```
 
 The streamable HTTP MCP endpoint is `http://127.0.0.1:8000/mcp`; the health endpoint is `http://127.0.0.1:8000/healthz`.
@@ -75,9 +77,9 @@ Run a CLI command with the same environment configuration:
 
 ```bash
 workhub cli config setup jira
-cargo run -- cli jira issue get ABC-1 --fields summary,status
-cargo run -- cli --json confluence page get --id 123456
-cargo run -- cli gitlab mr list group/project --state opened
+workhub cli jira issue get ABC-1 --fields summary,status
+workhub cli --json confluence page get --id 123456
+workhub cli gitlab mr list group/project --state opened
 ```
 
 For globally installed binaries, `workhub cli ...` reads `${XDG_CONFIG_HOME:-$HOME/.config}/workhub/.env` on Linux/Unix, `$HOME/Library/Application Support/workhub/.env` on macOS, or `%APPDATA%\workhub\.env` on Windows before falling back to strict `./.env`. Use `workhub cli config path`, `show`, `setup`, `set`, and `unset` to manage the global CLI config.
@@ -216,7 +218,7 @@ The image runs as a non-root `app` user and starts streamable HTTP on container 
 
 Releases are tag-driven. A release tag must use the form `vX.Y.Z`, match `Cargo.toml` `package.version = "X.Y.Z"`, and have a matching `## X.Y.Z` entry in `CHANGELOG.md`.
 
-The release workflow builds Linux, macOS, and Windows binaries named `workhub-*` with matching `.sha256` checksum files. The current release process does not publish to crates.io, GHCR, Docker Hub, or any other external registry.
+The release workflow builds Linux, macOS, and Windows binaries named `workhub-*` with matching `.sha256` checksum files. It also attaches `install.sh` and `install.ps1` so users can install, update, or uninstall from the latest GitHub Release. The current release process does not publish to crates.io, GHCR, Docker Hub, or any other external registry.
 
 ## License
 

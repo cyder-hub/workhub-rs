@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Added interactive Linux/macOS and Windows installer scripts for default-path install, update, and uninstall from GitHub Releases.
+
 ## 0.4.2 - 2026-06-16
 
 ### Added
