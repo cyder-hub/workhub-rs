@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.4.4 - 2026-06-16
+
+### Fixed
+- Fixed Windows installer compatibility with Windows PowerShell by using Windows environment variables for CPU detection and reporting empty checksum downloads explicitly.
+
 ## 0.4.3 - 2026-06-16
 
 ### Added
