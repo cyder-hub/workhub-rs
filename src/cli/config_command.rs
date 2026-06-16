@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, BufRead, IsTerminal, Write},
@@ -10,6 +11,7 @@ use std::{
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use clap::{Args, Subcommand, ValueEnum};
+use dialoguer::{Confirm, Input, Password, Select, theme::ColorfulTheme};
 use reqwest::Url;
 use serde_json::json;
 
@@ -32,7 +34,7 @@ use crate::{
         ENV_JIRA_API_TOKEN, ENV_JIRA_PASSWORD, ENV_JIRA_PERSONAL_TOKEN, ENV_JIRA_PROJECTS_FILTER,
         ENV_JIRA_SSL_VERIFY, ENV_JIRA_TIMEOUT, ENV_JIRA_URL, ENV_JIRA_USERNAME,
     },
-    operations::{OperationError, OperationResult, OutputPresentation},
+    operations::{OperationError, OperationErrorCategory, OperationResult, OutputPresentation},
     upstream::redaction::{
         REDACTED, env_secret_values_from_pairs, is_secret_env_key, redact_text_with_secrets,
     },
@@ -105,12 +107,45 @@ enum DeploymentKind {
     ServerDataCenter,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServerAuthMethod {
+    PersonalToken,
+    UsernamePassword,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AtlassianAuthMethod {
+    CloudApiToken,
+    ServerPersonalToken,
+    ServerUsernamePassword,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfigPresence {
+    Missing,
+    Partial,
+    Configured,
+}
+
+#[derive(Debug, Clone)]
+struct SelectChoice<T> {
+    label: String,
+    value: T,
+    aliases: &'static [&'static str],
+}
+
 pub fn execute(args: ConfigArgs) -> Result<OperationResult, OperationError> {
     let path = global_config_path()?;
     let stdin = io::stdin();
-    let mut input = stdin.lock();
     let mut prompt_output = io::stderr();
-    execute_at_path(args, &path, &mut input, &mut prompt_output)
+    let interactive = stdin.is_terminal() && prompt_output.is_terminal();
+    if interactive {
+        let mut input = io::Cursor::new(Vec::<u8>::new());
+        execute_at_path(args, &path, &mut input, &mut prompt_output, true)
+    } else {
+        let mut input = stdin.lock();
+        execute_at_path(args, &path, &mut input, &mut prompt_output, false)
+    }
 }
 
 fn global_config_path() -> Result<PathBuf, OperationError> {
@@ -126,6 +161,7 @@ fn execute_at_path<R, W>(
     path: &Path,
     input: &mut R,
     prompt_output: &mut W,
+    interactive: bool,
 ) -> Result<OperationResult, OperationError>
 where
     R: BufRead,
@@ -134,7 +170,9 @@ where
     match args.command {
         ConfigCommand::Path => Ok(path_result(path)),
         ConfigCommand::Show => show_config(path),
-        ConfigCommand::Setup(args) => setup_config(path, args.scope, input, prompt_output),
+        ConfigCommand::Setup(args) => {
+            setup_config_with_mode(path, args.scope, input, prompt_output, interactive)
+        }
         ConfigCommand::Set(args) => set_config(path, &args.key, &args.value),
         ConfigCommand::Unset(args) => unset_config(path, &args.key),
     }
@@ -173,11 +211,26 @@ fn show_config(path: &Path) -> Result<OperationResult, OperationError> {
     })))
 }
 
+#[cfg(test)]
 fn setup_config<R, W>(
     path: &Path,
     scope: ConfigScope,
     input: &mut R,
     prompt_output: &mut W,
+) -> Result<OperationResult, OperationError>
+where
+    R: BufRead,
+    W: Write,
+{
+    setup_config_with_mode(path, scope, input, prompt_output, false)
+}
+
+fn setup_config_with_mode<R, W>(
+    path: &Path,
+    scope: ConfigScope,
+    input: &mut R,
+    prompt_output: &mut W,
+    interactive: bool,
 ) -> Result<OperationResult, OperationError>
 where
     R: BufRead,
@@ -189,16 +242,58 @@ where
     writeln!(prompt_output, "Config file: {}", path.display()).map_err(prompt_error)?;
 
     match scope {
-        ConfigScope::Atlassian => setup_atlassian(&values, &mut changes, input, prompt_output)?,
-        ConfigScope::Jira => setup_jira(&values, &mut changes, input, prompt_output, true)?,
-        ConfigScope::Confluence => {
-            setup_confluence(&values, &mut changes, input, prompt_output, true)?
+        ConfigScope::Atlassian => {
+            setup_atlassian(&values, &mut changes, input, prompt_output, interactive)?
         }
-        ConfigScope::Gitlab => setup_gitlab(&values, &mut changes, input, prompt_output, true)?,
+        ConfigScope::Jira => setup_jira(
+            &values,
+            &mut changes,
+            input,
+            prompt_output,
+            true,
+            interactive,
+        )?,
+        ConfigScope::Confluence => setup_confluence(
+            &values,
+            &mut changes,
+            input,
+            prompt_output,
+            true,
+            interactive,
+        )?,
+        ConfigScope::Gitlab => setup_gitlab(
+            &values,
+            &mut changes,
+            input,
+            prompt_output,
+            true,
+            interactive,
+        )?,
         ConfigScope::All => {
-            setup_jira(&values, &mut changes, input, prompt_output, false)?;
-            setup_confluence(&values, &mut changes, input, prompt_output, false)?;
-            setup_gitlab(&values, &mut changes, input, prompt_output, false)?;
+            setup_jira(
+                &values,
+                &mut changes,
+                input,
+                prompt_output,
+                false,
+                interactive,
+            )?;
+            setup_confluence(
+                &values,
+                &mut changes,
+                input,
+                prompt_output,
+                false,
+                interactive,
+            )?;
+            setup_gitlab(
+                &values,
+                &mut changes,
+                input,
+                prompt_output,
+                false,
+                interactive,
+            )?;
         }
     }
 
@@ -233,6 +328,7 @@ fn setup_jira<R, W>(
     input: &mut R,
     output: &mut W,
     explicit_scope: bool,
+    interactive: bool,
 ) -> Result<(), OperationError>
 where
     R: BufRead,
@@ -243,11 +339,24 @@ where
         write_service_summary("Jira", values, JIRA_SUMMARY_FIELDS, output)?;
     }
 
-    if !should_configure_service("Jira", configured, explicit_scope, input, output)? {
+    if !should_configure_service(
+        "Jira",
+        configured,
+        explicit_scope,
+        input,
+        output,
+        interactive,
+    )? {
         return Ok(());
     }
 
-    let url = prompt_required_value(ENV_JIRA_URL, values.get(ENV_JIRA_URL), input, output)?;
+    let url = prompt_required_http_url(
+        ENV_JIRA_URL,
+        values.get(ENV_JIRA_URL),
+        input,
+        output,
+        interactive,
+    )?;
     let deployment = deployment_from_url(&url, ENV_JIRA_URL)?;
     changes.set(ENV_JIRA_URL, url);
 
@@ -258,12 +367,14 @@ where
                 values.get(ENV_JIRA_USERNAME),
                 input,
                 output,
+                interactive,
             )?;
             let token = prompt_required_value(
                 ENV_JIRA_API_TOKEN,
                 values.get(ENV_JIRA_API_TOKEN),
                 input,
                 output,
+                interactive,
             )?;
             changes.set(ENV_JIRA_USERNAME, username);
             changes.set(ENV_JIRA_API_TOKEN, token);
@@ -271,20 +382,61 @@ where
             changes.remove(ENV_JIRA_PASSWORD);
         }
         DeploymentKind::ServerDataCenter => {
-            let token = prompt_required_value(
+            match prompt_server_auth_method(
+                "Jira",
                 ENV_JIRA_PERSONAL_TOKEN,
-                values.get(ENV_JIRA_PERSONAL_TOKEN),
+                ENV_JIRA_USERNAME,
+                ENV_JIRA_PASSWORD,
+                values,
                 input,
                 output,
-            )?;
-            changes.set(ENV_JIRA_PERSONAL_TOKEN, token);
-            changes.remove(ENV_JIRA_USERNAME);
-            changes.remove(ENV_JIRA_API_TOKEN);
-            changes.remove(ENV_JIRA_PASSWORD);
+                interactive,
+            )? {
+                ServerAuthMethod::PersonalToken => {
+                    let token = prompt_required_value(
+                        ENV_JIRA_PERSONAL_TOKEN,
+                        values.get(ENV_JIRA_PERSONAL_TOKEN),
+                        input,
+                        output,
+                        interactive,
+                    )?;
+                    changes.set(ENV_JIRA_PERSONAL_TOKEN, token);
+                    changes.remove(ENV_JIRA_USERNAME);
+                    changes.remove(ENV_JIRA_API_TOKEN);
+                    changes.remove(ENV_JIRA_PASSWORD);
+                }
+                ServerAuthMethod::UsernamePassword => {
+                    let username = prompt_required_value(
+                        ENV_JIRA_USERNAME,
+                        values.get(ENV_JIRA_USERNAME),
+                        input,
+                        output,
+                        interactive,
+                    )?;
+                    let password = prompt_required_value(
+                        ENV_JIRA_PASSWORD,
+                        values.get(ENV_JIRA_PASSWORD),
+                        input,
+                        output,
+                        interactive,
+                    )?;
+                    changes.set(ENV_JIRA_USERNAME, username);
+                    changes.set(ENV_JIRA_PASSWORD, password);
+                    changes.remove(ENV_JIRA_API_TOKEN);
+                    changes.remove(ENV_JIRA_PERSONAL_TOKEN);
+                }
+            }
         }
     }
 
-    prompt_existing_optional_values(values, changes, JIRA_OPTIONAL_FIELDS, input, output)
+    prompt_existing_optional_values(
+        values,
+        changes,
+        JIRA_OPTIONAL_FIELDS,
+        input,
+        output,
+        interactive,
+    )
 }
 
 fn setup_confluence<R, W>(
@@ -293,6 +445,7 @@ fn setup_confluence<R, W>(
     input: &mut R,
     output: &mut W,
     explicit_scope: bool,
+    interactive: bool,
 ) -> Result<(), OperationError>
 where
     R: BufRead,
@@ -303,15 +456,23 @@ where
         write_service_summary("Confluence", values, CONFLUENCE_SUMMARY_FIELDS, output)?;
     }
 
-    if !should_configure_service("Confluence", configured, explicit_scope, input, output)? {
+    if !should_configure_service(
+        "Confluence",
+        configured,
+        explicit_scope,
+        input,
+        output,
+        interactive,
+    )? {
         return Ok(());
     }
 
-    let url = prompt_required_value(
+    let url = prompt_required_http_url(
         ENV_CONFLUENCE_URL,
         values.get(ENV_CONFLUENCE_URL),
         input,
         output,
+        interactive,
     )?;
     let deployment = deployment_from_url(&url, ENV_CONFLUENCE_URL)?;
     changes.set(ENV_CONFLUENCE_URL, url);
@@ -323,12 +484,14 @@ where
                 values.get(ENV_CONFLUENCE_USERNAME),
                 input,
                 output,
+                interactive,
             )?;
             let token = prompt_required_value(
                 ENV_CONFLUENCE_API_TOKEN,
                 values.get(ENV_CONFLUENCE_API_TOKEN),
                 input,
                 output,
+                interactive,
             )?;
             changes.set(ENV_CONFLUENCE_USERNAME, username);
             changes.set(ENV_CONFLUENCE_API_TOKEN, token);
@@ -336,20 +499,61 @@ where
             changes.remove(ENV_CONFLUENCE_PASSWORD);
         }
         DeploymentKind::ServerDataCenter => {
-            let token = prompt_required_value(
+            match prompt_server_auth_method(
+                "Confluence",
                 ENV_CONFLUENCE_PERSONAL_TOKEN,
-                values.get(ENV_CONFLUENCE_PERSONAL_TOKEN),
+                ENV_CONFLUENCE_USERNAME,
+                ENV_CONFLUENCE_PASSWORD,
+                values,
                 input,
                 output,
-            )?;
-            changes.set(ENV_CONFLUENCE_PERSONAL_TOKEN, token);
-            changes.remove(ENV_CONFLUENCE_USERNAME);
-            changes.remove(ENV_CONFLUENCE_API_TOKEN);
-            changes.remove(ENV_CONFLUENCE_PASSWORD);
+                interactive,
+            )? {
+                ServerAuthMethod::PersonalToken => {
+                    let token = prompt_required_value(
+                        ENV_CONFLUENCE_PERSONAL_TOKEN,
+                        values.get(ENV_CONFLUENCE_PERSONAL_TOKEN),
+                        input,
+                        output,
+                        interactive,
+                    )?;
+                    changes.set(ENV_CONFLUENCE_PERSONAL_TOKEN, token);
+                    changes.remove(ENV_CONFLUENCE_USERNAME);
+                    changes.remove(ENV_CONFLUENCE_API_TOKEN);
+                    changes.remove(ENV_CONFLUENCE_PASSWORD);
+                }
+                ServerAuthMethod::UsernamePassword => {
+                    let username = prompt_required_value(
+                        ENV_CONFLUENCE_USERNAME,
+                        values.get(ENV_CONFLUENCE_USERNAME),
+                        input,
+                        output,
+                        interactive,
+                    )?;
+                    let password = prompt_required_value(
+                        ENV_CONFLUENCE_PASSWORD,
+                        values.get(ENV_CONFLUENCE_PASSWORD),
+                        input,
+                        output,
+                        interactive,
+                    )?;
+                    changes.set(ENV_CONFLUENCE_USERNAME, username);
+                    changes.set(ENV_CONFLUENCE_PASSWORD, password);
+                    changes.remove(ENV_CONFLUENCE_API_TOKEN);
+                    changes.remove(ENV_CONFLUENCE_PERSONAL_TOKEN);
+                }
+            }
         }
     }
 
-    prompt_existing_optional_values(values, changes, CONFLUENCE_OPTIONAL_FIELDS, input, output)
+    prompt_existing_optional_values(
+        values,
+        changes,
+        CONFLUENCE_OPTIONAL_FIELDS,
+        input,
+        output,
+        interactive,
+    )
 }
 
 fn setup_gitlab<R, W>(
@@ -358,6 +562,7 @@ fn setup_gitlab<R, W>(
     input: &mut R,
     output: &mut W,
     explicit_scope: bool,
+    interactive: bool,
 ) -> Result<(), OperationError>
 where
     R: BufRead,
@@ -368,23 +573,43 @@ where
         write_service_summary("GitLab", values, GITLAB_SUMMARY_FIELDS, output)?;
     }
 
-    if !should_configure_service("GitLab", configured, explicit_scope, input, output)? {
+    if !should_configure_service(
+        "GitLab",
+        configured,
+        explicit_scope,
+        input,
+        output,
+        interactive,
+    )? {
         return Ok(());
     }
 
-    let url = prompt_required_value(ENV_GITLAB_URL, values.get(ENV_GITLAB_URL), input, output)?;
-    parse_http_url(&url, ENV_GITLAB_URL)?;
+    let url = prompt_required_http_url(
+        ENV_GITLAB_URL,
+        values.get(ENV_GITLAB_URL),
+        input,
+        output,
+        interactive,
+    )?;
     let token = prompt_required_value(
         ENV_GITLAB_TOKEN,
         values.get(ENV_GITLAB_TOKEN),
         input,
         output,
+        interactive,
     )?;
     changes.set(ENV_GITLAB_URL, url);
     changes.set(ENV_GITLAB_TOKEN, token);
     changes.remove(ENV_GITLAB_PERSONAL_TOKEN);
 
-    prompt_existing_optional_values(values, changes, GITLAB_OPTIONAL_FIELDS, input, output)
+    prompt_existing_optional_values(
+        values,
+        changes,
+        GITLAB_OPTIONAL_FIELDS,
+        input,
+        output,
+        interactive,
+    )
 }
 
 fn setup_atlassian<R, W>(
@@ -392,6 +617,7 @@ fn setup_atlassian<R, W>(
     changes: &mut SetupChanges,
     input: &mut R,
     output: &mut W,
+    interactive: bool,
 ) -> Result<(), OperationError>
 where
     R: BufRead,
@@ -408,51 +634,75 @@ where
         true,
         input,
         output,
+        interactive,
     )? {
         return Ok(());
     }
 
-    let cloud_default = values.contains_key(ENV_ATLASSIAN_API_TOKEN)
-        || values.contains_key(ENV_ATLASSIAN_USERNAME)
-        || !values.contains_key(ENV_ATLASSIAN_PERSONAL_TOKEN);
-    let cloud = prompt_yes_no(
-        "Use Atlassian Cloud username/API token auth?",
-        cloud_default,
-        input,
-        output,
-    )?;
-
-    if cloud {
-        let username = prompt_required_value(
-            ENV_ATLASSIAN_USERNAME,
-            values.get(ENV_ATLASSIAN_USERNAME),
-            input,
-            output,
-        )?;
-        let token = prompt_required_value(
-            ENV_ATLASSIAN_API_TOKEN,
-            values.get(ENV_ATLASSIAN_API_TOKEN),
-            input,
-            output,
-        )?;
-        changes.set(ENV_ATLASSIAN_USERNAME, username);
-        changes.set(ENV_ATLASSIAN_API_TOKEN, token);
-        changes.remove(ENV_ATLASSIAN_PERSONAL_TOKEN);
-        changes.remove(ENV_ATLASSIAN_PASSWORD);
-    } else {
-        let token = prompt_required_value(
-            ENV_ATLASSIAN_PERSONAL_TOKEN,
-            values.get(ENV_ATLASSIAN_PERSONAL_TOKEN),
-            input,
-            output,
-        )?;
-        changes.set(ENV_ATLASSIAN_PERSONAL_TOKEN, token);
-        changes.remove(ENV_ATLASSIAN_USERNAME);
-        changes.remove(ENV_ATLASSIAN_API_TOKEN);
-        changes.remove(ENV_ATLASSIAN_PASSWORD);
+    match prompt_atlassian_auth_method(values, input, output, interactive)? {
+        AtlassianAuthMethod::CloudApiToken => {
+            let username = prompt_required_value(
+                ENV_ATLASSIAN_USERNAME,
+                values.get(ENV_ATLASSIAN_USERNAME),
+                input,
+                output,
+                interactive,
+            )?;
+            let token = prompt_required_value(
+                ENV_ATLASSIAN_API_TOKEN,
+                values.get(ENV_ATLASSIAN_API_TOKEN),
+                input,
+                output,
+                interactive,
+            )?;
+            changes.set(ENV_ATLASSIAN_USERNAME, username);
+            changes.set(ENV_ATLASSIAN_API_TOKEN, token);
+            changes.remove(ENV_ATLASSIAN_PERSONAL_TOKEN);
+            changes.remove(ENV_ATLASSIAN_PASSWORD);
+        }
+        AtlassianAuthMethod::ServerPersonalToken => {
+            let token = prompt_required_value(
+                ENV_ATLASSIAN_PERSONAL_TOKEN,
+                values.get(ENV_ATLASSIAN_PERSONAL_TOKEN),
+                input,
+                output,
+                interactive,
+            )?;
+            changes.set(ENV_ATLASSIAN_PERSONAL_TOKEN, token);
+            changes.remove(ENV_ATLASSIAN_USERNAME);
+            changes.remove(ENV_ATLASSIAN_API_TOKEN);
+            changes.remove(ENV_ATLASSIAN_PASSWORD);
+        }
+        AtlassianAuthMethod::ServerUsernamePassword => {
+            let username = prompt_required_value(
+                ENV_ATLASSIAN_USERNAME,
+                values.get(ENV_ATLASSIAN_USERNAME),
+                input,
+                output,
+                interactive,
+            )?;
+            let password = prompt_required_value(
+                ENV_ATLASSIAN_PASSWORD,
+                values.get(ENV_ATLASSIAN_PASSWORD),
+                input,
+                output,
+                interactive,
+            )?;
+            changes.set(ENV_ATLASSIAN_USERNAME, username);
+            changes.set(ENV_ATLASSIAN_PASSWORD, password);
+            changes.remove(ENV_ATLASSIAN_API_TOKEN);
+            changes.remove(ENV_ATLASSIAN_PERSONAL_TOKEN);
+        }
     }
 
-    prompt_existing_optional_values(values, changes, ATLASSIAN_OPTIONAL_FIELDS, input, output)
+    prompt_existing_optional_values(
+        values,
+        changes,
+        ATLASSIAN_OPTIONAL_FIELDS,
+        input,
+        output,
+        interactive,
+    )
 }
 
 fn should_configure_service<R, W>(
@@ -461,18 +711,285 @@ fn should_configure_service<R, W>(
     explicit_scope: bool,
     input: &mut R,
     output: &mut W,
+    interactive: bool,
 ) -> Result<bool, OperationError>
 where
     R: BufRead,
     W: Write,
 {
     if configured {
-        prompt_yes_no(&format!("Modify {service}?"), false, input, output)
+        prompt_yes_no(
+            &format!("Modify {service}?"),
+            false,
+            input,
+            output,
+            interactive,
+        )
     } else if explicit_scope {
-        prompt_yes_no(&format!("Configure {service}?"), true, input, output)
+        prompt_yes_no(
+            &format!("Configure {service}?"),
+            true,
+            input,
+            output,
+            interactive,
+        )
     } else {
-        prompt_yes_no(&format!("Configure {service}?"), false, input, output)
+        prompt_yes_no(
+            &format!("Configure {service}?"),
+            false,
+            input,
+            output,
+            interactive,
+        )
     }
+}
+
+fn prompt_server_auth_method<R, W>(
+    service: &str,
+    personal_token_key: &'static str,
+    username_key: &'static str,
+    password_key: &'static str,
+    values: &BTreeMap<String, String>,
+    input: &mut R,
+    output: &mut W,
+    interactive_select: bool,
+) -> Result<ServerAuthMethod, OperationError>
+where
+    R: BufRead,
+    W: Write,
+{
+    let choices = vec![
+        SelectChoice {
+            label: auth_method_label(
+                &format!("Personal access token ({personal_token_key})"),
+                token_presence(values, personal_token_key),
+            ),
+            value: ServerAuthMethod::PersonalToken,
+            aliases: &["pat", "token", "personal-token", "personal-access-token"],
+        },
+        SelectChoice {
+            label: auth_method_label(
+                &format!("Username/password ({username_key} + {password_key})"),
+                username_secret_presence(values, username_key, password_key),
+            ),
+            value: ServerAuthMethod::UsernamePassword,
+            aliases: &["basic", "password", "username-password", "user-password"],
+        },
+    ];
+    let default_index = if has_non_empty_value(values, personal_token_key) {
+        0
+    } else if has_non_empty_value(values, password_key) {
+        1
+    } else {
+        0
+    };
+
+    prompt_select(
+        &format!("{service} Server/Data Center auth method"),
+        &choices,
+        default_index,
+        input,
+        output,
+        interactive_select,
+    )
+}
+
+fn prompt_atlassian_auth_method<R, W>(
+    values: &BTreeMap<String, String>,
+    input: &mut R,
+    output: &mut W,
+    interactive_select: bool,
+) -> Result<AtlassianAuthMethod, OperationError>
+where
+    R: BufRead,
+    W: Write,
+{
+    let default = default_atlassian_auth_method(values);
+    let choices = vec![
+        SelectChoice {
+            label: auth_method_label(
+                &format!(
+                    "Cloud username/API token ({ENV_ATLASSIAN_USERNAME} + {ENV_ATLASSIAN_API_TOKEN})"
+                ),
+                username_secret_presence(values, ENV_ATLASSIAN_USERNAME, ENV_ATLASSIAN_API_TOKEN),
+            ),
+            value: AtlassianAuthMethod::CloudApiToken,
+            aliases: &["cloud", "api-token", "api"],
+        },
+        SelectChoice {
+            label: auth_method_label(
+                &format!(
+                    "Server/Data Center personal access token ({ENV_ATLASSIAN_PERSONAL_TOKEN})"
+                ),
+                token_presence(values, ENV_ATLASSIAN_PERSONAL_TOKEN),
+            ),
+            value: AtlassianAuthMethod::ServerPersonalToken,
+            aliases: &["pat", "token", "personal-token", "personal-access-token"],
+        },
+        SelectChoice {
+            label: auth_method_label(
+                &format!(
+                    "Server/Data Center username/password ({ENV_ATLASSIAN_USERNAME} + {ENV_ATLASSIAN_PASSWORD})"
+                ),
+                username_secret_presence(values, ENV_ATLASSIAN_USERNAME, ENV_ATLASSIAN_PASSWORD),
+            ),
+            value: AtlassianAuthMethod::ServerUsernamePassword,
+            aliases: &["basic", "password", "username-password", "user-password"],
+        },
+    ];
+    let default_index = choices
+        .iter()
+        .position(|choice| choice.value == default)
+        .unwrap_or(0);
+
+    prompt_select(
+        "Shared Atlassian auth method",
+        &choices,
+        default_index,
+        input,
+        output,
+        interactive_select,
+    )
+}
+
+fn default_atlassian_auth_method(values: &BTreeMap<String, String>) -> AtlassianAuthMethod {
+    if has_non_empty_value(values, ENV_ATLASSIAN_PERSONAL_TOKEN) {
+        AtlassianAuthMethod::ServerPersonalToken
+    } else if has_non_empty_value(values, ENV_ATLASSIAN_PASSWORD) {
+        AtlassianAuthMethod::ServerUsernamePassword
+    } else {
+        AtlassianAuthMethod::CloudApiToken
+    }
+}
+
+fn token_presence(values: &BTreeMap<String, String>, token_key: &str) -> ConfigPresence {
+    if has_non_empty_value(values, token_key) {
+        ConfigPresence::Configured
+    } else {
+        ConfigPresence::Missing
+    }
+}
+
+fn username_secret_presence(
+    values: &BTreeMap<String, String>,
+    username_key: &str,
+    secret_key: &str,
+) -> ConfigPresence {
+    match (
+        has_non_empty_value(values, username_key),
+        has_non_empty_value(values, secret_key),
+    ) {
+        (true, true) => ConfigPresence::Configured,
+        (true, false) | (false, true) => ConfigPresence::Partial,
+        (false, false) => ConfigPresence::Missing,
+    }
+}
+
+fn auth_method_label(label: &str, presence: ConfigPresence) -> String {
+    match presence {
+        ConfigPresence::Configured => format!("{label} [configured]"),
+        ConfigPresence::Partial => format!("{label} [partial]"),
+        ConfigPresence::Missing => label.to_string(),
+    }
+}
+
+fn prompt_select<T, R, W>(
+    prompt: &str,
+    choices: &[SelectChoice<T>],
+    default_index: usize,
+    input: &mut R,
+    output: &mut W,
+    interactive: bool,
+) -> Result<T, OperationError>
+where
+    T: Copy,
+    R: BufRead,
+    W: Write,
+{
+    if choices.is_empty() {
+        return Err(OperationError::config("auth method menu has no choices"));
+    }
+    let default_index = default_index.min(choices.len().saturating_sub(1));
+    if interactive {
+        return prompt_select_terminal(prompt, choices, default_index);
+    }
+
+    prompt_select_line(prompt, choices, default_index, input, output)
+}
+
+fn prompt_select_terminal<T>(
+    prompt: &str,
+    choices: &[SelectChoice<T>],
+    default_index: usize,
+) -> Result<T, OperationError>
+where
+    T: Copy,
+{
+    let labels = choices
+        .iter()
+        .map(|choice| choice.label.as_str())
+        .collect::<Vec<_>>();
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt(prompt)
+        .items(&labels)
+        .default(default_index)
+        .interact()
+        .map_err(dialoguer_error)?;
+
+    Ok(choices[selection].value)
+}
+
+fn prompt_select_line<T, R, W>(
+    prompt: &str,
+    choices: &[SelectChoice<T>],
+    default_index: usize,
+    input: &mut R,
+    output: &mut W,
+) -> Result<T, OperationError>
+where
+    T: Copy,
+    R: BufRead,
+    W: Write,
+{
+    loop {
+        writeln!(output, "{prompt}:").map_err(prompt_error)?;
+        for (index, choice) in choices.iter().enumerate() {
+            let default_marker = if index == default_index {
+                " (default)"
+            } else {
+                ""
+            };
+            writeln!(output, "  {}. {}{default_marker}", index + 1, choice.label)
+                .map_err(prompt_error)?;
+        }
+        write!(output, "Select auth method: ").map_err(prompt_error)?;
+        output.flush().map_err(prompt_error)?;
+
+        let mut line = String::new();
+        if input.read_line(&mut line).map_err(prompt_error)? == 0 {
+            return Ok(choices[default_index].value);
+        }
+        let answer = normalize_prompt_choice(&line);
+        if answer.is_empty() {
+            return Ok(choices[default_index].value);
+        }
+        if let Ok(index) = answer.parse::<usize>()
+            && (1..=choices.len()).contains(&index)
+        {
+            return Ok(choices[index - 1].value);
+        }
+        if let Some(choice) = choices
+            .iter()
+            .find(|choice| choice.aliases.iter().any(|alias| *alias == answer))
+        {
+            return Ok(choice.value);
+        }
+        writeln!(output, "Please choose one of the listed auth methods.").map_err(prompt_error)?;
+    }
+}
+
+fn normalize_prompt_choice(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace([' ', '_'], "-")
 }
 
 fn prompt_existing_optional_values<R, W>(
@@ -481,6 +998,7 @@ fn prompt_existing_optional_values<R, W>(
     fields: &[&'static str],
     input: &mut R,
     output: &mut W,
+    interactive: bool,
 ) -> Result<(), OperationError>
 where
     R: BufRead,
@@ -488,7 +1006,8 @@ where
 {
     for field in fields {
         if values.contains_key(*field)
-            && let Some(value) = prompt_optional_value(field, values.get(*field), input, output)?
+            && let Some(value) =
+                prompt_optional_value(field, values.get(*field), input, output, interactive)?
         {
             changes.set(field, value);
         }
@@ -501,17 +1020,171 @@ fn prompt_required_value<R, W>(
     existing: Option<&String>,
     input: &mut R,
     output: &mut W,
+    interactive: bool,
 ) -> Result<String, OperationError>
 where
     R: BufRead,
     W: Write,
 {
-    match prompt_value(key, existing, input, output)? {
-        Some(value) => Ok(value),
-        None => existing
-            .cloned()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| OperationError::invalid_input(format!("{key} is required"))),
+    prompt_required_value_with_validation(key, existing, input, output, interactive, |_| Ok(()))
+}
+
+fn prompt_required_http_url<R, W>(
+    key: &'static str,
+    existing: Option<&String>,
+    input: &mut R,
+    output: &mut W,
+    interactive: bool,
+) -> Result<String, OperationError>
+where
+    R: BufRead,
+    W: Write,
+{
+    prompt_required_value_with_validation(key, existing, input, output, interactive, |value| {
+        parse_http_url(value, key).map(|_| ())
+    })
+}
+
+fn prompt_required_value_with_validation<R, W, F>(
+    key: &'static str,
+    existing: Option<&String>,
+    input: &mut R,
+    output: &mut W,
+    interactive: bool,
+    mut validate: F,
+) -> Result<String, OperationError>
+where
+    R: BufRead,
+    W: Write,
+    F: FnMut(&str) -> Result<(), OperationError>,
+{
+    if interactive {
+        return prompt_required_value_dialoguer(key, existing, validate);
+    }
+
+    loop {
+        match prompt_value_status(key, existing, input, output)? {
+            PromptValue::Entered(value) => {
+                if !validate_prompt_value(&value, &mut validate, output)? {
+                    continue;
+                }
+                return Ok(value);
+            }
+            PromptValue::Blank => {
+                if let Some(value) = existing.filter(|value| !value.is_empty()) {
+                    if !validate_prompt_value(value, &mut validate, output)? {
+                        continue;
+                    }
+                    return Ok(value.clone());
+                }
+                writeln!(output, "{key} is required.").map_err(prompt_error)?;
+            }
+            PromptValue::Eof => {
+                if let Some(value) = existing.filter(|value| !value.is_empty()) {
+                    validate(value)?;
+                    return Ok(value.clone());
+                }
+                return Err(OperationError::invalid_input(format!("{key} is required")));
+            }
+        }
+    }
+}
+
+fn prompt_required_value_dialoguer<F>(
+    key: &'static str,
+    existing: Option<&String>,
+    validate: F,
+) -> Result<String, OperationError>
+where
+    F: FnMut(&str) -> Result<(), OperationError>,
+{
+    if is_secret_env_key(key) {
+        prompt_required_secret_dialoguer(key, existing, validate)
+    } else {
+        prompt_required_text_dialoguer(key, existing, validate)
+    }
+}
+
+fn prompt_required_text_dialoguer<F>(
+    key: &'static str,
+    existing: Option<&String>,
+    mut validate: F,
+) -> Result<String, OperationError>
+where
+    F: FnMut(&str) -> Result<(), OperationError>,
+{
+    let theme = ColorfulTheme::default();
+    let mut prompt = Input::<String>::with_theme(&theme).with_prompt(key);
+    if let Some(existing) = existing.filter(|value| !value.is_empty()) {
+        prompt = prompt.default(existing.clone());
+    }
+    prompt
+        .validate_with(move |value: &String| validate_dialoguer_value(value, &mut validate))
+        .interact_text()
+        .map_err(dialoguer_error)
+}
+
+fn prompt_required_secret_dialoguer<F>(
+    key: &'static str,
+    existing: Option<&String>,
+    validate: F,
+) -> Result<String, OperationError>
+where
+    F: FnMut(&str) -> Result<(), OperationError>,
+{
+    let theme = ColorfulTheme::default();
+    let has_existing = existing.is_some_and(|value| !value.is_empty());
+    let validator = RefCell::new(validate);
+    let prompt = if has_existing {
+        format!("{key} [set, press Enter to keep]")
+    } else {
+        key.to_string()
+    };
+    let value = Password::with_theme(&theme)
+        .with_prompt(&prompt)
+        .allow_empty_password(has_existing)
+        .validate_with(|value: &String| -> Result<(), String> {
+            if value.is_empty() && has_existing {
+                return Ok(());
+            }
+            validate_dialoguer_value(value, &mut *validator.borrow_mut())
+        })
+        .interact()
+        .map_err(dialoguer_error)?;
+
+    if value.is_empty()
+        && let Some(existing) = existing.filter(|value| !value.is_empty())
+    {
+        return Ok(existing.clone());
+    }
+    Ok(value)
+}
+
+fn validate_dialoguer_value<F>(value: &str, validate: &mut F) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), OperationError>,
+{
+    validate_config_value(value)
+        .and_then(|_| validate(value))
+        .map_err(|error| error.message)
+}
+
+fn validate_prompt_value<W, F>(
+    value: &str,
+    validate: &mut F,
+    output: &mut W,
+) -> Result<bool, OperationError>
+where
+    W: Write,
+    F: FnMut(&str) -> Result<(), OperationError>,
+{
+    match validate(value) {
+        Ok(()) => Ok(true),
+        Err(error) if error.category == OperationErrorCategory::InvalidInput => {
+            writeln!(output, "{}", error.message).map_err(prompt_error)?;
+            Ok(false)
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -520,12 +1193,69 @@ fn prompt_optional_value<R, W>(
     existing: Option<&String>,
     input: &mut R,
     output: &mut W,
+    interactive: bool,
 ) -> Result<Option<String>, OperationError>
 where
     R: BufRead,
     W: Write,
 {
-    prompt_value(key, existing, input, output)
+    if interactive {
+        prompt_optional_value_dialoguer(key, existing)
+    } else {
+        prompt_value(key, existing, input, output)
+    }
+}
+
+fn prompt_optional_value_dialoguer(
+    key: &'static str,
+    existing: Option<&String>,
+) -> Result<Option<String>, OperationError> {
+    let value = if is_secret_env_key(key) {
+        let theme = ColorfulTheme::default();
+        let prompt = if existing.is_some_and(|value| !value.is_empty()) {
+            format!("{key} [set, press Enter to keep]")
+        } else {
+            key.to_string()
+        };
+        Password::with_theme(&theme)
+            .with_prompt(prompt)
+            .allow_empty_password(true)
+            .validate_with(|value: &String| -> Result<(), String> {
+                if value.is_empty() {
+                    Ok(())
+                } else {
+                    validate_config_value(value).map_err(|error| error.message)
+                }
+            })
+            .interact()
+            .map_err(dialoguer_error)?
+    } else {
+        let theme = ColorfulTheme::default();
+        let prompt = if let Some(existing) = existing.filter(|value| !value.is_empty()) {
+            format!("{key} [{existing}]")
+        } else {
+            key.to_string()
+        };
+        Input::<String>::with_theme(&theme)
+            .with_prompt(prompt)
+            .allow_empty(true)
+            .validate_with(|value: &String| {
+                if value.is_empty() {
+                    Ok(())
+                } else {
+                    validate_config_value(value).map_err(|error| error.message)
+                }
+            })
+            .interact_text()
+            .map_err(dialoguer_error)?
+    };
+
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        validate_config_value(&value)?;
+        Ok(Some(value))
+    }
 }
 
 fn prompt_value<R, W>(
@@ -534,6 +1264,28 @@ fn prompt_value<R, W>(
     input: &mut R,
     output: &mut W,
 ) -> Result<Option<String>, OperationError>
+where
+    R: BufRead,
+    W: Write,
+{
+    match prompt_value_status(key, existing, input, output)? {
+        PromptValue::Entered(value) => Ok(Some(value)),
+        PromptValue::Blank | PromptValue::Eof => Ok(None),
+    }
+}
+
+enum PromptValue {
+    Entered(String),
+    Blank,
+    Eof,
+}
+
+fn prompt_value_status<R, W>(
+    key: &'static str,
+    existing: Option<&String>,
+    input: &mut R,
+    output: &mut W,
+) -> Result<PromptValue, OperationError>
 where
     R: BufRead,
     W: Write,
@@ -554,18 +1306,21 @@ where
 
     let mut line = String::new();
     let echo_guard = EchoGuard::disable_if(secret);
-    input.read_line(&mut line).map_err(prompt_error)?;
+    let bytes_read = input.read_line(&mut line).map_err(prompt_error)?;
     let echo_disabled = echo_guard.disabled();
     drop(echo_guard);
     if echo_disabled {
         writeln!(output).map_err(prompt_error)?;
     }
+    if bytes_read == 0 {
+        return Ok(PromptValue::Eof);
+    }
     let value = line.trim_end_matches(['\r', '\n']);
     if value.is_empty() {
-        return Ok(None);
+        return Ok(PromptValue::Blank);
     }
     validate_config_value(value)?;
-    Ok(Some(value.to_string()))
+    Ok(PromptValue::Entered(value.to_string()))
 }
 
 fn prompt_yes_no<R, W>(
@@ -573,11 +1328,20 @@ fn prompt_yes_no<R, W>(
     default: bool,
     input: &mut R,
     output: &mut W,
+    interactive: bool,
 ) -> Result<bool, OperationError>
 where
     R: BufRead,
     W: Write,
 {
+    if interactive {
+        return Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(prompt)
+            .default(default)
+            .interact()
+            .map_err(dialoguer_error);
+    }
+
     let suffix = if default { "[Y/n]" } else { "[y/N]" };
     loop {
         write!(output, "{prompt} {suffix}: ").map_err(prompt_error)?;
@@ -651,7 +1415,11 @@ impl SetupChanges {
 fn has_any_value(values: &BTreeMap<String, String>, fields: &[&str]) -> bool {
     fields
         .iter()
-        .any(|field| values.get(*field).is_some_and(|value| !value.is_empty()))
+        .any(|field| has_non_empty_value(values, field))
+}
+
+fn has_non_empty_value(values: &BTreeMap<String, String>, field: &str) -> bool {
+    values.get(field).is_some_and(|value| !value.is_empty())
 }
 
 fn write_service_summary<W>(
@@ -1006,6 +1774,10 @@ fn prompt_error(error: io::Error) -> OperationError {
     OperationError::config(format!("failed to read CLI config input: {error}"))
 }
 
+fn dialoguer_error(error: dialoguer::Error) -> OperationError {
+    OperationError::config(format!("failed to read CLI config selection: {error}"))
+}
+
 struct EchoGuard {
     disabled: bool,
 }
@@ -1212,7 +1984,7 @@ mod tests {
             "JIRA_URL=\"https://example.atlassian.net\"\nJIRA_USERNAME=\"user@example.com\"\nJIRA_API_TOKEN=\"cloud-token\"\n",
         )
         .unwrap();
-        let mut input = Cursor::new("y\nhttps://jira.example\nserver-token\n");
+        let mut input = Cursor::new("y\nhttps://jira.example\n\nserver-token\n");
         let mut output = Vec::new();
 
         setup_config(&path, ConfigScope::Jira, &mut input, &mut output).unwrap();
@@ -1221,6 +1993,95 @@ mod tests {
         assert_eq!(values.get(ENV_JIRA_PERSONAL_TOKEN).unwrap(), "server-token");
         assert!(!values.contains_key(ENV_JIRA_USERNAME));
         assert!(!values.contains_key(ENV_JIRA_API_TOKEN));
+    }
+
+    #[test]
+    fn config_setup_jira_server_can_choose_username_password_auth() {
+        let path = temp_config_path("setup-jira-server-password");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            concat!(
+                "JIRA_URL=\"https://old.example\"\n",
+                "JIRA_API_TOKEN=\"cloud-token\"\n",
+                "JIRA_PERSONAL_TOKEN=\"server-token\"\n",
+            ),
+        )
+        .unwrap();
+        let mut input = Cursor::new("y\nhttps://jira.example\n2\njira-user\njira-password\n");
+        let mut output = Vec::new();
+
+        setup_config(&path, ConfigScope::Jira, &mut input, &mut output).unwrap();
+        let values = parse_config_values(&path).unwrap();
+
+        assert_eq!(values.get(ENV_JIRA_USERNAME).unwrap(), "jira-user");
+        assert_eq!(values.get(ENV_JIRA_PASSWORD).unwrap(), "jira-password");
+        assert!(!values.contains_key(ENV_JIRA_API_TOKEN));
+        assert!(!values.contains_key(ENV_JIRA_PERSONAL_TOKEN));
+    }
+
+    #[test]
+    fn config_setup_auth_method_menu_marks_existing_configured_paths() {
+        let path = temp_config_path("setup-auth-method-configured");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            concat!(
+                "JIRA_URL=\"https://jira.example\"\n",
+                "JIRA_PERSONAL_TOKEN=\"server-token\"\n",
+                "JIRA_USERNAME=\"jira-user\"\n",
+                "JIRA_PASSWORD=\"jira-password\"\n",
+            ),
+        )
+        .unwrap();
+        let mut input = Cursor::new("y\n\n\n\n");
+        let mut output = Vec::new();
+
+        setup_config(&path, ConfigScope::Jira, &mut input, &mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+
+        assert!(
+            output.contains("Personal access token (JIRA_PERSONAL_TOKEN) [configured]"),
+            "{output}"
+        );
+        assert!(
+            output.contains("Username/password (JIRA_USERNAME + JIRA_PASSWORD) [configured]"),
+            "{output}"
+        );
+        assert!(!output.contains("server-token"));
+        assert!(!output.contains("jira-password"));
+    }
+
+    #[test]
+    fn config_setup_confluence_server_can_choose_username_password_auth() {
+        let path = temp_config_path("setup-confluence-server-password");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            concat!(
+                "CONFLUENCE_URL=\"https://old.example\"\n",
+                "CONFLUENCE_API_TOKEN=\"cloud-token\"\n",
+                "CONFLUENCE_PERSONAL_TOKEN=\"server-token\"\n",
+            ),
+        )
+        .unwrap();
+        let mut input =
+            Cursor::new("y\nhttps://confluence.example\n2\nconfluence-user\nconfluence-password\n");
+        let mut output = Vec::new();
+
+        setup_config(&path, ConfigScope::Confluence, &mut input, &mut output).unwrap();
+        let values = parse_config_values(&path).unwrap();
+
+        assert_eq!(
+            values.get(ENV_CONFLUENCE_USERNAME).unwrap(),
+            "confluence-user"
+        );
+        assert_eq!(
+            values.get(ENV_CONFLUENCE_PASSWORD).unwrap(),
+            "confluence-password"
+        );
+        assert!(!values.contains_key(ENV_CONFLUENCE_API_TOKEN));
+        assert!(!values.contains_key(ENV_CONFLUENCE_PERSONAL_TOKEN));
     }
 
     #[test]
@@ -1233,6 +2094,34 @@ mod tests {
 
         assert_eq!(result.value["message"], "no changes");
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn config_setup_atlassian_can_choose_shared_server_username_password_auth() {
+        let path = temp_config_path("setup-atlassian-server-password");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            concat!(
+                "ATLASSIAN_USERNAME=\"cloud@example.com\"\n",
+                "ATLASSIAN_API_TOKEN=\"cloud-token\"\n",
+                "ATLASSIAN_PERSONAL_TOKEN=\"server-token\"\n",
+            ),
+        )
+        .unwrap();
+        let mut input = Cursor::new("y\n3\nshared-user\nshared-password\n");
+        let mut output = Vec::new();
+
+        setup_config(&path, ConfigScope::Atlassian, &mut input, &mut output).unwrap();
+        let values = parse_config_values(&path).unwrap();
+
+        assert_eq!(values.get(ENV_ATLASSIAN_USERNAME).unwrap(), "shared-user");
+        assert_eq!(
+            values.get(ENV_ATLASSIAN_PASSWORD).unwrap(),
+            "shared-password"
+        );
+        assert!(!values.contains_key(ENV_ATLASSIAN_API_TOKEN));
+        assert!(!values.contains_key(ENV_ATLASSIAN_PERSONAL_TOKEN));
     }
 
     #[test]
@@ -1259,36 +2148,54 @@ mod tests {
     }
 
     #[test]
-    fn config_setup_gitlab_rejects_runtime_invalid_urls() {
+    fn config_setup_gitlab_retries_runtime_invalid_urls() {
         for invalid_url in ["gitlab.example", "ftp://gitlab.example"] {
             let path = temp_config_path("setup-gitlab-invalid-url");
-            let mut input = Cursor::new(format!("y\n{invalid_url}\nprimary-token\n"));
+            let mut input = Cursor::new(format!(
+                "y\n{invalid_url}\nhttps://gitlab.example\nprimary-token\n"
+            ));
             let mut output = Vec::new();
 
-            let error =
-                setup_config(&path, ConfigScope::Gitlab, &mut input, &mut output).unwrap_err();
+            setup_config(&path, ConfigScope::Gitlab, &mut input, &mut output).unwrap();
+            let values = parse_config_values(&path).unwrap();
+            let output = String::from_utf8(output).unwrap();
 
-            assert_eq!(error.category, OperationErrorCategory::InvalidInput);
-            assert!(error.message.contains("invalid GITLAB_URL value"));
-            assert!(!path.exists());
+            assert_eq!(
+                values.get(ENV_GITLAB_URL).unwrap(),
+                "https://gitlab.example"
+            );
+            assert!(output.contains("invalid GITLAB_URL value"));
         }
     }
 
     #[test]
-    fn config_setup_atlassian_services_reject_non_http_urls() {
-        for (scope, invalid_url, key) in [
-            (ConfigScope::Jira, "ftp://jira.example", ENV_JIRA_URL),
-            (ConfigScope::Confluence, "file:///tmp", ENV_CONFLUENCE_URL),
+    fn config_setup_atlassian_services_retry_non_http_urls() {
+        for (scope, invalid_url, key, valid_url, token_key) in [
+            (
+                ConfigScope::Jira,
+                "ftp://jira.example",
+                ENV_JIRA_URL,
+                "https://jira.example",
+                ENV_JIRA_PERSONAL_TOKEN,
+            ),
+            (
+                ConfigScope::Confluence,
+                "file:///tmp",
+                ENV_CONFLUENCE_URL,
+                "https://confluence.example",
+                ENV_CONFLUENCE_PERSONAL_TOKEN,
+            ),
         ] {
             let path = temp_config_path("setup-atlassian-invalid-url");
-            let mut input = Cursor::new(format!("y\n{invalid_url}\nserver-token\n"));
+            let mut input = Cursor::new(format!("y\n{invalid_url}\n{valid_url}\n\nserver-token\n"));
             let mut output = Vec::new();
 
-            let error = setup_config(&path, scope, &mut input, &mut output).unwrap_err();
+            setup_config(&path, scope, &mut input, &mut output).unwrap();
+            let values = parse_config_values(&path).unwrap();
+            let output = String::from_utf8(output).unwrap();
 
-            assert_eq!(error.category, OperationErrorCategory::InvalidInput);
-            assert!(error.message.contains(&format!("invalid {key} value")));
-            assert!(!path.exists());
+            assert_eq!(values.get(token_key).unwrap(), "server-token");
+            assert!(output.contains(&format!("invalid {key} value")));
         }
     }
 

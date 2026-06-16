@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.4.2 - 2026-06-16
+
+### Added
+- Added dialoguer-backed prompts for the CLI config setup wizard, including confirmations, text inputs, secret inputs, and auth-method selection.
+- Added interactive Server/Data Center auth-method selection for Jira, Confluence, and shared Atlassian credentials, including username/password setup paths and configured/partial status markers.
+
+### Fixed
+- Kept invalid setup input, such as malformed service URLs, on the current prompt until corrected instead of exiting the wizard.
+- Fixed secret setup prompts such as `JIRA_PERSONAL_TOKEN` and `JIRA_PASSWORD` so hidden input can be submitted successfully in interactive terminals.
+
 ## 0.4.1 - 2026-06-15
 
 ### Added
