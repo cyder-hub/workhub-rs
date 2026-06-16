@@ -3,7 +3,6 @@ set -eu
 
 REPO="cyder-hub/workhub-rs"
 REPO_URL="https://github.com/${REPO}"
-API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 BINARY_NAME="workhub"
 INSTALL_DIR="${HOME}/.local/bin"
 INSTALL_PATH="${INSTALL_DIR}/${BINARY_NAME}"
@@ -48,17 +47,6 @@ read_tty() {
     printf '%s' "${answer}"
 }
 
-download_stdout() {
-    url="$1"
-    if has_command curl; then
-        curl -fsSL -H "User-Agent: workhub-installer" "${url}"
-    elif has_command wget; then
-        wget -qO- --header="User-Agent: workhub-installer" "${url}"
-    else
-        die "curl or wget is required"
-    fi
-}
-
 download_file() {
     url="$1"
     output="$2"
@@ -92,10 +80,33 @@ detect_asset() {
 }
 
 latest_tag() {
-    json="$(download_stdout "${API_URL}")" || die "failed to read latest GitHub release"
-    tag="$(printf '%s\n' "${json}" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+    latest_url="${REPO_URL}/releases/latest"
+
+    if has_command curl; then
+        resolved_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' -H "User-Agent: workhub-installer" "${latest_url}")" ||
+            die "failed to resolve latest GitHub release"
+    elif has_command wget; then
+        location="$(
+            wget -qS --spider --max-redirect=0 --header="User-Agent: workhub-installer" "${latest_url}" 2>&1 |
+                sed -n 's/^[[:space:]]*[Ll]ocation:[[:space:]]*//p' |
+                tail -n 1 |
+                tr -d '\r'
+        )"
+        if [ -z "${location}" ]; then
+            die "failed to resolve latest GitHub release"
+        fi
+        case "${location}" in
+            http://* | https://*) resolved_url="${location}" ;;
+            /*) resolved_url="https://github.com${location}" ;;
+            *) resolved_url="${REPO_URL}/${location}" ;;
+        esac
+    else
+        die "curl or wget is required"
+    fi
+
+    tag="$(printf '%s\n' "${resolved_url}" | sed -n 's#.*//github.com/[^/]*/[^/]*/releases/tag/\([^/?#]*\).*#\1#p' | head -n 1)"
     if [ -z "${tag}" ]; then
-        die "latest GitHub release does not contain tag_name"
+        die "latest GitHub release redirect did not include a tag"
     fi
     printf '%s' "${tag}"
 }
@@ -253,9 +264,8 @@ remove_path_entry() {
 }
 
 install_latest() {
-    tag="$1"
-    latest="$2"
-    asset_url="${REPO_URL}/releases/download/${tag}/${ASSET}"
+    latest="$1"
+    asset_url="${REPO_URL}/releases/latest/download/${ASSET}"
     checksum_url="${asset_url}.sha256"
 
     TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workhub-install.XXXXXX")" || die "failed to create temporary directory"
@@ -297,19 +307,17 @@ uninstall_workhub() {
 
 prompt_install() {
     latest="$1"
-    tag="$2"
     answer="$(read_tty "Install workhub ${latest}? [Y/n] ")"
     case "${answer}" in
-        "" | y | Y | yes | YES | Yes) install_latest "${tag}" "${latest}" ;;
+        "" | y | Y | yes | YES | Yes) install_latest "${latest}" ;;
         *) say "Canceled." ;;
     esac
 }
 
 prompt_update_or_uninstall() {
     latest="$1"
-    tag="$2"
-    default_choice="$3"
-    update_label="$4"
+    default_choice="$2"
+    update_label="$3"
 
     say "Choose an action:"
     say "1. ${update_label}"
@@ -321,7 +329,7 @@ prompt_update_or_uninstall() {
     fi
 
     case "${answer}" in
-        1) install_latest "${tag}" "${latest}" ;;
+        1) install_latest "${latest}" ;;
         2) uninstall_workhub ;;
         3) say "Canceled." ;;
         *) say "Canceled." ;;
@@ -363,7 +371,7 @@ main() {
     say ""
 
     if [ "${current}" = "not installed" ]; then
-        prompt_install "${latest}" "${tag}"
+        prompt_install "${latest}"
         return
     fi
 
@@ -373,15 +381,15 @@ main() {
             prompt_uninstall_or_cancel
             ;;
         lt)
-            prompt_update_or_uninstall "${latest}" "${tag}" "1" "Update to ${latest}"
+            prompt_update_or_uninstall "${latest}" "1" "Update to ${latest}"
             ;;
         gt)
             say "Installed version is newer than the latest GitHub release."
             say ""
-            prompt_update_or_uninstall "${latest}" "${tag}" "3" "Reinstall ${latest}"
+            prompt_update_or_uninstall "${latest}" "3" "Reinstall ${latest}"
             ;;
         *)
-            prompt_update_or_uninstall "${latest}" "${tag}" "1" "Install ${latest} over the current binary"
+            prompt_update_or_uninstall "${latest}" "1" "Install ${latest} over the current binary"
             ;;
     esac
 }

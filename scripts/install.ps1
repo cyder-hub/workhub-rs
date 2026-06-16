@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $Repo = "cyder-hub/workhub-rs"
 $RepoUrl = "https://github.com/$Repo"
-$ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
+$LatestReleaseUrl = "$RepoUrl/releases/latest"
 $LocalAppData = $env:LOCALAPPDATA
 if ([string]::IsNullOrWhiteSpace($LocalAppData)) {
     $LocalAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
@@ -49,17 +49,45 @@ function Get-AssetName {
 }
 
 function Get-LatestTag {
+    $response = $null
     try {
-        $release = Invoke-RestMethod -Uri $ApiUrl -Headers $Headers
+        $request = [System.Net.HttpWebRequest] [System.Net.WebRequest]::Create($LatestReleaseUrl)
+        $request.Method = "HEAD"
+        $request.AllowAutoRedirect = $false
+        $request.UserAgent = "workhub-installer"
+        $response = $request.GetResponse()
+    } catch [System.Net.WebException] {
+        $response = $_.Exception.Response
     } catch {
-        Fail "failed to read latest GitHub release: $($_.Exception.Message)"
+        Fail "failed to resolve latest GitHub release: $($_.Exception.Message)"
     }
 
-    if ([string]::IsNullOrWhiteSpace($release.tag_name)) {
-        Fail "latest GitHub release does not contain tag_name"
+    if ($null -eq $response) {
+        Fail "failed to resolve latest GitHub release"
     }
 
-    return ([string]$release.tag_name)
+    try {
+        $location = $response.Headers["Location"]
+        if ([string]::IsNullOrWhiteSpace($location) -and $null -ne $response.ResponseUri) {
+            $location = $response.ResponseUri.AbsoluteUri
+        }
+    } finally {
+        $response.Close()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($location)) {
+        Fail "latest GitHub release redirect did not include a Location header"
+    }
+
+    if ($location.StartsWith("/", [System.StringComparison]::Ordinal)) {
+        $location = "https://github.com$location"
+    }
+
+    if ($location -notmatch "/releases/tag/([^/?#]+)") {
+        Fail "latest GitHub release redirect did not include a tag"
+    }
+
+    return [System.Uri]::UnescapeDataString($Matches[1])
 }
 
 function Get-InstalledVersion {
@@ -188,7 +216,6 @@ function Remove-PathEntry {
 
 function Install-Latest {
     param(
-        [string] $Tag,
         [string] $LatestVersion,
         [string] $AssetName
     )
@@ -199,7 +226,7 @@ function Install-Latest {
     try {
         $assetPath = Join-Path $tempRoot $AssetName
         $checksumPath = Join-Path $tempRoot "$AssetName.sha256"
-        $assetUrl = "$RepoUrl/releases/download/$Tag/$AssetName"
+        $assetUrl = "$RepoUrl/releases/latest/download/$AssetName"
 
         Write-Host "Downloading $AssetName..."
         Save-Uri -Uri $assetUrl -OutFile $assetPath
@@ -241,14 +268,13 @@ function Uninstall-Workhub {
 function Prompt-Install {
     param(
         [string] $LatestVersion,
-        [string] $Tag,
         [string] $AssetName
     )
 
     $answer = Read-Host "Install workhub $LatestVersion? [Y/n]"
     switch -Regex ($answer) {
-        "^\s*$" { Install-Latest -Tag $Tag -LatestVersion $LatestVersion -AssetName $AssetName; return }
-        "^(y|yes)$" { Install-Latest -Tag $Tag -LatestVersion $LatestVersion -AssetName $AssetName; return }
+        "^\s*$" { Install-Latest -LatestVersion $LatestVersion -AssetName $AssetName; return }
+        "^(y|yes)$" { Install-Latest -LatestVersion $LatestVersion -AssetName $AssetName; return }
         default { Write-Host "Canceled."; return }
     }
 }
@@ -256,7 +282,6 @@ function Prompt-Install {
 function Prompt-UpdateOrUninstall {
     param(
         [string] $LatestVersion,
-        [string] $Tag,
         [string] $AssetName,
         [string] $DefaultChoice,
         [string] $UpdateLabel
@@ -272,7 +297,7 @@ function Prompt-UpdateOrUninstall {
     }
 
     switch ($answer) {
-        "1" { Install-Latest -Tag $Tag -LatestVersion $LatestVersion -AssetName $AssetName }
+        "1" { Install-Latest -LatestVersion $LatestVersion -AssetName $AssetName }
         "2" { Uninstall-Workhub }
         default { Write-Host "Canceled." }
     }
@@ -313,19 +338,19 @@ Write-Host "Latest: $LatestVersion"
 Write-Host ""
 
 if ($null -eq $InstalledVersion) {
-    Prompt-Install -LatestVersion $LatestVersion -Tag $LatestTag -AssetName $AssetName
+    Prompt-Install -LatestVersion $LatestVersion -AssetName $AssetName
     exit 0
 }
 
 $comparison = Compare-WorkhubVersion -Current $InstalledVersion -Latest $LatestVersion
 if ($null -eq $comparison) {
-    Prompt-UpdateOrUninstall -LatestVersion $LatestVersion -Tag $LatestTag -AssetName $AssetName -DefaultChoice "1" -UpdateLabel "Install $LatestVersion over the current binary"
+    Prompt-UpdateOrUninstall -LatestVersion $LatestVersion -AssetName $AssetName -DefaultChoice "1" -UpdateLabel "Install $LatestVersion over the current binary"
 } elseif ($comparison -eq 0) {
     Prompt-UninstallOrCancel
 } elseif ($comparison -lt 0) {
-    Prompt-UpdateOrUninstall -LatestVersion $LatestVersion -Tag $LatestTag -AssetName $AssetName -DefaultChoice "1" -UpdateLabel "Update to $LatestVersion"
+    Prompt-UpdateOrUninstall -LatestVersion $LatestVersion -AssetName $AssetName -DefaultChoice "1" -UpdateLabel "Update to $LatestVersion"
 } else {
     Write-Host "Installed version is newer than the latest GitHub release."
     Write-Host ""
-    Prompt-UpdateOrUninstall -LatestVersion $LatestVersion -Tag $LatestTag -AssetName $AssetName -DefaultChoice "3" -UpdateLabel "Reinstall $LatestVersion"
+    Prompt-UpdateOrUninstall -LatestVersion $LatestVersion -AssetName $AssetName -DefaultChoice "3" -UpdateLabel "Reinstall $LatestVersion"
 }
