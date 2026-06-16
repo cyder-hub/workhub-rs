@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.4.5 - 2026-06-16
+
+### Changed
+- Changed the Linux/macOS and Windows installers to resolve the latest release from the GitHub release redirect instead of the rate-limited GitHub REST API.
+
 ## 0.4.4 - 2026-06-16
 
 ### Fixed
