@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
 use rmcp::{ErrorData, model::CallToolResult};
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
 use crate::{
     confluence::client::ConfluenceClient, context::AppContext, gitlab::client::GitlabClient,
-    jira::client::JiraClient, tool_registry,
+    jira::client::JiraClient, tool_registry, upstream::error::UpstreamError,
 };
 
 pub mod confluence;
@@ -101,6 +101,86 @@ pub fn operation_error_to_mcp(error: OperationError) -> ErrorData {
     }
 }
 
+pub fn mutation_success(message: impl Into<String>, data: Value) -> Value {
+    let mut object = Map::new();
+    object.insert("success".to_string(), Value::Bool(true));
+    object.insert("message".to_string(), Value::String(message.into()));
+    object.insert("data".to_string(), non_null_data(data));
+    object.insert("warnings".to_string(), Value::Array(Vec::new()));
+    Value::Object(object)
+}
+
+pub fn mutation_success_with_fields(
+    message: impl Into<String>,
+    data: Value,
+    fields: impl IntoIterator<Item = (&'static str, Value)>,
+) -> Value {
+    let mut value = mutation_success(message, data);
+    let object = value
+        .as_object_mut()
+        .expect("mutation_success must return an object");
+    for (key, field_value) in fields {
+        object.insert(key.to_string(), field_value);
+    }
+    value
+}
+
+pub fn mutation_failure(
+    message: impl Into<String>,
+    category: impl Into<String>,
+    error: impl Into<String>,
+    cleanup_hint: Option<Value>,
+) -> Value {
+    let mut object = Map::new();
+    object.insert("success".to_string(), Value::Bool(false));
+    object.insert("message".to_string(), Value::String(message.into()));
+    object.insert(
+        "error".to_string(),
+        json!({
+            "category": category.into(),
+            "message": error.into(),
+        }),
+    );
+    object.insert("warnings".to_string(), Value::Array(Vec::new()));
+    if let Some(cleanup_hint) = cleanup_hint {
+        object.insert("cleanup_hint".to_string(), cleanup_hint);
+    }
+    Value::Object(object)
+}
+
+pub fn mutation_failure_from_upstream(
+    message: impl Into<String>,
+    error: &UpstreamError,
+    cleanup_hint: Option<Value>,
+) -> Value {
+    mutation_failure(
+        message,
+        upstream_failure_category(error),
+        error.to_string(),
+        cleanup_hint,
+    )
+}
+
+pub fn non_null_data(value: Value) -> Value {
+    if value.is_null() { json!({}) } else { value }
+}
+
+pub fn upstream_failure_category(error: &UpstreamError) -> &'static str {
+    match error {
+        UpstreamError::InvalidInput { .. } => "invalid_input",
+        UpstreamError::InvalidBaseUrl { .. } => "config",
+        UpstreamError::HttpStatus { status, .. } => match *status {
+            401 | 403 => "permission_denied",
+            404 => "not_found",
+            405 => "unsupported_or_auth_required",
+            _ => "http_status",
+        },
+        UpstreamError::Transport { .. } => "transport",
+        UpstreamError::JsonDecode { .. } => "json_decode",
+        UpstreamError::UnexpectedShape { .. } => "unexpected_shape",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -167,6 +247,57 @@ mod tests {
             json!(false)
         );
         assert_eq!(result.is_error, Some(true));
+    }
+
+    #[test]
+    fn mutation_success_replaces_no_content_data_with_empty_object() {
+        let value = mutation_success("done", Value::Null);
+
+        assert_eq!(value["success"], json!(true));
+        assert_eq!(value["data"], json!({}));
+        assert_eq!(value["warnings"], json!([]));
+    }
+
+    #[test]
+    fn mutation_failure_includes_category_message_and_cleanup_hint() {
+        let value = mutation_failure(
+            "delete failed",
+            "permission_denied",
+            "forbidden",
+            Some(json!({"manual": "remove object in UI"})),
+        );
+
+        assert_eq!(value["success"], json!(false));
+        assert_eq!(value["error"]["category"], json!("permission_denied"));
+        assert_eq!(
+            value["cleanup_hint"]["manual"],
+            json!("remove object in UI")
+        );
+    }
+
+    #[test]
+    fn upstream_failure_category_maps_common_compatibility_statuses() {
+        assert_eq!(
+            upstream_failure_category(&UpstreamError::http_status(
+                reqwest::StatusCode::FORBIDDEN,
+                "forbidden",
+            )),
+            "permission_denied"
+        );
+        assert_eq!(
+            upstream_failure_category(&UpstreamError::http_status(
+                reqwest::StatusCode::NOT_FOUND,
+                "missing",
+            )),
+            "not_found"
+        );
+        assert_eq!(
+            upstream_failure_category(&UpstreamError::http_status(
+                reqwest::StatusCode::METHOD_NOT_ALLOWED,
+                "no method",
+            )),
+            "unsupported_or_auth_required"
+        );
     }
 
     fn gitlab_config() -> GitlabConfig {

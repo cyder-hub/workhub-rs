@@ -488,7 +488,7 @@ async fn confluence_write_handlers_reject_invalid_content_format_before_http_req
 
 #[tokio::test]
 async fn confluence_delete_page_handler_returns_success_and_structured_failure() {
-    let (base_url, _requests) = mock_confluence_server().await;
+    let (base_url, requests) = mock_confluence_server().await;
     let server = server_with_config(RuntimeConfig {
         confluence: Some(confluence_config_with_base_url(base_url)),
         ..runtime_config_all_toolsets()
@@ -496,12 +496,14 @@ async fn confluence_delete_page_handler_returns_success_and_structured_failure()
     let success = server
         .delete_page(Parameters(confluence_tools::ConfluenceDeletePageArgs {
             page_id: "123".to_string(),
+            confirm_id: "123".to_string(),
         }))
         .await
         .unwrap();
     let failure = server
         .delete_page(Parameters(confluence_tools::ConfluenceDeletePageArgs {
             page_id: "delete-error".to_string(),
+            confirm_id: "delete-error".to_string(),
         }))
         .await
         .unwrap();
@@ -518,9 +520,76 @@ async fn confluence_delete_page_handler_returns_success_and_structured_failure()
     assert_eq!(failure.is_error, Some(true));
     assert!(
         failure.structured_content.as_ref().unwrap()["error"]
-            .as_str()
+            .get("message")
+            .and_then(Value::as_str)
             .unwrap()
             .contains("delete failed")
+    );
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0].method, Method::GET);
+    assert!(requests[0].path.starts_with("/rest/api/content/123?"));
+    assert_eq!(requests[1].method, Method::DELETE);
+    assert_eq!(requests[1].path, "/rest/api/content/123");
+    assert_eq!(requests[2].method, Method::GET);
+    assert!(
+        requests[2]
+            .path
+            .starts_with("/rest/api/content/delete-error?")
+    );
+    assert_eq!(requests[3].method, Method::DELETE);
+    assert_eq!(requests[3].path, "/rest/api/content/delete-error");
+}
+
+#[tokio::test]
+async fn confluence_delete_page_requires_confirm_id_before_upstream_call() {
+    let (base_url, requests) = mock_confluence_server().await;
+    let server = server_with_config(RuntimeConfig {
+        confluence: Some(confluence_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+    let error = server
+        .delete_page(Parameters(confluence_tools::ConfluenceDeletePageArgs {
+            page_id: "123".to_string(),
+            confirm_id: "456".to_string(),
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(error.message.contains("confirm_id must match page_id"));
+    assert_eq!(requests.lock().await.len(), 0);
+}
+
+#[tokio::test]
+async fn confluence_delete_page_preflight_failure_returns_cleanup_hint_without_delete() {
+    let (base_url, requests) = mock_confluence_server().await;
+    let server = server_with_config(RuntimeConfig {
+        confluence: Some(confluence_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+    let result = server
+        .delete_page(Parameters(confluence_tools::ConfluenceDeletePageArgs {
+            page_id: "preflight-forbidden".to_string(),
+            confirm_id: "preflight-forbidden".to_string(),
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(result.is_error, Some(true));
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["success"], json!(false));
+    assert_eq!(structured["error"]["category"], json!("permission_denied"));
+    assert_eq!(
+        structured["cleanup_hint"]["verified_by"],
+        json!("confluence page get")
+    );
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, Method::GET);
+    assert!(
+        requests[0]
+            .path
+            .starts_with("/rest/api/content/preflight-forbidden?")
     );
 }
 
@@ -702,6 +771,103 @@ async fn confluence_add_and_reply_comment_handlers_post_storage_payloads() {
 }
 
 #[tokio::test]
+async fn confluence_update_and_delete_comment_handlers_use_content_endpoints() {
+    let (base_url, requests) = mock_confluence_server().await;
+    let server = server_with_config(RuntimeConfig {
+        confluence: Some(confluence_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+    let updated = server
+        .update_page_comment(Parameters(confluence_tools::ConfluenceUpdateCommentArgs {
+            page_id: "123".to_string(),
+            comment_id: "c-1".to_string(),
+            body: "Updated body".to_string(),
+        }))
+        .await
+        .unwrap();
+    let deleted = server
+        .delete_page_comment(Parameters(confluence_tools::ConfluenceDeleteCommentArgs {
+            page_id: "123".to_string(),
+            comment_id: "c-1".to_string(),
+        }))
+        .await
+        .unwrap();
+
+    let updated_structured = updated.structured_content.as_ref().unwrap();
+    assert_eq!(updated_structured["success"], json!(true));
+    assert_eq!(
+        updated_structured["message"],
+        json!("Comment updated successfully")
+    );
+    assert_eq!(updated_structured["comment"]["id"], json!("c-1"));
+    assert_eq!(updated_structured["comment"]["body"], json!("Updated body"));
+    let deleted_structured = deleted.structured_content.as_ref().unwrap();
+    assert_eq!(deleted_structured["success"], json!(true));
+    assert_eq!(deleted_structured["data"]["page_id"], json!("123"));
+    assert_eq!(deleted_structured["data"]["comment_id"], json!("c-1"));
+    assert_eq!(
+        deleted_structured["cleanup_hint"]["verified_by"],
+        json!("confluence page comment list")
+    );
+
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0].method, Method::GET);
+    assert!(requests[0].path.starts_with("/rest/api/content/c-1?"));
+    assert_eq!(requests[1].method, Method::PUT);
+    assert_eq!(requests[1].path, "/rest/api/content/c-1");
+    assert_eq!(requests[1].body["id"], json!("c-1"));
+    assert_eq!(requests[1].body["type"], json!("comment"));
+    assert_eq!(requests[1].body["version"]["number"], json!(3));
+    assert_eq!(
+        requests[1].body["body"]["storage"]["value"],
+        json!("<p>Updated body</p>")
+    );
+    assert_eq!(requests[2].method, Method::GET);
+    assert!(requests[2].path.starts_with("/rest/api/content/c-1?"));
+    assert_eq!(requests[3].method, Method::DELETE);
+    assert_eq!(requests[3].path, "/rest/api/content/c-1");
+}
+
+#[tokio::test]
+async fn confluence_comment_mutations_reject_page_mismatch_before_write() {
+    let (base_url, requests) = mock_confluence_server().await;
+    let server = server_with_config(RuntimeConfig {
+        confluence: Some(confluence_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+    let update_error = server
+        .update_page_comment(Parameters(confluence_tools::ConfluenceUpdateCommentArgs {
+            page_id: "123".to_string(),
+            comment_id: "c-other".to_string(),
+            body: "Updated body".to_string(),
+        }))
+        .await
+        .unwrap_err();
+    let delete_error = server
+        .delete_page_comment(Parameters(confluence_tools::ConfluenceDeleteCommentArgs {
+            page_id: "123".to_string(),
+            comment_id: "c-other".to_string(),
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(
+        update_error
+            .message
+            .contains("comment_id c-other does not belong to page_id 123")
+    );
+    assert!(
+        delete_error
+            .message
+            .contains("comment_id c-other does not belong to page_id 123")
+    );
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests.iter().all(|request| request.method == Method::GET));
+}
+
+#[tokio::test]
 async fn confluence_comment_write_handlers_return_structured_failure() {
     let (base_url, _requests) = mock_confluence_server().await;
     let server = server_with_config(RuntimeConfig {
@@ -729,7 +895,8 @@ async fn confluence_comment_write_handlers_return_structured_failure() {
         assert_eq!(result.is_error, Some(true));
         assert!(
             structured["error"]
-                .as_str()
+                .get("message")
+                .and_then(Value::as_str)
                 .unwrap()
                 .contains("comment failed")
         );
@@ -804,6 +971,42 @@ async fn confluence_add_content_label_handler_posts_label_and_refreshes_list() {
     assert_eq!(requests[0].path, "/rest/api/content/123/label");
     assert_eq!(requests[0].body[0]["prefix"], json!("global"));
     assert_eq!(requests[0].body[0]["name"], json!("draft"));
+    assert_eq!(requests[1].method, Method::GET);
+    assert_eq!(requests[1].path, "/rest/api/content/123/label");
+}
+
+#[tokio::test]
+async fn confluence_remove_content_label_handler_deletes_label_and_refreshes_list() {
+    let (base_url, requests) = mock_confluence_server().await;
+    let server = server_with_config(RuntimeConfig {
+        confluence: Some(confluence_config_with_base_url(base_url)),
+        mcp_enabled_toolsets: tool_registry::all_toolsets(),
+        ..runtime_config_all_toolsets()
+    });
+    let result = server
+        .remove_content_label(Parameters(confluence_tools::ConfluenceRemoveLabelArgs {
+            page_id: "123".to_string(),
+            name: "draft".to_string(),
+        }))
+        .await
+        .unwrap();
+
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["message"], json!("Label removed successfully"));
+    assert_eq!(structured["content_id"], json!("123"));
+    assert_eq!(structured["removed_label"], json!("draft"));
+    assert_eq!(
+        structured["cleanup_hint"]["verified_by"],
+        json!("confluence content label list")
+    );
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, Method::DELETE);
+    assert!(requests[0].path.starts_with("/rest/api/content/123/label?"));
+    assert_eq!(
+        query_value(&requests[0].path, "name").as_deref(),
+        Some("draft")
+    );
     assert_eq!(requests[1].method, Method::GET);
     assert_eq!(requests[1].path, "/rest/api/content/123/label");
 }
@@ -1874,7 +2077,7 @@ async fn confluence_upload_content_attachment_handler_rejects_oversized_file_bef
     let structured = result.structured_content.as_ref().unwrap();
     assert_eq!(structured["success"], json!(false));
     assert_eq!(result.is_error, Some(true));
-    let error = structured["error"].as_str().unwrap();
+    let error = structured["error"]["message"].as_str().unwrap();
     assert!(error.contains("exceeds configured upload limit"));
     assert!(error.contains("too-large.bin"));
     assert!(!error.contains(&file_path));
@@ -1967,6 +2170,7 @@ async fn confluence_delete_attachment_handler_returns_structured_success_and_fai
         .delete_attachment(Parameters(
             confluence_tools::ConfluenceDeleteAttachmentArgs {
                 attachment_id: "att-1".to_string(),
+                confirm_id: "att-1".to_string(),
             },
         ))
         .await
@@ -1975,6 +2179,7 @@ async fn confluence_delete_attachment_handler_returns_structured_success_and_fai
         .delete_attachment(Parameters(
             confluence_tools::ConfluenceDeleteAttachmentArgs {
                 attachment_id: "att-delete-error".to_string(),
+                confirm_id: "att-delete-error".to_string(),
             },
         ))
         .await
@@ -1983,22 +2188,97 @@ async fn confluence_delete_attachment_handler_returns_structured_success_and_fai
     let success = success.structured_content.as_ref().unwrap();
     assert_eq!(success["success"], json!(true));
     assert_eq!(success["attachment_id"], json!("att-1"));
+    assert_eq!(
+        success["cleanup_hint"]["verified_by"],
+        json!("confluence attachment download")
+    );
     assert_eq!(failure.is_error, Some(true));
     let failure = failure.structured_content.as_ref().unwrap();
     assert_eq!(failure["success"], json!(false));
     assert_eq!(failure["attachment_id"], json!("att-delete-error"));
     assert!(
         failure["error"]
-            .as_str()
+            .get("message")
+            .and_then(Value::as_str)
             .unwrap()
             .contains("delete attachment failed")
     );
     let requests = requests.lock().await;
-    assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].method, Method::DELETE);
-    assert_eq!(requests[0].path, "/rest/api/content/att-1");
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0].method, Method::GET);
+    assert!(requests[0].path.starts_with("/rest/api/content/att-1?"));
     assert_eq!(requests[1].method, Method::DELETE);
-    assert_eq!(requests[1].path, "/rest/api/content/att-delete-error");
+    assert_eq!(requests[1].path, "/rest/api/content/att-1");
+    assert_eq!(requests[2].method, Method::GET);
+    assert!(
+        requests[2]
+            .path
+            .starts_with("/rest/api/content/att-delete-error?")
+    );
+    assert_eq!(requests[3].method, Method::DELETE);
+    assert_eq!(requests[3].path, "/rest/api/content/att-delete-error");
+}
+
+#[tokio::test]
+async fn confluence_delete_attachment_requires_confirm_id_before_upstream_call() {
+    let (base_url, requests) = mock_confluence_server().await;
+    let server = server_with_config(RuntimeConfig {
+        confluence: Some(confluence_config_with_base_url(base_url)),
+        mcp_enabled_toolsets: tool_registry::all_toolsets(),
+        ..runtime_config_all_toolsets()
+    });
+    let error = server
+        .delete_attachment(Parameters(
+            confluence_tools::ConfluenceDeleteAttachmentArgs {
+                attachment_id: "att-1".to_string(),
+                confirm_id: "other".to_string(),
+            },
+        ))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .message
+            .contains("confirm_id must match attachment_id")
+    );
+    assert_eq!(requests.lock().await.len(), 0);
+}
+
+#[tokio::test]
+async fn confluence_delete_attachment_preflight_failure_returns_cleanup_hint_without_delete() {
+    let (base_url, requests) = mock_confluence_server().await;
+    let server = server_with_config(RuntimeConfig {
+        confluence: Some(confluence_config_with_base_url(base_url)),
+        mcp_enabled_toolsets: tool_registry::all_toolsets(),
+        ..runtime_config_all_toolsets()
+    });
+    let result = server
+        .delete_attachment(Parameters(
+            confluence_tools::ConfluenceDeleteAttachmentArgs {
+                attachment_id: "att-preflight-forbidden".to_string(),
+                confirm_id: "att-preflight-forbidden".to_string(),
+            },
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(result.is_error, Some(true));
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["success"], json!(false));
+    assert_eq!(structured["error"]["category"], json!("permission_denied"));
+    assert_eq!(
+        structured["cleanup_hint"]["verified_by"],
+        json!("confluence attachment download")
+    );
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, Method::GET);
+    assert!(
+        requests[0]
+            .path
+            .starts_with("/rest/api/content/att-preflight-forbidden?")
+    );
 }
 
 #[tokio::test]

@@ -18,11 +18,11 @@ This matrix is the current release support reference for the Rust MCP server. It
 
 | Service | Expected business tools | Rust business tools | Release status |
 | --- | ---: | ---: | --- |
-| Jira | 46 | 46 | Implemented |
-| Confluence | 24 | 24 | Implemented |
-| GitLab | 15 | 15 | Implemented |
-| Total business tools | 85 | 85 | Implemented |
-| Production CLI commands | 85 | 85 | Resource-oriented CLI commands call the same shared operation layer as MCP handlers. |
+| Jira | 52 | 52 | Implemented |
+| Confluence | 27 | 27 | Implemented |
+| GitLab | 22 | 22 | Implemented |
+| Total business tools | 101 | 101 | Implemented |
+| Production CLI commands | 101 | 101 | Resource-oriented CLI commands call the same shared operation layer as MCP handlers. |
 | Utility tools | 0 | 0 exposed | No utility tool is exposed in the production MCP or CLI surface. |
 
 ## Jira Tools
@@ -43,6 +43,7 @@ All Jira rows below are implemented in Rust and are registry-managed business to
 | `jira_list_field_options` | read | `jira_fields_read` | Local mock REST and MCP handler covered. | Real accepted for field option lookup. |
 | `jira_add_issue_comment` | write | `jira_issue_comments_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; no dedicated real comment write row. |
 | `jira_update_issue_comment` | write | `jira_issue_comments_update` | Local mock REST, schema, and disabled-tool guard covered. | Local only; no dedicated real edit row. |
+| `jira_delete_issue_comment` | write | `jira_issue_comments_update` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real comment delete was not executed. |
 | `jira_list_issue_transitions` | read | `jira_issue_workflows_read` | Local mock REST coverage for transition listing. | Local only. |
 | `jira_transition_issue` | write | `jira_issue_workflows_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real transition was not executed. |
 | `jira_list_projects` | read | `jira_projects_read` | Local mock REST and MCP handler covered. | Local only. |
@@ -56,10 +57,15 @@ All Jira rows below are implemented in Rust and are registry-managed business to
 | `jira_remove_issue_watcher` | write | `jira_issue_watchers_delete` | Local mock REST, schema, and disabled-tool guard covered. | Disabled-tool guard only; real watcher removal was not executed. |
 | `jira_list_issue_worklogs` | read | `jira_issue_worklogs_read` | Local mock REST and smoke coverage. | Local only. |
 | `jira_add_issue_worklog` | write | `jira_issue_worklogs_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real worklog add was not executed. |
+| `jira_update_issue_worklog` | write | `jira_issue_worklogs_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real worklog update was not executed. |
+| `jira_delete_issue_worklog` | write | `jira_issue_worklogs_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real worklog delete was not executed. |
 | `jira_list_issue_link_types` | read | `jira_issue_links_read` | Local mock REST coverage for link type listing. | Local only. |
 | `jira_set_issue_parent` | write | `jira_issue_links_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real link mutation was not executed. |
+| `jira_list_issue_links` | read | `jira_issue_links_read` | Local mock REST and MCP handler coverage for issue link discovery and cleanup preview ids. | Local only. |
 | `jira_create_issue_link` | write | `jira_issue_links_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real issue link creation was not executed. |
+| `jira_list_remote_issue_links` | read | `jira_issue_links_read` | Local mock REST and MCP handler coverage for remote-link discovery and cleanup ids. | Local only. |
 | `jira_create_remote_issue_link` | write | `jira_issue_links_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real remote link creation was not executed. |
+| `jira_delete_remote_issue_link` | write | `jira_issue_links_delete` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real remote link delete was not executed. |
 | `jira_delete_issue_link` | write | `jira_issue_links_delete` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real link removal was not executed. |
 | `jira_get_issue_attachments` | read | `jira_issue_attachments_read` | Local mock REST coverage for bounded attachment output. | Local only. |
 | `jira_get_issue_image_attachments` | read | `jira_issue_attachments_read` | Local mock REST coverage for issue image retrieval. | Local only. |
@@ -90,13 +96,16 @@ All Confluence rows below are implemented in Rust and are registry-managed busin
 | `confluence_get_space_page_tree` | read | `confluence_content_read` | Local mock REST coverage for page tree. | Real accepted for space tree. |
 | `confluence_create_page` | write | `confluence_content_write` | Local mock REST, schema, disabled-tool guard, and `emoji_status` success output covered. | Real accepted on a test object. |
 | `confluence_update_page` | write | `confluence_content_update` | Local mock REST, schema, disabled-tool guard, and `emoji_status` success/failure output covered. | Real accepted on a test object. |
-| `confluence_delete_page` | write | `confluence_content_delete` | Local mock REST, schema, and disabled-tool guard covered. | Disabled-tool guard only; real delete was not executed. |
+| `confluence_delete_page` | write | `confluence_content_delete` | Local mock REST, schema, confirm-id, preflight, and disabled-tool guard covered. | Disabled-tool guard only; real delete was not executed. |
 | `confluence_move_page` | write | `confluence_content_update` | Local mock REST, schema, and disabled-tool guard covered. | Disabled-tool guard only; real move was not executed. |
 | `confluence_list_page_comments` | read | `confluence_page_comments_read` | Local mock REST coverage for page comments. | Real accepted for comment read. |
 | `confluence_add_page_comment` | write | `confluence_page_comments_write` | Local mock REST, schema, and disabled-tool guard covered. | Real accepted on a test object. |
 | `confluence_reply_to_comment` | write | `confluence_page_comments_write` | Local mock REST, schema, and disabled-tool guard covered. | Real accepted on a test comment. |
+| `confluence_update_page_comment` | write | `confluence_page_comments_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real comment update was not executed. |
+| `confluence_delete_page_comment` | write | `confluence_page_comments_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real comment delete was not executed. |
 | `confluence_list_content_labels` | read | `confluence_content_labels_read` | Local mock REST coverage for labels. | Real accepted for label read. |
 | `confluence_add_content_label` | write | `confluence_content_labels_write` | Local mock REST, schema, and disabled-tool guard covered. | Real accepted on a test object. |
+| `confluence_remove_content_label` | write | `confluence_content_labels_write` | Local mock REST, schema, and disabled-tool guard covered. | Local only; real label remove was not executed. |
 | `confluence_search_users` | read | `confluence_users_read` | Local mock REST coverage for Cloud CQL and Server/Data Center fallback behavior. | Local only; real acceptance did not execute a dedicated user-search row. |
 | `confluence_get_page_version` | read | `confluence_page_versions_read` | Local mock REST coverage for page history. | Local only. |
 | `confluence_get_page_diff` | read | `confluence_page_versions_read` | Local mock REST coverage for page version diff. | Local only. |
@@ -106,12 +115,12 @@ All Confluence rows below are implemented in Rust and are registry-managed busin
 | `confluence_list_content_attachments` | read | `confluence_attachments_read` | Local mock REST coverage for attachment listing. | Real accepted for attachment listing. |
 | `confluence_download_attachment` | read | `confluence_attachments_read` | Local mock REST coverage for same-origin bounded attachment download. | Real accepted for single attachment download. |
 | `confluence_download_content_attachments` | read | `confluence_attachments_read` | Local mock REST coverage for paginated bounded multi-attachment download, partial failures, and page protection summaries. | Real accepted for content attachment download. |
-| `confluence_delete_attachment` | write | `confluence_attachments_delete` | Local mock REST, schema, and disabled-tool guard covered. | Disabled-tool guard only; real attachment delete was not executed. |
+| `confluence_delete_attachment` | write | `confluence_attachments_delete` | Local mock REST, schema, confirm-id, preflight, and disabled-tool guard covered. | Disabled-tool guard only; real attachment delete was not executed. |
 | `confluence_get_content_image_attachments` | read | `confluence_attachments_read` | Local mock REST coverage for page image extraction. | Real accepted for page images. |
 
 ## GitLab Tools
 
-All GitLab rows below are implemented in Rust and are registry-managed business tools. GitLab support is local/mock validated only; real GitLab acceptance has not been run. The local GitLab smoke covers current user, project, MR list, streamable HTTP `/healthz`, production CLI text/JSON output, MCP restricted create-MR guard behavior, and CLI isolation from MCP tool visibility controls.
+All GitLab rows below are implemented in Rust and are registry-managed business tools. GitLab support is local/mock validated only; real GitLab acceptance has not been run. The local GitLab smoke covers current user, project, MR list, streamable HTTP `/healthz`, production CLI text/JSON output, MCP restricted create-MR guard behavior, GitLab cleanup command parsing, and CLI isolation from MCP tool visibility controls.
 
 | Tool | Access | Toolset | Local/MCP status | Real acceptance status |
 | --- | --- | --- | --- | --- |
@@ -124,12 +133,19 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 | `gitlab_list_merge_request_pipelines` | read | `gitlab_merge_requests_read` | Local mock REST coverage for MR pipeline listing with bounded pagination. | Local only; real GitLab acceptance was not run. |
 | `gitlab_create_merge_request` | write | `gitlab_merge_requests_write` | Local mock REST and MCP handler coverage for create payload fields. | Local only; real GitLab write acceptance was not run. |
 | `gitlab_update_merge_request` | write | `gitlab_merge_requests_write` | Local mock REST and MCP handler coverage for mutable MR fields, explicit empty clear values, labels, reviewers, assignees, state, and target branch. | Local only; real GitLab write acceptance was not run. |
-| `gitlab_add_merge_request_note` | write | `gitlab_merge_requests_write` | Local mock REST and MCP handler coverage for regular MR notes and empty-body rejection. | Local only; real GitLab write acceptance was not run. |
+| `gitlab_close_merge_request` | write | `gitlab_merge_requests_write` | Local mock REST, MCP handler, confirm-iid guard, cleanup hint, and CLI contract coverage for explicit MR close. | Local only; real GitLab write acceptance was not run. |
+| `gitlab_delete_merge_request` | write | `gitlab_merge_requests_write` | Local mock REST, MCP handler, confirm-iid guard, cleanup hint, and unsupported/delete error mapping coverage. | Local only; real GitLab write acceptance was not run. |
+| `gitlab_add_merge_request_note` | write | `gitlab_merge_requests_write` | Local mock REST and MCP handler coverage for regular MR notes, empty-body rejection, and discussion-id lookup. | Local only; real GitLab write acceptance was not run. |
+| `gitlab_update_merge_request_note` | write | `gitlab_merge_requests_write` | Local mock REST and MCP handler coverage for note body updates. | Local only; real GitLab write acceptance was not run. |
+| `gitlab_delete_merge_request_note` | write | `gitlab_merge_requests_write` | Local mock REST and MCP handler coverage for note cleanup and cleanup hint output. | Local only; real GitLab write acceptance was not run. |
+| `gitlab_list_merge_request_discussions` | read | `gitlab_merge_requests_read` | Local mock REST and MCP handler coverage for discussion and note-id discovery. | Local only; real GitLab acceptance was not run. |
 | `gitlab_reply_merge_request_discussion` | write | `gitlab_merge_requests_write` | Local mock REST and MCP handler coverage for discussion reply payloads and discussion ID encoding. | Local only; real GitLab write acceptance was not run. |
 | `gitlab_resolve_merge_request_discussion` | write | `gitlab_merge_requests_write` | Local mock REST and MCP handler coverage for discussion resolved-state updates. | Local only; real GitLab write acceptance was not run. |
 | `gitlab_get_merge_request_approval_state` | read | `gitlab_merge_requests_read` | Local mock REST and MCP handler coverage for approval state. | Local only; availability can depend on GitLab tier and token permissions. |
 | `gitlab_set_merge_request_approval` | write | `gitlab_merge_requests_write` | Local mock REST and MCP handler coverage for approve and unapprove endpoints. | Local only; availability can depend on GitLab tier and token permissions. |
 | `gitlab_accept_merge_request` | write | `gitlab_merge_requests_merge` | Local mock REST and MCP handler coverage for SHA-gated merge payload and 409 upstream error mapping. | Local only; real GitLab merge acceptance was not run. |
+| `gitlab_create_branch` | write | `gitlab_merge_requests_write` | Local mock REST, MCP handler, CLI contract, JSON body, and project/branch path encoding coverage. | Local only; real GitLab write acceptance was not run. |
+| `gitlab_delete_branch` | write | `gitlab_merge_requests_write` | Local mock REST, MCP handler, confirm-branch guard, cleanup hint, and branch path encoding coverage. | Local only; real GitLab write acceptance was not run. |
 
 ## Acceptance Boundaries
 
@@ -144,12 +160,12 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 
 | Capability | Env or CLI surface | Rust status | Notes |
 | --- | --- | --- | --- |
-| Tool profile | `MCP_TOOL_PROFILE` | Supported | MCP-only. Supports `basic`, `developer`, `manager`, `full`, and `custom`; defaults to `basic`. With Jira, Confluence, and GitLab configured, profiles expose 23, 47, 82, 85, and 0 tools respectively. Service availability filters out tools for unconfigured services. Unknown values fail startup. |
+| Tool profile | `MCP_TOOL_PROFILE` | Supported | MCP-only. Supports `basic`, `developer`, `manager`, `full`, and `custom`; defaults to `basic`. With Jira, Confluence, and GitLab configured, profiles expose 24, 54, 98, 101, and 0 tools respectively. Service availability filters out tools for unconfigured services. Unknown values fail startup. |
 | Toolset filtering | `MCP_TOOLSETS` | Supported | Adds comma-separated registered toolsets to the selected profile. `all` enables every toolset; unknown names fail startup. |
 | Exact tool inclusion | `MCP_ENABLED_TOOLS` | Supported | Comma-separated MCP tool names to add exactly. |
 | Exact tool exclusion | `MCP_DISABLED_TOOLS` | Supported | Comma-separated MCP tool names to remove exactly. Takes precedence over profile/toolset inclusion. |
 | Streamable HTTP binding | `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_PATH`, `streamhttp --host/--port/--path` | Supported | Parsed only for streamable HTTP startup. Default MCP path is `/mcp`; missing leading slash is normalized. |
-| Resource CLI | `workhub cli ...` | Supported | Covers all 85 business capabilities as resource-oriented commands for configured services. It ignores `MCP_TOOL_PROFILE`, `MCP_TOOLSETS`, `MCP_ENABLED_TOOLS`, and `MCP_DISABLED_TOOLS`; no raw MCP tool-call, schema, or tools-list fallback is exposed. |
+| Resource CLI | `workhub cli ...` | Supported | Covers all 101 business capabilities as resource-oriented commands for configured services. It ignores `MCP_TOOL_PROFILE`, `MCP_TOOLSETS`, `MCP_ENABLED_TOOLS`, and `MCP_DISABLED_TOOLS`; no raw MCP tool-call, schema, or tools-list fallback is exposed. |
 | CLI JSON output | `workhub cli --json ...` and `--pretty` | Supported | Successful JSON goes to stdout; errors go to stderr. `--pretty` requires `--json`. |
 | CLI env file loading | `workhub cli --env-file <path>`, `ENV_FILE`, global `.env`, `./.env` | Supported | CLI priority is explicit env file, `ENV_FILE`, global CLI `.env`, strict current-directory `./.env`; `stdio` intentionally does not load dotenv files. |
 | CLI global config management | `workhub cli config path/show/setup/set/unset` | Supported | Operates on the global CLI `.env` before normal runtime config is loaded. `setup` is a lightweight authorization wizard; advanced settings can be changed with `set`. Secret values are redacted by `show`. |
@@ -169,7 +185,7 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 | Shared basic/API token fallback | `ATLASSIAN_USERNAME`, `ATLASSIAN_API_TOKEN` | Supported | Used when service-specific username/API-token variables are unset. Service-specific values take precedence. |
 | Shared Server/Data Center basic password fallback | `ATLASSIAN_USERNAME`, `ATLASSIAN_PASSWORD` | Supported | Used for non-Cloud Jira and Confluence when service-specific username/password variables and PAT are unset. |
 | Shared Server/Data Center PAT fallback | `ATLASSIAN_PERSONAL_TOKEN` | Supported | Used when service-specific PAT variables are unset. Service-specific values take precedence. |
-| GitLab token header auth | `GITLAB_URL`, `GITLAB_TOKEN` or `GITLAB_PERSONAL_TOKEN` | Supported | Token is sent as `PRIVATE-TOKEN`. Use `read_api` for read-only tools and `api` for writes, approvals, and merge. |
+| GitLab token header auth | `GITLAB_URL`, `GITLAB_TOKEN` or `GITLAB_PERSONAL_TOKEN` | Supported | Token is sent as `PRIVATE-TOKEN`. Use `read_api` for read-only tools and `api` for write, cleanup, approval, merge, and branch tools. |
 | GitLab username/password auth | `GITLAB_USERNAME`, `GITLAB_PASSWORD` | Not supported in the current Rust release | GitLab API auth is token-only in this implementation. |
 | OAuth Cloud 3LO authorization-code flow | OAuth app flow | Not supported in the current Rust release | Fixed backlog item; not implemented in the current release. |
 | OAuth proxy/DCR | Dynamic client registration/proxy flow | Not supported in the current Rust release | Fixed backlog item; not implemented in the current release. |

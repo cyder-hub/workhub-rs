@@ -1816,8 +1816,6 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use crate::operations::OperationErrorCategory;
-
     use super::*;
 
     fn temp_config_path(name: &str) -> PathBuf {

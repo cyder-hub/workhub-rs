@@ -63,9 +63,13 @@ Output and exits:
 | Invalid input | Empty | Operation error | `2` |
 | Missing service, unavailable service, project/space filter rejection | Empty | Operation error | `3` |
 | Upstream HTTP/transport/decode/shape error | Empty | Operation error | `4` |
-| Business structured error surfaced as CLI failure | Empty | Operation error | `5` |
+| Business structured error surfaced as CLI failure | Empty | Structured failure payload | `5` |
 
 Default text output renders scalar object fields as `key: value`. Object arrays inside results, such as `issues`, `values`, `results`, or `items`, are expanded into tabular sections with inferred key columns. Empty cells are shown as `-` so missing values remain visible in plain terminal output. Use `--json` when a caller needs the exact structured response.
+
+If a command returns a structured result whose top-level `success` field is `false`, the CLI treats it as a business failure even when the operation reached the service successfully. In that case stdout is empty, the result payload is written to stderr, and the process exits with code `5`. Automation should check both the process exit code and the JSON business fields.
+
+State-changing commands use a stable mutation envelope where applicable: top-level `success`, `message`, `data`, and `warnings`; batch commands also expose `partial_success`, `summary`, and `failed` when individual items can fail. No-content upstream responses use an empty object in `data` instead of a bare `null`. Compatibility and cleanup failures use structured error categories such as `permission_denied`, `not_found`, and `unsupported_or_auth_required` when the upstream status is specific enough to classify safely.
 
 Long text fields use mutually exclusive inline, file, or stdin inputs. File paths are read by the process running `workhub cli`; for remote shells or containers, this means the path must exist on that host/container.
 
@@ -79,7 +83,7 @@ Long text fields use mutually exclusive inline, file, or stdin inputs. File path
 | Search issues | `workhub cli jira issue search --jql <jql> [--fields <csv>] [--limit <n>] [--start-at <n>] [--projects <csv>] [--expand <csv>] [--page-token <token>]` |
 | List project issues | `workhub cli jira project issues <project-key> [--limit <n>] [--start-at <n>]` |
 | Create issue | `workhub cli jira issue create --project <key> --issue-type <type> --summary <text> [--description <text>|--description-file <path>|--description-stdin] [--assignee <user>] [--priority <name>] [--labels <csv>] [--components <csv>] [--fix-versions <csv>] [--additional-fields-json <json>|--additional-fields-file <path>]` |
-| Create issues | `workhub cli jira issue create-batch --issues-file <path> [--validate-only]` |
+| Create issues | `workhub cli jira issue create-batch --issues-file <path>` |
 | Get changelogs | `workhub cli jira issue changelog batch --issue-ids <csv> [--limit <n>] [--field-ids <csv>]` |
 | Update issue | `workhub cli jira issue update <issue-key> (--fields-json <json>|--fields-file <path>) [--notify-users <bool>]` |
 | Delete issue | `workhub cli jira issue delete <issue-key> [--delete-subtasks]` |
@@ -132,13 +136,16 @@ Long text fields use mutually exclusive inline, file, or stdin inputs. File path
 | Get space page tree | `workhub cli confluence page tree <space-key> [--limit <n>]` |
 | Create page | `workhub cli confluence page create --space <key> --title <title> (--content <text>|--content-file <path>|--content-stdin) [--parent-id <id>] [--format <markdown|wiki|storage>] [--include-content] [--emoji <emoji>]` |
 | Update page | `workhub cli confluence page update <page-id> --title <title> (--content <text>|--content-file <path>|--content-stdin) [--minor-edit <bool>] [--version-comment <text>] [--parent-id <id>] [--format <markdown|wiki|storage>] [--include-content] [--emoji <emoji>]` |
-| Delete page | `workhub cli confluence page delete <page-id>` |
+| Delete page | `workhub cli confluence page delete <page-id> --confirm-id <page-id>` |
 | Move page | `workhub cli confluence page move <page-id> [--target-parent-id <id>] [--target-space <key>] [--position <append|before|after>]` |
 | List comments | `workhub cli confluence page comment list <page-id>` |
 | Add comment | `workhub cli confluence page comment add <page-id> (--body <text>|--body-file <path>|--body-stdin)` |
 | Reply to comment | `workhub cli confluence page comment reply <page-id> <comment-id> (--body <text>|--body-file <path>|--body-stdin)` |
+| Update comment | `workhub cli confluence page comment update <page-id> <comment-id> (--body <text>|--body-file <path>|--body-stdin)` |
+| Delete comment | `workhub cli confluence page comment delete <page-id> <comment-id>` |
 | List labels | `workhub cli confluence content label list <content-id>` |
 | Add label | `workhub cli confluence content label add <content-id> <label>` |
+| Remove label | `workhub cli confluence content label remove <content-id> <label>` |
 | Search users | `workhub cli confluence user search --query <text> [--limit <n>] [--group <name>]` |
 | Get page version | `workhub cli confluence page version get <page-id> <version> [--markdown <bool>]` |
 | Get page diff | `workhub cli confluence page version diff <page-id> --from <version> --to <version> [--context-lines <n>]` |
@@ -148,7 +155,7 @@ Long text fields use mutually exclusive inline, file, or stdin inputs. File path
 | List attachments | `workhub cli confluence attachment list <content-id> [--filename-contains <text>] [--media-type <type>] [--start <n>] [--limit <n>]` |
 | Download attachment | `workhub cli confluence attachment download <attachment-id> [--max-bytes <n>]` |
 | Download content attachments | `workhub cli confluence attachment download-content <content-id> [--filename-contains <text>] [--media-type <type>] [--max-bytes <n>] [--limit <n>]` |
-| Delete attachment | `workhub cli confluence attachment delete <attachment-id>` |
+| Delete attachment | `workhub cli confluence attachment delete <attachment-id> --confirm-id <attachment-id>` |
 | Get image attachments | `workhub cli confluence attachment images <content-id> [--max-bytes <n>]` |
 
 ## GitLab
@@ -164,9 +171,16 @@ Long text fields use mutually exclusive inline, file, or stdin inputs. File path
 | List pipelines | `workhub cli gitlab mr pipelines <project> <iid> [--page <n>] [--per-page <n>]` |
 | Create MR | `workhub cli gitlab mr create <project> --source <branch> --target <branch> --title <title> [--description <text>|--description-file <path>|--description-stdin] [--remove-source-branch <bool>] [--squash <bool>] [--assignee-ids <csv>] [--reviewer-ids <csv>] [--labels <csv>]` |
 | Update MR | `workhub cli gitlab mr update <project> <iid> [--title <title>] [--description <text>|--description-file <path>|--description-stdin] [--state-event <event>] [--labels <csv>] [--add-labels <csv>] [--remove-labels <csv>] [--reviewer-ids <csv>] [--assignee-ids <csv>] [--target-branch <branch>]` |
+| Close MR | `workhub cli gitlab mr close <project> <iid> --confirm-iid <iid>` |
+| Delete MR | `workhub cli gitlab mr delete <project> <iid> --confirm-iid <iid>` |
 | Add note | `workhub cli gitlab mr note add <project> <iid> (--body <text>|--body-file <path>|--body-stdin)` |
+| Update note | `workhub cli gitlab mr note update <project> <iid> <note-id> (--body <text>|--body-file <path>|--body-stdin)` |
+| Delete note | `workhub cli gitlab mr note delete <project> <iid> <note-id>` |
+| List discussions | `workhub cli gitlab mr discussion list <project> <iid> [--page <n>] [--per-page <n>]` |
 | Reply discussion | `workhub cli gitlab mr discussion reply <project> <iid> <discussion-id> (--body <text>|--body-file <path>|--body-stdin)` |
 | Resolve discussion | `workhub cli gitlab mr discussion resolve <project> <iid> <discussion-id> --resolved <bool>` |
 | Get approval state | `workhub cli gitlab mr approval get <project> <iid>` |
 | Set approval | `workhub cli gitlab mr approval set <project> <iid> --action <approve|unapprove>` |
 | Merge MR | `workhub cli gitlab mr merge <project> <iid> --sha <sha> [--auto-merge <bool>] [--squash <bool>] [--remove-source-branch <bool>] [--merge-commit-message <text>] [--squash-commit-message <text>]` |
+| Create branch | `workhub cli gitlab branch create <project> <branch> --ref <ref>` |
+| Delete branch | `workhub cli gitlab branch delete <project> <branch> --confirm-branch <branch>` |

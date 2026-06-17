@@ -53,6 +53,12 @@ pub const JIRA_CAPABILITIES: &[CliCapability] = &[
     ),
     cap(
         "jira",
+        "Delete issue comment",
+        "jira issue comment delete",
+        tools::JIRA_DELETE_COMMENT_TOOL_NAME,
+    ),
+    cap(
+        "jira",
         "List transitions",
         "jira issue transition list",
         tools::JIRA_GET_TRANSITIONS_TOOL_NAME,
@@ -161,6 +167,18 @@ pub const JIRA_CAPABILITIES: &[CliCapability] = &[
     ),
     cap(
         "jira",
+        "Update worklog",
+        "jira issue worklog update",
+        tools::JIRA_UPDATE_WORKLOG_TOOL_NAME,
+    ),
+    cap(
+        "jira",
+        "Delete worklog",
+        "jira issue worklog delete",
+        tools::JIRA_DELETE_WORKLOG_TOOL_NAME,
+    ),
+    cap(
+        "jira",
         "List link types",
         "jira issue link-type list",
         tools::JIRA_LIST_ISSUE_LINK_TYPES_TOOL_NAME,
@@ -179,9 +197,27 @@ pub const JIRA_CAPABILITIES: &[CliCapability] = &[
     ),
     cap(
         "jira",
+        "List issue links",
+        "jira issue link list",
+        tools::JIRA_LIST_ISSUE_LINKS_TOOL_NAME,
+    ),
+    cap(
+        "jira",
         "Create remote link",
         "jira issue remote-link create",
         tools::JIRA_CREATE_REMOTE_ISSUE_LINK_TOOL_NAME,
+    ),
+    cap(
+        "jira",
+        "List remote links",
+        "jira issue remote-link list",
+        tools::JIRA_LIST_REMOTE_ISSUE_LINKS_TOOL_NAME,
+    ),
+    cap(
+        "jira",
+        "Delete remote link",
+        "jira issue remote-link delete",
+        tools::JIRA_DELETE_REMOTE_ISSUE_LINK_TOOL_NAME,
     ),
     cap(
         "jira",
@@ -356,6 +392,18 @@ pub const CONFLUENCE_CAPABILITIES: &[CliCapability] = &[
     ),
     cap(
         "confluence",
+        "Update comment",
+        "confluence page comment update",
+        confluence_tools::CONFLUENCE_UPDATE_COMMENT_TOOL_NAME,
+    ),
+    cap(
+        "confluence",
+        "Delete comment",
+        "confluence page comment delete",
+        confluence_tools::CONFLUENCE_DELETE_COMMENT_TOOL_NAME,
+    ),
+    cap(
+        "confluence",
         "List labels",
         "confluence content label list",
         confluence_tools::CONFLUENCE_LIST_CONTENT_LABELS_TOOL_NAME,
@@ -365,6 +413,12 @@ pub const CONFLUENCE_CAPABILITIES: &[CliCapability] = &[
         "Add label",
         "confluence content label add",
         confluence_tools::CONFLUENCE_ADD_LABEL_TOOL_NAME,
+    ),
+    cap(
+        "confluence",
+        "Remove label",
+        "confluence content label remove",
+        confluence_tools::CONFLUENCE_REMOVE_LABEL_TOOL_NAME,
     ),
     cap(
         "confluence",
@@ -491,9 +545,39 @@ pub const GITLAB_CAPABILITIES: &[CliCapability] = &[
     ),
     cap(
         "gitlab",
+        "Close MR",
+        "gitlab mr close",
+        gitlab_tools::GITLAB_CLOSE_MERGE_REQUEST_TOOL_NAME,
+    ),
+    cap(
+        "gitlab",
+        "Delete MR",
+        "gitlab mr delete",
+        gitlab_tools::GITLAB_DELETE_MERGE_REQUEST_TOOL_NAME,
+    ),
+    cap(
+        "gitlab",
         "Add note",
         "gitlab mr note add",
         gitlab_tools::GITLAB_ADD_MERGE_REQUEST_NOTE_TOOL_NAME,
+    ),
+    cap(
+        "gitlab",
+        "Update note",
+        "gitlab mr note update",
+        gitlab_tools::GITLAB_UPDATE_MERGE_REQUEST_NOTE_TOOL_NAME,
+    ),
+    cap(
+        "gitlab",
+        "Delete note",
+        "gitlab mr note delete",
+        gitlab_tools::GITLAB_DELETE_MERGE_REQUEST_NOTE_TOOL_NAME,
+    ),
+    cap(
+        "gitlab",
+        "List discussions",
+        "gitlab mr discussion list",
+        gitlab_tools::GITLAB_LIST_MERGE_REQUEST_DISCUSSIONS_TOOL_NAME,
     ),
     cap(
         "gitlab",
@@ -524,6 +608,18 @@ pub const GITLAB_CAPABILITIES: &[CliCapability] = &[
         "Accept MR",
         "gitlab mr merge",
         gitlab_tools::GITLAB_ACCEPT_MERGE_REQUEST_TOOL_NAME,
+    ),
+    cap(
+        "gitlab",
+        "Create branch",
+        "gitlab branch create",
+        gitlab_tools::GITLAB_CREATE_BRANCH_TOOL_NAME,
+    ),
+    cap(
+        "gitlab",
+        "Delete branch",
+        "gitlab branch delete",
+        gitlab_tools::GITLAB_DELETE_BRANCH_TOOL_NAME,
     ),
 ];
 
@@ -591,7 +687,7 @@ mod tests {
 
     #[test]
     fn cli_contract_covers_all_public_business_capabilities() {
-        assert_eq!(JIRA_CAPABILITIES.len(), 46);
+        assert_eq!(JIRA_CAPABILITIES.len(), 52);
         assert_eq!(
             CONFLUENCE_CAPABILITIES.len(),
             confluence_tools::CONFLUENCE_TOOL_NAMES.len()
@@ -600,7 +696,7 @@ mod tests {
             GITLAB_CAPABILITIES.len(),
             gitlab_tools::GITLAB_TOOL_NAMES.len()
         );
-        assert_eq!(all_capabilities().count(), 85);
+        assert_eq!(all_capabilities().count(), 101);
     }
 
     #[test]

@@ -121,6 +121,26 @@ impl WorkhubMcpServer {
         )
     }
 
+    #[tool(name = "confluence_update_page_comment")]
+    pub(super) async fn update_page_comment(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceUpdateCommentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        confluence_operation_result(
+            operations::confluence::update_page_comment(&self.context, args).await,
+        )
+    }
+
+    #[tool(name = "confluence_delete_page_comment")]
+    pub(super) async fn delete_page_comment(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceDeleteCommentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        confluence_operation_result(
+            operations::confluence::delete_page_comment(&self.context, args).await,
+        )
+    }
+
     #[tool(name = "confluence_list_content_labels")]
     pub(super) async fn list_content_labels(
         &self,
@@ -138,6 +158,16 @@ impl WorkhubMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         confluence_operation_result(
             operations::confluence::add_content_label(&self.context, args).await,
+        )
+    }
+
+    #[tool(name = "confluence_remove_content_label")]
+    pub(super) async fn remove_content_label(
+        &self,
+        Parameters(args): Parameters<confluence_tools::ConfluenceRemoveLabelArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        confluence_operation_result(
+            operations::confluence::remove_content_label(&self.context, args).await,
         )
     }
 

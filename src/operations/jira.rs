@@ -17,7 +17,10 @@ use crate::{
     },
 };
 
-use super::{OperationError, OperationResult, guard_operation, jira_client};
+use super::{
+    OperationError, OperationResult, guard_operation, jira_client, mutation_success,
+    mutation_success_with_fields,
+};
 
 pub async fn get_issue(
     context: &AppContext,
@@ -131,7 +134,10 @@ pub async fn add_issue_comment(
         .await
         .map_err(OperationError::from_upstream)?;
 
-    Ok(structured(value))
+    Ok(structured(mutation_success(
+        "Comment added successfully",
+        value,
+    )))
 }
 
 pub async fn update_issue_comment(
@@ -143,6 +149,25 @@ pub async fn update_issue_comment(
         .map_err(OperationError::from_upstream)?;
     let value = jira_client(context)?
         .edit_comment(args.issue_key, args.comment_id, args.body, visibility)
+        .await
+        .map_err(OperationError::from_upstream)?;
+
+    Ok(structured(mutation_success(
+        "Comment updated successfully",
+        value,
+    )))
+}
+
+pub async fn delete_issue_comment(
+    context: &AppContext,
+    args: JiraDeleteCommentArgs,
+) -> Result<OperationResult, OperationError> {
+    guard_operation(JIRA_DELETE_COMMENT_TOOL_NAME, context)?;
+    let value = jira_client(context)?
+        .delete_comment(
+            required_non_empty_arg(args.issue_key, "issue_key")?,
+            required_non_empty_arg(args.comment_id, "comment_id")?,
+        )
         .await
         .map_err(OperationError::from_upstream)?;
 
@@ -174,7 +199,10 @@ pub async fn transition_issue(
         .await
         .map_err(OperationError::from_upstream)?;
 
-    Ok(structured(value))
+    Ok(structured(mutation_success(
+        "Issue transitioned successfully",
+        value,
+    )))
 }
 
 pub async fn create_issue(
@@ -200,7 +228,7 @@ pub async fn create_issues(
     let deployment = jira_deployment(context)?;
     let issue_updates = batch_create_issue_updates_from_args(args.issues, deployment)?;
     let value = jira_client(context)?
-        .batch_create_issues(issue_updates, args.validate_only.unwrap_or(false))
+        .batch_create_issues(issue_updates)
         .await
         .map_err(OperationError::from_upstream)?;
 
@@ -307,7 +335,10 @@ pub async fn create_project_version(
         .await
         .map_err(OperationError::from_upstream)?;
 
-    Ok(structured(value))
+    Ok(structured(mutation_success(
+        "Project version created successfully",
+        value,
+    )))
 }
 
 pub async fn create_project_versions(
@@ -416,6 +447,42 @@ pub async fn add_issue_worklog(
         .await
         .map_err(OperationError::from_upstream)?;
 
+    Ok(structured(mutation_success(
+        "Worklog added successfully",
+        value,
+    )))
+}
+
+pub async fn update_issue_worklog(
+    context: &AppContext,
+    args: JiraUpdateWorklogArgs,
+) -> Result<OperationResult, OperationError> {
+    guard_operation(JIRA_UPDATE_WORKLOG_TOOL_NAME, context)?;
+    let deployment = jira_deployment(context)?;
+    let (issue_key, worklog_id, payload, query) =
+        update_worklog_payload_from_args(args, deployment)?;
+    let value = jira_client(context)?
+        .update_worklog(issue_key, worklog_id, payload, query)
+        .await
+        .map_err(OperationError::from_upstream)?;
+
+    Ok(structured(mutation_success(
+        "Worklog updated successfully",
+        value,
+    )))
+}
+
+pub async fn delete_issue_worklog(
+    context: &AppContext,
+    args: JiraDeleteWorklogArgs,
+) -> Result<OperationResult, OperationError> {
+    guard_operation(JIRA_DELETE_WORKLOG_TOOL_NAME, context)?;
+    let (issue_key, worklog_id, query) = delete_worklog_parts_from_args(args)?;
+    let value = jira_client(context)?
+        .delete_worklog(issue_key, worklog_id, query)
+        .await
+        .map_err(OperationError::from_upstream)?;
+
     Ok(structured(value))
 }
 
@@ -463,6 +530,39 @@ pub async fn set_issue_parent(
     Ok(structured(value))
 }
 
+pub async fn list_issue_links(
+    context: &AppContext,
+    args: JiraListIssueLinksArgs,
+) -> Result<OperationResult, OperationError> {
+    guard_operation(JIRA_LIST_ISSUE_LINKS_TOOL_NAME, context)?;
+    let issue_key = required_non_empty_arg(args.issue_key, "issue_key")?;
+    let value = jira_client(context)?
+        .get_issue(GetIssueRequest {
+            issue_key: issue_key.clone(),
+            fields: Some(vec!["issuelinks".to_string()]),
+            ..Default::default()
+        })
+        .await
+        .map_err(OperationError::from_upstream)?;
+    let links = issue_links_from_issue_value(
+        &value,
+        &issue_key,
+        args.link_type.as_deref(),
+        args.linked_issue_key.as_deref(),
+        args.direction.as_deref(),
+    )?;
+
+    Ok(structured(json!({
+        "success": true,
+        "issue_key": issue_key,
+        "count": links.len(),
+        "links": links,
+        "preview": {
+            "delete_command": "jira issue link delete <link-id>",
+        },
+    })))
+}
+
 pub async fn create_issue_link(
     context: &AppContext,
     args: JiraCreateIssueLinkArgs,
@@ -474,7 +574,10 @@ pub async fn create_issue_link(
         .await
         .map_err(OperationError::from_upstream)?;
 
-    Ok(structured(value))
+    Ok(structured(mutation_success(
+        "Issue link created successfully",
+        value,
+    )))
 }
 
 pub async fn create_remote_issue_link(
@@ -485,6 +588,53 @@ pub async fn create_remote_issue_link(
     let (issue_key, payload) = remote_issue_link_payload_from_args(args)?;
     let value = jira_client(context)?
         .create_remote_issue_link(issue_key, payload)
+        .await
+        .map_err(OperationError::from_upstream)?;
+
+    Ok(structured(mutation_success(
+        "Remote issue link created successfully",
+        value,
+    )))
+}
+
+pub async fn list_remote_issue_links(
+    context: &AppContext,
+    args: JiraListRemoteIssueLinksArgs,
+) -> Result<OperationResult, OperationError> {
+    guard_operation(JIRA_LIST_REMOTE_ISSUE_LINKS_TOOL_NAME, context)?;
+    let issue_key = required_non_empty_arg(args.issue_key, "issue_key")?;
+    let value = jira_client(context)?
+        .get_remote_issue_links(issue_key.clone())
+        .await
+        .map_err(OperationError::from_upstream)?;
+    let links = remote_issue_links_from_value(
+        value,
+        args.global_id.as_deref(),
+        args.title.as_deref(),
+        args.url.as_deref(),
+    );
+
+    Ok(structured(json!({
+        "success": true,
+        "issue_key": issue_key,
+        "count": links.len(),
+        "remote_links": links,
+        "preview": {
+            "delete_command": "jira issue remote-link delete <issue-key> <link-id>",
+        },
+    })))
+}
+
+pub async fn delete_remote_issue_link(
+    context: &AppContext,
+    args: JiraDeleteRemoteIssueLinkArgs,
+) -> Result<OperationResult, OperationError> {
+    guard_operation(JIRA_DELETE_REMOTE_ISSUE_LINK_TOOL_NAME, context)?;
+    let value = jira_client(context)?
+        .delete_remote_issue_link(
+            required_non_empty_arg(args.issue_key, "issue_key")?,
+            required_non_empty_arg(args.link_id, "link_id")?,
+        )
         .await
         .map_err(OperationError::from_upstream)?;
 
@@ -625,7 +775,10 @@ pub async fn create_sprint(
         .await
         .map_err(OperationError::from_upstream)?;
 
-    Ok(structured(value))
+    Ok(structured(mutation_success(
+        "Sprint created successfully",
+        value,
+    )))
 }
 
 pub async fn update_sprint(
@@ -639,7 +792,10 @@ pub async fn update_sprint(
         .await
         .map_err(OperationError::from_upstream)?;
 
-    Ok(structured(value))
+    Ok(structured(mutation_success(
+        "Sprint updated successfully",
+        value,
+    )))
 }
 
 pub async fn add_issues_to_sprint(
@@ -649,12 +805,20 @@ pub async fn add_issues_to_sprint(
     guard_operation(JIRA_ADD_ISSUES_TO_SPRINT_TOOL_NAME, context)?;
     let issue_keys = parse_required_string_list(args.issue_keys, "issue_keys")
         .map_err(OperationError::from_upstream)?;
+    let added_issue_keys = issue_keys.clone();
     let value = jira_client(context)?
         .add_issues_to_sprint(args.sprint_id, issue_keys)
         .await
         .map_err(OperationError::from_upstream)?;
 
-    Ok(structured(value))
+    Ok(structured(mutation_success_with_fields(
+        "Issues added to sprint successfully",
+        value,
+        [
+            ("sprint_id", json!(args.sprint_id)),
+            ("issue_keys", json!(added_issue_keys)),
+        ],
+    )))
 }
 
 pub async fn get_project_service_desk(
@@ -868,6 +1032,8 @@ fn version_payload_from_args(args: JiraCreateProjectVersionArgs) -> Result<Value
 }
 
 type WorklogPayloadParts = (String, Value, Vec<(String, String)>);
+type WorklogUpdatePayloadParts = (String, String, Value, Vec<(String, String)>);
+type WorklogDeleteParts = (String, String, Vec<(String, String)>);
 
 fn add_worklog_payload_from_args(
     args: JiraAddWorklogArgs,
@@ -899,6 +1065,49 @@ fn add_worklog_payload_from_args(
     Ok((issue_key, payload, query))
 }
 
+fn update_worklog_payload_from_args(
+    args: JiraUpdateWorklogArgs,
+    deployment: JiraDeployment,
+) -> Result<WorklogUpdatePayloadParts, OperationError> {
+    let issue_key = required_non_empty_arg(args.issue_key, "issue_key")?;
+    let worklog_id = required_non_empty_arg(args.worklog_id, "worklog_id")?;
+    let time_spent = required_non_empty_arg(args.time_spent, "time_spent")?;
+    let visibility = parse_optional_object(args.visibility, "visibility")
+        .map_err(OperationError::from_upstream)?;
+    let mut payload = json!({
+        "timeSpent": time_spent,
+    });
+    insert_optional_value(
+        &mut payload,
+        "started",
+        optional_non_empty_arg(args.started),
+    );
+    if let Some(comment) = optional_non_empty_arg(args.comment) {
+        payload["comment"] = comment_body_for_deployment(deployment, &comment);
+    }
+    if let Some(visibility) = visibility {
+        payload["visibility"] = visibility;
+    }
+
+    let mut query = Vec::new();
+    push_optional_query_value(&mut query, "adjustEstimate", args.adjust_estimate);
+    push_optional_query_value(&mut query, "newEstimate", args.new_estimate);
+    push_optional_query_value(&mut query, "reduceBy", args.reduce_by);
+    Ok((issue_key, worklog_id, payload, query))
+}
+
+fn delete_worklog_parts_from_args(
+    args: JiraDeleteWorklogArgs,
+) -> Result<WorklogDeleteParts, OperationError> {
+    let issue_key = required_non_empty_arg(args.issue_key, "issue_key")?;
+    let worklog_id = required_non_empty_arg(args.worklog_id, "worklog_id")?;
+    let mut query = Vec::new();
+    push_optional_query_value(&mut query, "adjustEstimate", args.adjust_estimate);
+    push_optional_query_value(&mut query, "newEstimate", args.new_estimate);
+    push_optional_query_value(&mut query, "increaseBy", args.increase_by);
+    Ok((issue_key, worklog_id, query))
+}
+
 fn issue_link_payload_from_args(
     args: JiraCreateIssueLinkArgs,
     deployment: JiraDeployment,
@@ -919,6 +1128,159 @@ fn issue_link_payload_from_args(
     }
 
     Ok(payload)
+}
+
+fn issue_links_from_issue_value(
+    issue: &Value,
+    issue_key: &str,
+    link_type_filter: Option<&str>,
+    linked_issue_filter: Option<&str>,
+    direction_filter: Option<&str>,
+) -> Result<Vec<Value>, OperationError> {
+    let direction_filter = direction_filter
+        .map(|direction| direction.trim().to_ascii_lowercase())
+        .filter(|direction| !direction.is_empty());
+    if let Some(direction) = direction_filter.as_deref() {
+        if !matches!(direction, "inward" | "outward") {
+            return Err(OperationError::invalid_input(
+                "direction must be inward or outward",
+            ));
+        }
+    }
+
+    let raw_links = issue
+        .pointer("/fields/issuelinks")
+        .or_else(|| issue.get("issuelinks"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let links = raw_links
+        .iter()
+        .filter_map(|link| issue_link_preview_value(link, issue_key))
+        .filter(|link| {
+            optional_contains_filter(&link["type"], link_type_filter)
+                && optional_equals_filter(&link["linked_issue"]["key"], linked_issue_filter)
+                && direction_filter
+                    .as_deref()
+                    .is_none_or(|direction| link["direction"].as_str() == Some(direction))
+        })
+        .collect::<Vec<_>>();
+
+    Ok(links)
+}
+
+fn issue_link_preview_value(link: &Value, issue_key: &str) -> Option<Value> {
+    let id = link.get("id").cloned().unwrap_or(Value::Null);
+    let link_type = link
+        .pointer("/type/name")
+        .cloned()
+        .or_else(|| link.get("type").cloned())
+        .unwrap_or(Value::Null);
+    let inward = link
+        .get("inwardIssue")
+        .map(issue_link_issue_value)
+        .unwrap_or(Value::Null);
+    let outward = link
+        .get("outwardIssue")
+        .map(issue_link_issue_value)
+        .unwrap_or(Value::Null);
+    let (direction, linked_issue) = if !inward.is_null() {
+        ("inward", inward.clone())
+    } else if !outward.is_null() {
+        ("outward", outward.clone())
+    } else {
+        return None;
+    };
+
+    Some(json!({
+        "id": id,
+        "type": link_type,
+        "direction": direction,
+        "source_issue_key": issue_key,
+        "linked_issue": linked_issue,
+        "inward_issue": inward,
+        "outward_issue": outward,
+        "delete_preview": {
+            "tool": JIRA_DELETE_ISSUE_LINK_TOOL_NAME,
+            "link_id": id,
+        },
+    }))
+}
+
+fn issue_link_issue_value(issue: &Value) -> Value {
+    json!({
+        "id": issue.get("id").cloned().unwrap_or(Value::Null),
+        "key": issue.get("key").cloned().unwrap_or(Value::Null),
+        "summary": issue.pointer("/fields/summary").cloned().unwrap_or(Value::Null),
+        "status": issue.pointer("/fields/status/name").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn remote_issue_links_from_value(
+    value: Value,
+    global_id_filter: Option<&str>,
+    title_filter: Option<&str>,
+    url_filter: Option<&str>,
+) -> Vec<Value> {
+    let links = match value {
+        Value::Array(items) => items,
+        Value::Object(mut object) => object
+            .remove("values")
+            .or_else(|| object.remove("remote_links"))
+            .and_then(|value| match value {
+                Value::Array(items) => Some(items),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    links
+        .into_iter()
+        .map(remote_issue_link_preview_value)
+        .filter(|link| {
+            optional_equals_filter(&link["global_id"], global_id_filter)
+                && optional_contains_filter(&link["title"], title_filter)
+                && optional_contains_filter(&link["url"], url_filter)
+        })
+        .collect()
+}
+
+fn remote_issue_link_preview_value(link: Value) -> Value {
+    let object = link.get("object").unwrap_or(&Value::Null);
+    json!({
+        "id": link.get("id").cloned().unwrap_or(Value::Null),
+        "global_id": link.get("globalId").or_else(|| link.get("global_id")).cloned().unwrap_or(Value::Null),
+        "title": object.get("title").cloned().unwrap_or(Value::Null),
+        "url": object.get("url").cloned().unwrap_or(Value::Null),
+        "relationship": link.get("relationship").cloned().unwrap_or(Value::Null),
+        "status": object.get("status").cloned().or_else(|| link.get("status").cloned()).unwrap_or(Value::Null),
+        "delete_preview": {
+            "tool": JIRA_DELETE_REMOTE_ISSUE_LINK_TOOL_NAME,
+            "link_id": link.get("id").cloned().unwrap_or(Value::Null),
+        },
+    })
+}
+
+fn optional_contains_filter(value: &Value, filter: Option<&str>) -> bool {
+    let Some(filter) = filter.map(str::trim).filter(|filter| !filter.is_empty()) else {
+        return true;
+    };
+    value.as_str().is_some_and(|value| {
+        value
+            .to_ascii_lowercase()
+            .contains(&filter.to_ascii_lowercase())
+    })
+}
+
+fn optional_equals_filter(value: &Value, filter: Option<&str>) -> bool {
+    let Some(filter) = filter.map(str::trim).filter(|filter| !filter.is_empty()) else {
+        return true;
+    };
+    value
+        .as_str()
+        .is_some_and(|value| value.eq_ignore_ascii_case(filter))
 }
 
 fn remote_issue_link_payload_from_args(
@@ -1524,6 +1886,41 @@ mod tests {
         assert!(query.contains(&("adjustEstimate".to_string(), "new".to_string())));
         assert!(query.contains(&("newEstimate".to_string(), "2h".to_string())));
 
+        let (issue_key, worklog_id, worklog, query) = update_worklog_payload_from_args(
+            JiraUpdateWorklogArgs {
+                issue_key: "ABC-1".to_string(),
+                worklog_id: "10".to_string(),
+                time_spent: "45m".to_string(),
+                started: None,
+                comment: Some("updated".to_string()),
+                visibility: None,
+                adjust_estimate: Some("auto".to_string()),
+                new_estimate: None,
+                reduce_by: None,
+            },
+            JiraDeployment::ServerDataCenter,
+        )
+        .unwrap();
+        assert_eq!(issue_key, "ABC-1");
+        assert_eq!(worklog_id, "10");
+        assert_eq!(worklog["timeSpent"], json!("45m"));
+        assert_eq!(worklog["comment"], json!("updated"));
+        assert!(query.contains(&("adjustEstimate".to_string(), "auto".to_string())));
+
+        let (issue_key, worklog_id, query) =
+            delete_worklog_parts_from_args(JiraDeleteWorklogArgs {
+                issue_key: "ABC-1".to_string(),
+                worklog_id: "10".to_string(),
+                adjust_estimate: Some("new".to_string()),
+                new_estimate: Some("1h".to_string()),
+                increase_by: None,
+            })
+            .unwrap();
+        assert_eq!(issue_key, "ABC-1");
+        assert_eq!(worklog_id, "10");
+        assert!(query.contains(&("adjustEstimate".to_string(), "new".to_string())));
+        assert!(query.contains(&("newEstimate".to_string(), "1h".to_string())));
+
         let link = issue_link_payload_from_args(
             JiraCreateIssueLinkArgs {
                 link_type: "Blocks".to_string(),
@@ -1555,6 +1952,50 @@ mod tests {
         assert_eq!(remote_link["relationship"], json!("documents"));
         assert_eq!(remote_link["object"]["icon"]["title"], json!("Design icon"));
         assert_eq!(remote_link["object"]["status"]["resolved"], json!(true));
+
+        let issue_links = issue_links_from_issue_value(
+            &json!({
+                "fields": {
+                    "issuelinks": [
+                        {
+                            "id": "200",
+                            "type": {"name": "Blocks"},
+                            "outwardIssue": {"id": "10002", "key": "ABC-2", "fields": {"summary": "Blocked", "status": {"name": "To Do"}}}
+                        },
+                        {
+                            "id": "201",
+                            "type": {"name": "Relates"},
+                            "inwardIssue": {"id": "10003", "key": "ABC-3", "fields": {"summary": "Related"}}
+                        }
+                    ]
+                }
+            }),
+            "ABC-1",
+            Some("block"),
+            Some("ABC-2"),
+            Some("outward"),
+        )
+        .unwrap();
+        assert_eq!(issue_links.len(), 1);
+        assert_eq!(issue_links[0]["id"], json!("200"));
+        assert_eq!(issue_links[0]["linked_issue"]["key"], json!("ABC-2"));
+        assert_eq!(
+            issue_links[0]["delete_preview"]["tool"],
+            json!(JIRA_DELETE_ISSUE_LINK_TOOL_NAME)
+        );
+
+        let remote_links = remote_issue_links_from_value(
+            json!([
+                {"id": 300, "globalId": "gid-1", "object": {"title": "Design", "url": "https://example.invalid/design"}},
+                {"id": 301, "globalId": "gid-2", "object": {"title": "Runbook", "url": "https://example.invalid/runbook"}}
+            ]),
+            Some("gid-1"),
+            Some("design"),
+            None,
+        );
+        assert_eq!(remote_links.len(), 1);
+        assert_eq!(remote_links[0]["id"], json!(300));
+        assert_eq!(remote_links[0]["title"], json!("Design"));
     }
 
     #[test]
@@ -1672,7 +2113,6 @@ mod tests {
                 &context,
                 JiraCreateIssuesArgs {
                     issues: json!([{"project_key": "ABC", "issue_type": "Task"}]),
-                    validate_only: None,
                 },
             )
             .await

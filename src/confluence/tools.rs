@@ -56,8 +56,11 @@ pub const CONFLUENCE_MOVE_PAGE_TOOL_NAME: &str = "confluence_move_page";
 pub const CONFLUENCE_LIST_PAGE_COMMENTS_TOOL_NAME: &str = "confluence_list_page_comments";
 pub const CONFLUENCE_ADD_COMMENT_TOOL_NAME: &str = "confluence_add_page_comment";
 pub const CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME: &str = "confluence_reply_to_comment";
+pub const CONFLUENCE_UPDATE_COMMENT_TOOL_NAME: &str = "confluence_update_page_comment";
+pub const CONFLUENCE_DELETE_COMMENT_TOOL_NAME: &str = "confluence_delete_page_comment";
 pub const CONFLUENCE_LIST_CONTENT_LABELS_TOOL_NAME: &str = "confluence_list_content_labels";
 pub const CONFLUENCE_ADD_LABEL_TOOL_NAME: &str = "confluence_add_content_label";
+pub const CONFLUENCE_REMOVE_LABEL_TOOL_NAME: &str = "confluence_remove_content_label";
 pub const CONFLUENCE_SEARCH_USER_TOOL_NAME: &str = "confluence_search_users";
 pub const CONFLUENCE_GET_PAGE_VERSION_TOOL_NAME: &str = "confluence_get_page_version";
 pub const CONFLUENCE_GET_PAGE_DIFF_TOOL_NAME: &str = "confluence_get_page_diff";
@@ -88,8 +91,11 @@ pub const CONFLUENCE_TOOL_NAMES: &[&str] = &[
     CONFLUENCE_LIST_PAGE_COMMENTS_TOOL_NAME,
     CONFLUENCE_ADD_COMMENT_TOOL_NAME,
     CONFLUENCE_REPLY_TO_COMMENT_TOOL_NAME,
+    CONFLUENCE_UPDATE_COMMENT_TOOL_NAME,
+    CONFLUENCE_DELETE_COMMENT_TOOL_NAME,
     CONFLUENCE_LIST_CONTENT_LABELS_TOOL_NAME,
     CONFLUENCE_ADD_LABEL_TOOL_NAME,
+    CONFLUENCE_REMOVE_LABEL_TOOL_NAME,
     CONFLUENCE_SEARCH_USER_TOOL_NAME,
     CONFLUENCE_GET_PAGE_VERSION_TOOL_NAME,
     CONFLUENCE_GET_PAGE_DIFF_TOOL_NAME,
@@ -219,6 +225,9 @@ pub struct ConfluenceDeletePageArgs {
     #[serde(deserialize_with = "string_or_number")]
     #[schemars(schema_with = "string_or_number_schema")]
     pub page_id: String,
+    #[serde(deserialize_with = "string_or_number")]
+    #[schemars(schema_with = "string_or_number_schema")]
+    pub confirm_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -267,6 +276,30 @@ pub struct ConfluenceReplyToCommentArgs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConfluenceUpdateCommentArgs {
+    #[serde(deserialize_with = "string_or_number")]
+    #[schemars(schema_with = "string_or_number_schema")]
+    pub page_id: String,
+    #[serde(deserialize_with = "string_or_number")]
+    #[schemars(schema_with = "string_or_number_schema")]
+    pub comment_id: String,
+    #[schemars(
+        description = "Updated comment body in Markdown; it is converted before calling Confluence."
+    )]
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConfluenceDeleteCommentArgs {
+    #[serde(deserialize_with = "string_or_number")]
+    #[schemars(schema_with = "string_or_number_schema")]
+    pub page_id: String,
+    #[serde(deserialize_with = "string_or_number")]
+    #[schemars(schema_with = "string_or_number_schema")]
+    pub comment_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConfluenceListContentLabelsArgs {
     #[serde(deserialize_with = "string_or_number")]
     #[schemars(schema_with = "string_or_number_schema")]
@@ -279,6 +312,15 @@ pub struct ConfluenceAddLabelArgs {
     #[schemars(schema_with = "string_or_number_schema")]
     pub page_id: String,
     #[schemars(description = "Label name to add to the Confluence content.")]
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConfluenceRemoveLabelArgs {
+    #[serde(deserialize_with = "string_or_number")]
+    #[schemars(schema_with = "string_or_number_schema")]
+    pub page_id: String,
+    #[schemars(description = "Label name to remove from the Confluence content.")]
     pub name: String,
 }
 
@@ -418,6 +460,9 @@ pub struct ConfluenceDeleteAttachmentArgs {
     #[serde(deserialize_with = "string_or_number")]
     #[schemars(schema_with = "string_or_number_schema")]
     pub attachment_id: String,
+    #[serde(deserialize_with = "string_or_number")]
+    #[schemars(schema_with = "string_or_number_schema")]
+    pub confirm_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -440,7 +485,7 @@ mod tests {
 
     #[test]
     fn confluence_tool_names_match_current_surface_count() {
-        assert_eq!(CONFLUENCE_TOOL_NAMES.len(), 24);
+        assert_eq!(CONFLUENCE_TOOL_NAMES.len(), 27);
     }
 
     #[test]
@@ -467,8 +512,11 @@ mod tests {
             "confluence_list_page_comments",
             "confluence_add_page_comment",
             "confluence_reply_to_comment",
+            "confluence_update_page_comment",
+            "confluence_delete_page_comment",
             "confluence_list_content_labels",
             "confluence_add_content_label",
+            "confluence_remove_content_label",
             "confluence_search_users",
             "confluence_get_page_version",
             "confluence_get_page_diff",

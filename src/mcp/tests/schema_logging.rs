@@ -289,7 +289,7 @@ fn output_schema_sanitizer_preserves_boolean_const_literals() {
 }
 
 #[test]
-fn jira_mutation_output_schema_allows_no_content_data_null() {
+fn jira_mutation_output_schema_uses_empty_object_for_no_content_data() {
     let server = server_with_config(RuntimeConfig {
         jira: Some(jira_config()),
         mcp_enabled_toolsets: tool_registry::all_toolsets(),
@@ -317,10 +317,16 @@ fn jira_mutation_output_schema_allows_no_content_data_null() {
             .unwrap_or_else(|| panic!("{tool_name} data schema should expose anyOf"));
 
         assert!(
-            any_of
+            !any_of
                 .iter()
                 .any(|schema| schema.get("type").and_then(Value::as_str) == Some("null")),
-            "{tool_name} data schema should allow null for no-content responses"
+            "{tool_name} data schema should not expose null for no-content responses"
+        );
+        assert!(
+            any_of
+                .iter()
+                .any(|schema| schema.get("type").and_then(Value::as_str) == Some("object")),
+            "{tool_name} data schema should allow empty objects for no-content responses"
         );
     }
 }

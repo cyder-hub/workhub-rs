@@ -96,6 +96,22 @@ impl WorkhubMcpServer {
         gitlab_operation_result(operations::gitlab::update_merge_request(&self.context, args).await)
     }
 
+    #[tool(name = "gitlab_close_merge_request")]
+    pub(super) async fn gitlab_close_merge_request(
+        &self,
+        Parameters(args): Parameters<gitlab_tools::GitlabCloseMergeRequestArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        gitlab_operation_result(operations::gitlab::close_merge_request(&self.context, args).await)
+    }
+
+    #[tool(name = "gitlab_delete_merge_request")]
+    pub(super) async fn gitlab_delete_merge_request(
+        &self,
+        Parameters(args): Parameters<gitlab_tools::GitlabDeleteMergeRequestArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        gitlab_operation_result(operations::gitlab::delete_merge_request(&self.context, args).await)
+    }
+
     #[tool(name = "gitlab_add_merge_request_note")]
     pub(super) async fn gitlab_add_merge_request_note(
         &self,
@@ -103,6 +119,36 @@ impl WorkhubMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         gitlab_operation_result(
             operations::gitlab::add_merge_request_note(&self.context, args).await,
+        )
+    }
+
+    #[tool(name = "gitlab_update_merge_request_note")]
+    pub(super) async fn gitlab_update_merge_request_note(
+        &self,
+        Parameters(args): Parameters<gitlab_tools::GitlabUpdateMergeRequestNoteArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        gitlab_operation_result(
+            operations::gitlab::update_merge_request_note(&self.context, args).await,
+        )
+    }
+
+    #[tool(name = "gitlab_delete_merge_request_note")]
+    pub(super) async fn gitlab_delete_merge_request_note(
+        &self,
+        Parameters(args): Parameters<gitlab_tools::GitlabDeleteMergeRequestNoteArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        gitlab_operation_result(
+            operations::gitlab::delete_merge_request_note(&self.context, args).await,
+        )
+    }
+
+    #[tool(name = "gitlab_list_merge_request_discussions")]
+    pub(super) async fn gitlab_list_merge_request_discussions(
+        &self,
+        Parameters(args): Parameters<gitlab_tools::GitlabListMergeRequestDiscussionsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        gitlab_operation_result(
+            operations::gitlab::list_merge_request_discussions(&self.context, args).await,
         )
     }
 
@@ -152,5 +198,21 @@ impl WorkhubMcpServer {
         Parameters(args): Parameters<gitlab_tools::GitlabAcceptMergeRequestArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         gitlab_operation_result(operations::gitlab::accept_merge_request(&self.context, args).await)
+    }
+
+    #[tool(name = "gitlab_create_branch")]
+    pub(super) async fn gitlab_create_branch(
+        &self,
+        Parameters(args): Parameters<gitlab_tools::GitlabCreateBranchArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        gitlab_operation_result(operations::gitlab::create_branch(&self.context, args).await)
+    }
+
+    #[tool(name = "gitlab_delete_branch")]
+    pub(super) async fn gitlab_delete_branch(
+        &self,
+        Parameters(args): Parameters<gitlab_tools::GitlabDeleteBranchArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        gitlab_operation_result(operations::gitlab::delete_branch(&self.context, args).await)
     }
 }

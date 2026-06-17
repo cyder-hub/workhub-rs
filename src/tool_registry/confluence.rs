@@ -102,6 +102,24 @@ confluence_metadata!(
     "Reply with Markdown content to a Confluence comment thread."
 );
 confluence_metadata!(
+    CONFLUENCE_UPDATE_COMMENT_METADATA,
+    confluence_tools::CONFLUENCE_UPDATE_COMMENT_TOOL_NAME,
+    Write,
+    "confluence_page_comments_write",
+    destructive_write,
+    "Update Confluence page comment",
+    "Update an existing Confluence page comment after verifying the page id."
+);
+confluence_metadata!(
+    CONFLUENCE_DELETE_COMMENT_METADATA,
+    confluence_tools::CONFLUENCE_DELETE_COMMENT_TOOL_NAME,
+    Write,
+    "confluence_page_comments_write",
+    destructive_write,
+    "Delete Confluence page comment",
+    "Delete an existing Confluence page comment after verifying the page id."
+);
+confluence_metadata!(
     CONFLUENCE_LIST_CONTENT_LABELS_METADATA,
     confluence_tools::CONFLUENCE_LIST_CONTENT_LABELS_TOOL_NAME,
     Read,
@@ -118,6 +136,15 @@ confluence_metadata!(
     additive_write,
     "Add Confluence content label",
     "Add one label to Confluence content by content/page id."
+);
+confluence_metadata!(
+    CONFLUENCE_REMOVE_LABEL_METADATA,
+    confluence_tools::CONFLUENCE_REMOVE_LABEL_TOOL_NAME,
+    Write,
+    "confluence_content_labels_write",
+    destructive_write,
+    "Remove Confluence content label",
+    "Remove one label from Confluence content by content/page id."
 );
 confluence_metadata!(
     CONFLUENCE_SEARCH_USER_METADATA,
@@ -235,8 +262,11 @@ pub(super) const TOOLS: &[ToolMetadata] = &[
     CONFLUENCE_LIST_PAGE_COMMENTS_METADATA,
     CONFLUENCE_ADD_COMMENT_METADATA,
     CONFLUENCE_REPLY_TO_COMMENT_METADATA,
+    CONFLUENCE_UPDATE_COMMENT_METADATA,
+    CONFLUENCE_DELETE_COMMENT_METADATA,
     CONFLUENCE_LIST_CONTENT_LABELS_METADATA,
     CONFLUENCE_ADD_LABEL_METADATA,
+    CONFLUENCE_REMOVE_LABEL_METADATA,
     CONFLUENCE_SEARCH_USER_METADATA,
     CONFLUENCE_GET_PAGE_VERSION_METADATA,
     CONFLUENCE_GET_PAGE_DIFF_METADATA,

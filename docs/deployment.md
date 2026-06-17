@@ -123,7 +123,7 @@ MCP_TOOL_CALL_DEBUG=true docker compose up --build
 
 | Variable | Deployment use |
 | --- | --- |
-| `MCP_TOOL_PROFILE` | Set `basic`, `developer`, `manager`, `full`, or `custom` for MCP discovery and MCP tool calls. Defaults to `basic`. With Jira, Confluence, and GitLab configured, profiles expose 23, 47, 82, 85, or 0 tools respectively. Unknown values fail startup. Ignored by `workhub cli ...`. |
+| `MCP_TOOL_PROFILE` | Set `basic`, `developer`, `manager`, `full`, or `custom` for MCP discovery and MCP tool calls. Defaults to `basic`. With Jira, Confluence, and GitLab configured, profiles expose 24, 54, 98, 101, or 0 tools respectively. Unknown values fail startup. Ignored by `workhub cli ...`. |
 | `MCP_TOOLSETS` | Add comma-separated toolset names to the selected profile. `all` enables every toolset. Unknown names fail startup. |
 | `MCP_ENABLED_TOOLS` | Add comma-separated exact tool names. |
 | `MCP_DISABLED_TOOLS` | Remove comma-separated exact tool names. Takes precedence over profile/toolset inclusion. |
@@ -144,7 +144,7 @@ Supported global auth:
 - GitLab: `GITLAB_URL` plus `GITLAB_TOKEN` or `GITLAB_PERSONAL_TOKEN`.
 - Shared auth fallbacks: `ATLASSIAN_USERNAME`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_PASSWORD`, `ATLASSIAN_PERSONAL_TOKEN`.
 
-GitLab token precedence is `GITLAB_TOKEN`, then `GITLAB_PERSONAL_TOKEN`. Both are sent as `PRIVATE-TOKEN`. Use `read_api` for read-only tools and `api` for writes, approvals, and merge. GitLab username/password API auth is not supported.
+GitLab token precedence is `GITLAB_TOKEN`, then `GITLAB_PERSONAL_TOKEN`. Both are sent as `PRIVATE-TOKEN`. Use `read_api` for read-only tools and `api` for write, cleanup, approval, merge, and branch tools. GitLab username/password API auth is not supported.
 
 `GITLAB_URL` should be the instance root, such as `https://gitlab.example.com`. A value ending in `/api/v4` is normalized back to the instance root. Set `GITLAB_PROJECTS_FILTER` to an exact comma-separated allowlist of numeric project IDs or full paths, such as `123,group/project`, to prevent project-scoped GitLab tools from reaching other projects.
 

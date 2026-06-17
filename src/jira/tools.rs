@@ -44,6 +44,7 @@ pub const JIRA_SEARCH_FIELDS_TOOL_NAME: &str = "jira_search_fields";
 pub const JIRA_GET_FIELD_OPTIONS_TOOL_NAME: &str = "jira_list_field_options";
 pub const JIRA_ADD_COMMENT_TOOL_NAME: &str = "jira_add_issue_comment";
 pub const JIRA_EDIT_COMMENT_TOOL_NAME: &str = "jira_update_issue_comment";
+pub const JIRA_DELETE_COMMENT_TOOL_NAME: &str = "jira_delete_issue_comment";
 pub const JIRA_GET_TRANSITIONS_TOOL_NAME: &str = "jira_list_issue_transitions";
 pub const JIRA_TRANSITION_ISSUE_TOOL_NAME: &str = "jira_transition_issue";
 pub const JIRA_CREATE_ISSUE_TOOL_NAME: &str = "jira_create_issue";
@@ -62,10 +63,15 @@ pub const JIRA_ADD_WATCHER_TOOL_NAME: &str = "jira_add_issue_watcher";
 pub const JIRA_REMOVE_WATCHER_TOOL_NAME: &str = "jira_remove_issue_watcher";
 pub const JIRA_LIST_ISSUE_WORKLOGS_TOOL_NAME: &str = "jira_list_issue_worklogs";
 pub const JIRA_ADD_WORKLOG_TOOL_NAME: &str = "jira_add_issue_worklog";
+pub const JIRA_UPDATE_WORKLOG_TOOL_NAME: &str = "jira_update_issue_worklog";
+pub const JIRA_DELETE_WORKLOG_TOOL_NAME: &str = "jira_delete_issue_worklog";
 pub const JIRA_LIST_ISSUE_LINK_TYPES_TOOL_NAME: &str = "jira_list_issue_link_types";
 pub const JIRA_SET_ISSUE_PARENT_TOOL_NAME: &str = "jira_set_issue_parent";
+pub const JIRA_LIST_ISSUE_LINKS_TOOL_NAME: &str = "jira_list_issue_links";
 pub const JIRA_CREATE_ISSUE_LINK_TOOL_NAME: &str = "jira_create_issue_link";
+pub const JIRA_LIST_REMOTE_ISSUE_LINKS_TOOL_NAME: &str = "jira_list_remote_issue_links";
 pub const JIRA_CREATE_REMOTE_ISSUE_LINK_TOOL_NAME: &str = "jira_create_remote_issue_link";
+pub const JIRA_DELETE_REMOTE_ISSUE_LINK_TOOL_NAME: &str = "jira_delete_remote_issue_link";
 pub const JIRA_DELETE_ISSUE_LINK_TOOL_NAME: &str = "jira_delete_issue_link";
 pub const JIRA_GET_ISSUE_ATTACHMENTS_TOOL_NAME: &str = "jira_get_issue_attachments";
 pub const JIRA_GET_ISSUE_IMAGES_TOOL_NAME: &str = "jira_get_issue_image_attachments";
@@ -92,6 +98,7 @@ pub const JIRA_EXTENSION_TOOL_NAMES: &[&str] = &[
     JIRA_GET_ISSUE_CHANGELOGS_TOOL_NAME,
     JIRA_UPDATE_ISSUE_TOOL_NAME,
     JIRA_DELETE_ISSUE_TOOL_NAME,
+    JIRA_DELETE_COMMENT_TOOL_NAME,
     JIRA_LIST_PROJECTS_TOOL_NAME,
     JIRA_LIST_PROJECT_VERSIONS_TOOL_NAME,
     JIRA_LIST_PROJECT_COMPONENTS_TOOL_NAME,
@@ -103,10 +110,15 @@ pub const JIRA_EXTENSION_TOOL_NAMES: &[&str] = &[
     JIRA_REMOVE_WATCHER_TOOL_NAME,
     JIRA_LIST_ISSUE_WORKLOGS_TOOL_NAME,
     JIRA_ADD_WORKLOG_TOOL_NAME,
+    JIRA_UPDATE_WORKLOG_TOOL_NAME,
+    JIRA_DELETE_WORKLOG_TOOL_NAME,
     JIRA_LIST_ISSUE_LINK_TYPES_TOOL_NAME,
     JIRA_SET_ISSUE_PARENT_TOOL_NAME,
+    JIRA_LIST_ISSUE_LINKS_TOOL_NAME,
     JIRA_CREATE_ISSUE_LINK_TOOL_NAME,
+    JIRA_LIST_REMOTE_ISSUE_LINKS_TOOL_NAME,
     JIRA_CREATE_REMOTE_ISSUE_LINK_TOOL_NAME,
+    JIRA_DELETE_REMOTE_ISSUE_LINK_TOOL_NAME,
     JIRA_DELETE_ISSUE_LINK_TOOL_NAME,
     JIRA_GET_ISSUE_ATTACHMENTS_TOOL_NAME,
     JIRA_GET_ISSUE_IMAGES_TOOL_NAME,
@@ -239,6 +251,12 @@ pub struct JiraEditCommentArgs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct JiraDeleteCommentArgs {
+    pub issue_key: String,
+    pub comment_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct JiraGetTransitionsArgs {
     pub issue_key: String,
 }
@@ -292,15 +310,13 @@ pub struct JiraCreateIssueArgs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct JiraCreateIssuesArgs {
     #[schemars(
         description = "Issue creation objects. Each item must contain Jira create-issue fields such as project, issuetype, and summary."
     )]
     #[schemars(schema_with = "object_list_schema")]
     pub issues: Value,
-    #[serde(default)]
-    #[schemars(description = "When true, validate all issue payloads without creating issues.")]
-    pub validate_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -466,6 +482,44 @@ pub struct JiraAddWorklogArgs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct JiraUpdateWorklogArgs {
+    pub issue_key: String,
+    pub worklog_id: String,
+    pub time_spent: String,
+    #[serde(default)]
+    #[schemars(
+        description = "Worklog start timestamp in Jira's expected date-time format, including timezone offset."
+    )]
+    pub started: Option<String>,
+    #[serde(default)]
+    pub comment: Option<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "Optional Jira visibility object that restricts who can see the worklog."
+    )]
+    #[schemars(schema_with = "object_schema")]
+    pub visibility: Option<Value>,
+    #[serde(default)]
+    pub adjust_estimate: Option<String>,
+    #[serde(default)]
+    pub new_estimate: Option<String>,
+    #[serde(default)]
+    pub reduce_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct JiraDeleteWorklogArgs {
+    pub issue_key: String,
+    pub worklog_id: String,
+    #[serde(default)]
+    pub adjust_estimate: Option<String>,
+    #[serde(default)]
+    pub new_estimate: Option<String>,
+    #[serde(default)]
+    pub increase_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct JiraListIssueLinkTypesArgs {
     #[serde(default)]
     pub name_filter: Option<String>,
@@ -475,6 +529,17 @@ pub struct JiraListIssueLinkTypesArgs {
 pub struct JiraSetIssueParentArgs {
     pub issue_key: String,
     pub epic_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct JiraListIssueLinksArgs {
+    pub issue_key: String,
+    #[serde(default)]
+    pub link_type: Option<String>,
+    #[serde(default)]
+    pub linked_issue_key: Option<String>,
+    #[serde(default)]
+    pub direction: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -512,6 +577,23 @@ pub struct JiraCreateRemoteIssueLinkArgs {
     #[schemars(description = "Optional Jira remote-link status object.")]
     #[schemars(schema_with = "object_schema")]
     pub status: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct JiraListRemoteIssueLinksArgs {
+    pub issue_key: String,
+    #[serde(default)]
+    pub global_id: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct JiraDeleteRemoteIssueLinkArgs {
+    pub issue_key: String,
+    pub link_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -786,8 +868,8 @@ mod tests {
     fn jira_extension_tool_names_are_complete_and_unique() {
         let unique = JIRA_EXTENSION_TOOL_NAMES.iter().collect::<BTreeSet<_>>();
 
-        assert_eq!(JIRA_EXTENSION_TOOL_NAMES.len(), 37);
-        assert_eq!(unique.len(), 37);
+        assert_eq!(JIRA_EXTENSION_TOOL_NAMES.len(), 43);
+        assert_eq!(unique.len(), 43);
         assert!(unique.contains(&&JIRA_CREATE_ISSUE_TOOL_NAME));
         assert!(unique.contains(&&JIRA_GET_ISSUES_DEVELOPMENT_TOOL_NAME));
     }
@@ -826,12 +908,21 @@ mod tests {
     #[test]
     fn jira_extension_args_accept_python_style_json_inputs() {
         let args: JiraCreateIssuesArgs = serde_json::from_value(serde_json::json!({
-            "issues": "[{\"project_key\":\"ABC\",\"summary\":\"Demo\",\"issue_type\":\"Task\"}]",
-            "validate_only": true
+            "issues": "[{\"project_key\":\"ABC\",\"summary\":\"Demo\",\"issue_type\":\"Task\"}]"
         }))
         .unwrap();
 
-        assert_eq!(args.validate_only, Some(true));
         assert!(args.issues.is_string());
+    }
+
+    #[test]
+    fn jira_create_issues_args_reject_removed_validate_only_field() {
+        let error = serde_json::from_value::<JiraCreateIssuesArgs>(serde_json::json!({
+            "issues": [],
+            "validate_only": true
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field `validate_only`"));
     }
 }

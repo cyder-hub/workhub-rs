@@ -27,4 +27,20 @@ impl ConfluenceClient {
             .await?;
         self.get_labels(&content_id).await
     }
+
+    pub async fn remove_label(
+        &self,
+        content_id: &str,
+        name: &str,
+    ) -> Result<ConfluenceLabelListResponse, UpstreamError> {
+        let content_id = safe_path_segment(content_id, "content_id")?;
+        let name = required_non_empty_input(name, "name")?;
+        let builder = self
+            .http
+            .delete(&format!("/rest/api/content/{content_id}/label"))?
+            .query(&[("name", name.as_str())]);
+
+        self.http.send_json_value_or_null(builder).await?;
+        self.get_labels(&content_id).await
+    }
 }

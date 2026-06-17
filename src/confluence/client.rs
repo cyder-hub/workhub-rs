@@ -223,6 +223,52 @@ fn comment_payload(
     }))
 }
 
+fn comment_update_payload(
+    current: &ConfluenceComment,
+    comment_id: &str,
+    storage_body: &str,
+) -> Result<Value, UpstreamError> {
+    let comment_id = safe_path_segment(comment_id, "comment_id")?;
+    let next_version = current
+        .version
+        .as_ref()
+        .and_then(|version| version.number)
+        .unwrap_or(1)
+        + 1;
+    let mut payload = json!({
+        "id": comment_id,
+        "type": "comment",
+        "body": {
+            "storage": {
+                "value": storage_body,
+                "representation": "storage"
+            }
+        },
+        "version": {
+            "number": next_version
+        }
+    });
+
+    if let Some(title) = current.title.as_deref().and_then(|title| {
+        let title = title.trim();
+        (!title.is_empty()).then_some(title)
+    }) {
+        payload["title"] = Value::String(title.to_string());
+    }
+    if let Some(container) = current.container.as_ref() {
+        if let (Some(id), Some(content_type)) =
+            (container.id.as_deref(), container.content_type.as_deref())
+        {
+            payload["container"] = json!({
+                "id": id,
+                "type": content_type,
+            });
+        }
+    }
+
+    Ok(payload)
+}
+
 fn required_non_empty_input(
     value: &str,
     field_name: &'static str,

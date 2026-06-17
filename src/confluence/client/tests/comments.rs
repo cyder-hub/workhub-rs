@@ -99,3 +99,65 @@ async fn client_adds_and_replies_to_comments_with_storage_payloads() {
         json!("<p>Reply</p>")
     );
 }
+
+#[tokio::test]
+async fn client_updates_comment_with_next_version_and_storage_payload() {
+    let (base_url, requests) = queued_mock_server(vec![
+        (
+            StatusCode::OK,
+            json!({
+                "id": "c-1",
+                "title": "Roadmap",
+                "type": "comment",
+                "body": {"storage": {"value": "<p>Old</p>"}},
+                "version": {"number": 2},
+                "container": {"id": "123", "type": "page", "title": "Roadmap"}
+            }),
+        ),
+        (
+            StatusCode::OK,
+            json!({
+                "id": "c-1",
+                "title": "Roadmap",
+                "type": "comment",
+                "body": {"storage": {"value": "<p>Updated</p>"}},
+                "version": {"number": 3},
+                "container": {"id": "123", "type": "page", "title": "Roadmap"}
+            }),
+        ),
+    ])
+    .await;
+
+    let updated = client(base_url)
+        .update_comment("c-1", "<p>Updated</p>")
+        .await
+        .unwrap();
+
+    assert_eq!(updated.id.as_deref(), Some("c-1"));
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, Method::GET);
+    assert!(requests[0].path.starts_with("/rest/api/content/c-1?"));
+    assert_eq!(requests[1].method, Method::PUT);
+    assert_eq!(requests[1].path, "/rest/api/content/c-1");
+    assert_eq!(requests[1].body["id"], json!("c-1"));
+    assert_eq!(requests[1].body["type"], json!("comment"));
+    assert_eq!(requests[1].body["title"], json!("Roadmap"));
+    assert_eq!(requests[1].body["version"]["number"], json!(3));
+    assert_eq!(requests[1].body["container"]["id"], json!("123"));
+    assert_eq!(
+        requests[1].body["body"]["storage"]["value"],
+        json!("<p>Updated</p>")
+    );
+}
+
+#[tokio::test]
+async fn client_deletes_comment_by_content_id() {
+    let (base_url, requests) = mock_server(json!({}), StatusCode::NO_CONTENT).await;
+
+    client(base_url).delete_comment("c-1").await.unwrap();
+
+    let requests = requests.lock().await;
+    assert_eq!(requests[0].method, Method::DELETE);
+    assert_eq!(requests[0].path, "/rest/api/content/c-1");
+}

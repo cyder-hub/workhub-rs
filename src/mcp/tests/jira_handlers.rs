@@ -144,7 +144,6 @@ async fn jira_create_issues_handler_posts_bulk_payload_to_mock_rest() {
                     "priority": {"name": "High"}
                 }
             ]),
-            validate_only: Some(false),
         }))
         .await
         .unwrap();
@@ -169,7 +168,7 @@ async fn jira_create_issues_handler_posts_bulk_payload_to_mock_rest() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].method, Method::POST);
     assert_eq!(requests[0].path, "/rest/api/2/issue/bulk");
-    assert_eq!(requests[0].body["validateOnly"], json!(false));
+    assert!(requests[0].body.get("validateOnly").is_none());
     assert_eq!(
         requests[0].body["issueUpdates"][0]["fields"]["summary"],
         json!("Batch one")
@@ -197,7 +196,6 @@ async fn jira_create_issues_handler_rejects_invalid_issue_before_http() {
                 "project_key": "ABC",
                 "issue_type": "Task"
             }]),
-            validate_only: Some(false),
         }))
         .await
         .unwrap_err();
@@ -301,7 +299,7 @@ async fn jira_update_issue_handler_puts_expected_payload_and_handles_no_content(
     );
     assert_eq!(
         result.structured_content.as_ref().unwrap()["data"],
-        Value::Null
+        json!({})
     );
     assert_registered_output_schema_declares_properties(
         tools::JIRA_UPDATE_ISSUE_TOOL_NAME,
@@ -389,6 +387,34 @@ async fn jira_delete_issue_handler_sends_delete_subtasks_query_and_handles_no_co
         requests[0].path,
         "/rest/api/2/issue/ABC-1?deleteSubtasks=true"
     );
+}
+
+#[tokio::test]
+async fn jira_delete_issue_comment_handler_uses_delete_endpoint() {
+    let (base_url, requests) = mock_jira_server().await;
+    let server = server_with_config(RuntimeConfig {
+        jira: Some(jira_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+    let result = server
+        .delete_issue_comment(Parameters(tools::JiraDeleteCommentArgs {
+            issue_key: "ABC-1".to_string(),
+            comment_id: "10".to_string(),
+        }))
+        .await
+        .unwrap();
+    let requests = requests.lock().await;
+
+    assert_eq!(
+        result.structured_content.as_ref().unwrap()["success"],
+        json!(true)
+    );
+    assert_eq!(
+        result.structured_content.as_ref().unwrap()["comment_id"],
+        json!("10")
+    );
+    assert_eq!(requests[0].method, Method::DELETE);
+    assert_eq!(requests[0].path, "/rest/api/2/issue/ABC-1/comment/10");
 }
 
 #[tokio::test]
@@ -493,7 +519,7 @@ async fn jira_create_project_version_handler_posts_expected_payload_to_mock_rest
     let requests = requests.lock().await;
 
     assert_eq!(
-        result.structured_content.as_ref().unwrap()["name"],
+        result.structured_content.as_ref().unwrap()["data"]["name"],
         json!("v1")
     );
     assert_eq!(requests.len(), 1);
@@ -532,6 +558,14 @@ async fn jira_create_project_versions_handler_returns_success_and_error_partitio
     assert_eq!(
         result.structured_content.as_ref().unwrap()["versions"][1]["success"],
         json!(false)
+    );
+    assert_eq!(
+        result.structured_content.as_ref().unwrap()["success"],
+        json!(false)
+    );
+    assert_eq!(
+        result.structured_content.as_ref().unwrap()["partial_success"],
+        json!(true)
     );
     assert_eq!(result.is_error, Some(false));
     assert_registered_output_schema_declares_properties(
@@ -681,7 +715,7 @@ async fn jira_add_issue_worklog_handler_posts_body_and_estimate_query() {
     let requests = requests.lock().await;
 
     assert_eq!(
-        result.structured_content.as_ref().unwrap()["id"],
+        result.structured_content.as_ref().unwrap()["data"]["id"],
         json!("300")
     );
     assert_eq!(requests[0].method, Method::POST);
@@ -698,6 +732,60 @@ async fn jira_add_issue_worklog_handler_posts_body_and_estimate_query() {
     assert_eq!(
         requests[0].body["visibility"],
         json!({"type": "group", "value": "jira-users"})
+    );
+}
+
+#[tokio::test]
+async fn jira_update_and_delete_issue_worklog_handlers_use_expected_endpoints() {
+    let (base_url, requests) = mock_jira_server().await;
+    let server = server_with_config(RuntimeConfig {
+        jira: Some(jira_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+    let updated = server
+        .update_issue_worklog(Parameters(tools::JiraUpdateWorklogArgs {
+            issue_key: "ABC-1".to_string(),
+            worklog_id: "300".to_string(),
+            time_spent: "2h".to_string(),
+            started: Some("2026-01-02T00:00:00.000+0000".to_string()),
+            comment: Some("Updated worklog".to_string()),
+            visibility: None,
+            adjust_estimate: Some("auto".to_string()),
+            new_estimate: None,
+            reduce_by: None,
+        }))
+        .await
+        .unwrap();
+    let deleted = server
+        .delete_issue_worklog(Parameters(tools::JiraDeleteWorklogArgs {
+            issue_key: "ABC-1".to_string(),
+            worklog_id: "300".to_string(),
+            adjust_estimate: Some("new".to_string()),
+            new_estimate: Some("2h".to_string()),
+            increase_by: None,
+        }))
+        .await
+        .unwrap();
+    let requests = requests.lock().await;
+
+    assert_eq!(
+        updated.structured_content.as_ref().unwrap()["data"]["id"],
+        json!("300")
+    );
+    assert_eq!(
+        deleted.structured_content.as_ref().unwrap()["success"],
+        json!(true)
+    );
+    assert_eq!(requests[0].method, Method::PUT);
+    assert_eq!(
+        requests[0].path,
+        "/rest/api/2/issue/ABC-1/worklog/300?adjustEstimate=auto"
+    );
+    assert_eq!(requests[0].body["timeSpent"], json!("2h"));
+    assert_eq!(requests[1].method, Method::DELETE);
+    assert_eq!(
+        requests[1].path,
+        "/rest/api/2/issue/ABC-1/worklog/300?adjustEstimate=new&newEstimate=2h"
     );
 }
 
@@ -772,10 +860,7 @@ async fn jira_link_type_and_epic_handlers_use_expected_payloads() {
         epic.structured_content.as_ref().unwrap()["success"],
         json!(true)
     );
-    assert_eq!(
-        epic.structured_content.as_ref().unwrap()["data"],
-        Value::Null
-    );
+    assert_eq!(epic.structured_content.as_ref().unwrap()["data"], json!({}));
     assert_eq!(requests[2].method, Method::PUT);
     assert_eq!(requests[2].path, "/rest/api/2/issue/ABC-1");
     assert_eq!(
@@ -823,7 +908,7 @@ async fn jira_issue_link_handlers_post_remote_and_delete_expected_payloads() {
     let requests = requests.lock().await;
 
     assert_eq!(
-        issue_link.structured_content.as_ref().unwrap()["id"],
+        issue_link.structured_content.as_ref().unwrap()["data"]["id"],
         json!("200")
     );
     assert_eq!(requests[0].method, Method::POST);
@@ -836,7 +921,7 @@ async fn jira_issue_link_handlers_post_remote_and_delete_expected_payloads() {
         json!("Linking related work")
     );
     assert_eq!(
-        remote_link.structured_content.as_ref().unwrap()["id"],
+        remote_link.structured_content.as_ref().unwrap()["data"]["id"],
         json!("300")
     );
     assert_eq!(requests[1].method, Method::POST);
@@ -873,6 +958,64 @@ async fn jira_issue_link_handlers_post_remote_and_delete_expected_payloads() {
     );
     assert_eq!(requests[2].method, Method::DELETE);
     assert_eq!(requests[2].path, "/rest/api/2/issueLink/200");
+}
+
+#[tokio::test]
+async fn jira_issue_link_discovery_handlers_return_cleanup_previews() {
+    let (base_url, requests) = mock_jira_server().await;
+    let server = server_with_config(RuntimeConfig {
+        jira: Some(jira_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+    let links = server
+        .list_issue_links(Parameters(tools::JiraListIssueLinksArgs {
+            issue_key: "ABC-1".to_string(),
+            link_type: Some("block".to_string()),
+            linked_issue_key: Some("ABC-2".to_string()),
+            direction: Some("outward".to_string()),
+        }))
+        .await
+        .unwrap();
+    let remote_links = server
+        .list_remote_issue_links(Parameters(tools::JiraListRemoteIssueLinksArgs {
+            issue_key: "ABC-1".to_string(),
+            global_id: Some("system=https://example.invalid&id=doc-1".to_string()),
+            title: Some("design".to_string()),
+            url: None,
+        }))
+        .await
+        .unwrap();
+    let deleted_remote = server
+        .delete_remote_issue_link(Parameters(tools::JiraDeleteRemoteIssueLinkArgs {
+            issue_key: "ABC-1".to_string(),
+            link_id: "300".to_string(),
+        }))
+        .await
+        .unwrap();
+    let requests = requests.lock().await;
+
+    assert_eq!(
+        links.structured_content.as_ref().unwrap()["count"],
+        json!(1)
+    );
+    assert_eq!(
+        links.structured_content.as_ref().unwrap()["links"][0]["id"],
+        json!("200")
+    );
+    assert_eq!(
+        remote_links.structured_content.as_ref().unwrap()["remote_links"][0]["id"],
+        json!("300")
+    );
+    assert_eq!(
+        deleted_remote.structured_content.as_ref().unwrap()["success"],
+        json!(true)
+    );
+    assert_eq!(requests[0].method, Method::GET);
+    assert!(requests[0].path.starts_with("/rest/api/2/issue/ABC-1?"));
+    assert_eq!(requests[1].method, Method::GET);
+    assert_eq!(requests[1].path, "/rest/api/2/issue/ABC-1/remotelink");
+    assert_eq!(requests[2].method, Method::DELETE);
+    assert_eq!(requests[2].path, "/rest/api/2/issue/ABC-1/remotelink/300");
 }
 
 #[tokio::test]
@@ -1155,14 +1298,21 @@ async fn jira_agile_write_handlers_send_expected_payloads_and_handle_no_content(
     let requests = requests.lock().await;
 
     assert_eq!(
-        created.structured_content.as_ref().unwrap()["name"],
+        created.structured_content.as_ref().unwrap()["data"]["name"],
         json!("Sprint 2")
     );
     assert_eq!(
-        updated.structured_content.as_ref().unwrap()["state"],
+        updated.structured_content.as_ref().unwrap()["data"]["state"],
         json!("active")
     );
-    assert_eq!(added.structured_content.as_ref().unwrap(), &Value::Null);
+    assert_eq!(
+        added.structured_content.as_ref().unwrap()["data"],
+        json!({})
+    );
+    assert_eq!(
+        added.structured_content.as_ref().unwrap()["issue_keys"],
+        json!(["ABC-1", "ABC-2"])
+    );
     assert_eq!(requests[0].method, Method::POST);
     assert_eq!(requests[0].path, "/rest/agile/1.0/sprint");
     assert_eq!(requests[0].body["name"], json!("Sprint 2"));

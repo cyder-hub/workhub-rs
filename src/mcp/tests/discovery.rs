@@ -23,7 +23,7 @@ fn server_info_uses_app_context() {
 
     assert!(instructions.contains("MCP_TOOL_PROFILE"));
     assert!(instructions.contains("resource CLI ignores MCP tool visibility controls"));
-    assert!(instructions.contains("workhub-rs exposes 85 Jira, Confluence, and GitLab"));
+    assert!(instructions.contains("workhub-rs exposes 101 Jira, Confluence, and GitLab"));
     assert!(instructions.contains("docs/support-matrix.md"));
 }
 
@@ -330,33 +330,33 @@ fn all_business_tools_have_metadata_routes_docs_and_control_plane_policy() {
     });
     let read_write_names = current_tool_names(&read_write);
 
-    assert_eq!(jira_names.len(), 46);
-    assert_eq!(confluence_names.len(), 24);
-    assert_eq!(gitlab_names.len(), 15);
-    assert_eq!(all_names.len(), 85);
+    assert_eq!(jira_names.len(), 52);
+    assert_eq!(confluence_names.len(), 27);
+    assert_eq!(gitlab_names.len(), 22);
+    assert_eq!(all_names.len(), 101);
     assert_eq!(unique_names.len(), all_names.len());
-    assert_eq!(support_matrix_rows.len(), 85);
+    assert_eq!(support_matrix_rows.len(), 101);
     assert_eq!(support_matrix_names.len(), support_matrix_rows.len());
     assert_eq!(
         support_matrix_names
             .iter()
             .filter(|name| name.starts_with("jira_"))
             .count(),
-        46
+        52
     );
     assert_eq!(
         support_matrix_names
             .iter()
             .filter(|name| name.starts_with("confluence_"))
             .count(),
-        24
+        27
     );
     assert_eq!(
         support_matrix_names
             .iter()
             .filter(|name| name.starts_with("gitlab_"))
             .count(),
-        15
+        22
     );
 
     for name in all_names {

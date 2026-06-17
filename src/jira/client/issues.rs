@@ -54,14 +54,9 @@ impl JiraClient {
         )
     }
 
-    pub async fn batch_create_issues(
-        &self,
-        issues: Vec<Value>,
-        validate_only: bool,
-    ) -> Result<Value, UpstreamError> {
+    pub async fn batch_create_issues(&self, issues: Vec<Value>) -> Result<Value, UpstreamError> {
         let body = json!({
             "issueUpdates": issues,
-            "validateOnly": validate_only,
         });
         let value: Value = self
             .http
@@ -224,6 +219,69 @@ impl JiraClient {
             .await
     }
 
+    pub async fn update_worklog(
+        &self,
+        issue_key: String,
+        worklog_id: String,
+        payload: Value,
+        query: Vec<(String, String)>,
+    ) -> Result<Value, UpstreamError> {
+        ensure_issue_allowed(&issue_key, &self.config)?;
+        let issue_key = safe_path_segment(&issue_key, "issue_key")?;
+        let worklog_id = safe_path_segment(&worklog_id, "worklog_id")?;
+        self.http
+            .send_json(
+                self.http
+                    .put_json(
+                        &format!("/rest/api/2/issue/{issue_key}/worklog/{worklog_id}"),
+                        &payload,
+                    )?
+                    .query(&query),
+            )
+            .await
+    }
+
+    pub async fn delete_worklog(
+        &self,
+        issue_key: String,
+        worklog_id: String,
+        query: Vec<(String, String)>,
+    ) -> Result<Value, UpstreamError> {
+        ensure_issue_allowed(&issue_key, &self.config)?;
+        let issue_key = safe_path_segment(&issue_key, "issue_key")?;
+        let worklog_id = safe_path_segment(&worklog_id, "worklog_id")?;
+        let response = self
+            .http
+            .send_json_value_or_null(
+                self.http
+                    .delete(&format!(
+                        "/rest/api/2/issue/{issue_key}/worklog/{worklog_id}"
+                    ))?
+                    .query(&query),
+            )
+            .await?;
+        let response = if response.is_null() {
+            json!({})
+        } else {
+            response
+        };
+        Ok(json!({
+            "success": true,
+            "message": "Worklog deleted successfully",
+            "data": {
+                "issue_key": issue_key,
+                "worklog_id": worklog_id,
+                "response": response,
+            },
+            "issue_key": issue_key,
+            "worklog_id": worklog_id,
+            "warnings": [],
+            "cleanup_hint": {
+                "verified_by": "jira issue worklog list",
+            },
+        }))
+    }
+
     pub async fn get_link_types(&self) -> Result<Value, UpstreamError> {
         self.http
             .send_json(self.http.get("/rest/api/2/issueLinkType")?)
@@ -268,6 +326,58 @@ impl JiraClient {
             .await
     }
 
+    pub async fn get_remote_issue_links(&self, issue_key: String) -> Result<Value, UpstreamError> {
+        ensure_issue_allowed(&issue_key, &self.config)?;
+        let issue_key = safe_path_segment(&issue_key, "issue_key")?;
+        let path = match self.config.deployment {
+            JiraDeployment::Cloud => format!("/rest/api/3/issue/{issue_key}/remotelink"),
+            JiraDeployment::ServerDataCenter => {
+                format!("/rest/api/2/issue/{issue_key}/remotelink")
+            }
+        };
+        self.http.send_json(self.http.get(&path)?).await
+    }
+
+    pub async fn delete_remote_issue_link(
+        &self,
+        issue_key: String,
+        link_id: String,
+    ) -> Result<Value, UpstreamError> {
+        ensure_issue_allowed(&issue_key, &self.config)?;
+        let issue_key = safe_path_segment(&issue_key, "issue_key")?;
+        let link_id = safe_path_segment(&link_id, "link_id")?;
+        let path = match self.config.deployment {
+            JiraDeployment::Cloud => format!("/rest/api/3/issue/{issue_key}/remotelink/{link_id}"),
+            JiraDeployment::ServerDataCenter => {
+                format!("/rest/api/2/issue/{issue_key}/remotelink/{link_id}")
+            }
+        };
+        let response = self
+            .http
+            .send_json_value_or_null(self.http.delete(&path)?)
+            .await?;
+        let response = if response.is_null() {
+            json!({})
+        } else {
+            response
+        };
+        Ok(json!({
+            "success": true,
+            "message": "Remote issue link deleted successfully",
+            "data": {
+                "issue_key": issue_key,
+                "link_id": link_id,
+                "response": response,
+            },
+            "issue_key": issue_key,
+            "link_id": link_id,
+            "warnings": [],
+            "cleanup_hint": {
+                "verified_by": "jira issue remote-link list",
+            },
+        }))
+    }
+
     pub async fn remove_issue_link(&self, link_id: String) -> Result<Value, UpstreamError> {
         let link_id = safe_path_segment(&link_id, "link_id")?;
         let response = self
@@ -277,7 +387,21 @@ impl JiraClient {
                     .delete(&format!("/rest/api/2/issueLink/{link_id}"))?,
             )
             .await?;
-        Ok(json!({ "success": true, "link_id": link_id, "response": response }))
+        let response = if response.is_null() {
+            json!({})
+        } else {
+            response
+        };
+        Ok(json!({
+            "success": true,
+            "message": "Issue link deleted successfully",
+            "data": {
+                "link_id": link_id,
+                "response": response.clone(),
+            },
+            "link_id": link_id,
+            "warnings": [],
+        }))
     }
 
     async fn watcher_mutation(
@@ -301,10 +425,21 @@ impl JiraClient {
                 .query(&[(query_key, user_identifier)])
         };
         let response = self.http.send_json_value_or_null(builder).await?;
+        let response = if response.is_null() {
+            json!({})
+        } else {
+            response
+        };
         Ok(json!({
             "success": true,
+            "message": if add { "Watcher added successfully" } else { "Watcher removed successfully" },
+            "data": {
+                "issue_key": issue_key,
+                "response": response.clone(),
+            },
             "issue_key": issue_key,
             "response": response,
+            "warnings": [],
         }))
     }
 }

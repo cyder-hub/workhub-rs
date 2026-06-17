@@ -84,6 +84,24 @@ gitlab_metadata!(
     "Update mutable GitLab merge request fields such as title, description, labels, reviewers, assignees, state, or target branch."
 );
 gitlab_metadata!(
+    GITLAB_CLOSE_MERGE_REQUEST_METADATA,
+    tools::GITLAB_CLOSE_MERGE_REQUEST_TOOL_NAME,
+    Write,
+    "gitlab_merge_requests_write",
+    destructive_write,
+    "Close GitLab merge request",
+    "Close a GitLab merge request through an explicit cleanup command that requires a matching confirm_iid."
+);
+gitlab_metadata!(
+    GITLAB_DELETE_MERGE_REQUEST_METADATA,
+    tools::GITLAB_DELETE_MERGE_REQUEST_TOOL_NAME,
+    Write,
+    "gitlab_merge_requests_write",
+    destructive_write,
+    "Delete GitLab merge request",
+    "Delete a GitLab merge request through an explicit cleanup command that requires a matching confirm_iid."
+);
+gitlab_metadata!(
     GITLAB_ADD_MERGE_REQUEST_NOTE_METADATA,
     tools::GITLAB_ADD_MERGE_REQUEST_NOTE_TOOL_NAME,
     Write,
@@ -91,6 +109,33 @@ gitlab_metadata!(
     additive_write,
     "Add GitLab merge request note",
     "Add a regular note to a GitLab merge request."
+);
+gitlab_metadata!(
+    GITLAB_UPDATE_MERGE_REQUEST_NOTE_METADATA,
+    tools::GITLAB_UPDATE_MERGE_REQUEST_NOTE_TOOL_NAME,
+    Write,
+    "gitlab_merge_requests_write",
+    destructive_write,
+    "Update GitLab merge request note",
+    "Update an existing note on a GitLab merge request."
+);
+gitlab_metadata!(
+    GITLAB_DELETE_MERGE_REQUEST_NOTE_METADATA,
+    tools::GITLAB_DELETE_MERGE_REQUEST_NOTE_TOOL_NAME,
+    Write,
+    "gitlab_merge_requests_write",
+    destructive_write,
+    "Delete GitLab merge request note",
+    "Delete an existing note from a GitLab merge request."
+);
+gitlab_metadata!(
+    GITLAB_LIST_MERGE_REQUEST_DISCUSSIONS_METADATA,
+    tools::GITLAB_LIST_MERGE_REQUEST_DISCUSSIONS_TOOL_NAME,
+    Read,
+    "gitlab_merge_requests_read",
+    read_only,
+    "List GitLab merge request discussions",
+    "List merge request discussions and note ids for cleanup or threaded replies."
 );
 gitlab_metadata!(
     GITLAB_REPLY_MERGE_REQUEST_DISCUSSION_METADATA,
@@ -137,6 +182,24 @@ gitlab_metadata!(
     "Accept GitLab merge request",
     "Merge a GitLab merge request only when the required SHA matches the reviewed head."
 );
+gitlab_metadata!(
+    GITLAB_CREATE_BRANCH_METADATA,
+    tools::GITLAB_CREATE_BRANCH_TOOL_NAME,
+    Write,
+    "gitlab_merge_requests_write",
+    additive_write,
+    "Create GitLab branch",
+    "Create a GitLab repository branch for an isolated merge request workflow."
+);
+gitlab_metadata!(
+    GITLAB_DELETE_BRANCH_METADATA,
+    tools::GITLAB_DELETE_BRANCH_TOOL_NAME,
+    Write,
+    "gitlab_merge_requests_write",
+    destructive_write,
+    "Delete GitLab branch",
+    "Delete a GitLab repository branch through an explicit cleanup command that requires a matching confirm_branch."
+);
 
 pub const TOOLS: &[ToolMetadata] = &[
     GITLAB_GET_CURRENT_USER_METADATA,
@@ -148,10 +211,17 @@ pub const TOOLS: &[ToolMetadata] = &[
     GITLAB_LIST_MERGE_REQUEST_PIPELINES_METADATA,
     GITLAB_CREATE_MERGE_REQUEST_METADATA,
     GITLAB_UPDATE_MERGE_REQUEST_METADATA,
+    GITLAB_CLOSE_MERGE_REQUEST_METADATA,
+    GITLAB_DELETE_MERGE_REQUEST_METADATA,
     GITLAB_ADD_MERGE_REQUEST_NOTE_METADATA,
+    GITLAB_UPDATE_MERGE_REQUEST_NOTE_METADATA,
+    GITLAB_DELETE_MERGE_REQUEST_NOTE_METADATA,
+    GITLAB_LIST_MERGE_REQUEST_DISCUSSIONS_METADATA,
     GITLAB_REPLY_MERGE_REQUEST_DISCUSSION_METADATA,
     GITLAB_RESOLVE_MERGE_REQUEST_DISCUSSION_METADATA,
     GITLAB_GET_MERGE_REQUEST_APPROVAL_STATE_METADATA,
     GITLAB_SET_MERGE_REQUEST_APPROVAL_METADATA,
     GITLAB_ACCEPT_MERGE_REQUEST_METADATA,
+    GITLAB_CREATE_BRANCH_METADATA,
+    GITLAB_DELETE_BRANCH_METADATA,
 ];

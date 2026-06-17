@@ -71,7 +71,7 @@ export GITLAB_TOKEN="<personal-project-or-group-access-token>"
 | `GITLAB_PERSONAL_TOKEN` | unset | Fallback token. Sent as `PRIVATE-TOKEN`. |
 | `GITLAB_PROJECTS_FILTER` | unset | Optional exact allowlist of numeric project IDs or full paths. Every project-scoped GitLab tool rejects projects outside this set before sending HTTP. |
 
-GitLab token precedence is `GITLAB_TOKEN`, then `GITLAB_PERSONAL_TOKEN`. Use `read_api` for read-only tools and `api` for writes, approvals, and merge. GitLab username/password API auth is not supported.
+GitLab token precedence is `GITLAB_TOKEN`, then `GITLAB_PERSONAL_TOKEN`. Use `read_api` for read-only tools and `api` for write, cleanup, approval, merge, and branch tools. GitLab username/password API auth is not supported.
 
 ## MCP Tool Access
 
@@ -79,7 +79,7 @@ Most users should choose a single MCP profile and leave lower-level controls uns
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
-| `MCP_TOOL_PROFILE` | `basic` | Supports `basic`, `developer`, `manager`, `full`, or `custom`. With Jira, Confluence, and GitLab configured, profiles expose 23, 47, 82, 85, or 0 tools respectively. Service availability filters out tools for unconfigured services. |
+| `MCP_TOOL_PROFILE` | `basic` | Supports `basic`, `developer`, `manager`, `full`, or `custom`. With Jira, Confluence, and GitLab configured, profiles expose 24, 54, 98, 101, or 0 tools respectively. Service availability filters out tools for unconfigured services. |
 | `MCP_TOOLSETS` | profile defaults | Adds comma-separated registered toolsets to the selected profile. `all` enables every toolset. Unknown names fail startup. |
 | `MCP_ENABLED_TOOLS` | unset | Adds comma-separated exact MCP tool names, even when their toolset is not enabled. |
 | `MCP_DISABLED_TOOLS` | unset | Removes comma-separated exact MCP tool names. This takes precedence over profile, toolset, and enabled-tool inclusion. |

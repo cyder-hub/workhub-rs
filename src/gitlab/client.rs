@@ -90,6 +90,13 @@ pub struct UpdateMergeRequestRequest {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CreateBranchRequest {
+    pub project: String,
+    pub branch: String,
+    pub ref_name: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AcceptMergeRequestRequest {
     pub project: String,
     pub merge_request_iid: u64,
@@ -288,6 +295,33 @@ impl GitlabClient {
         .await
     }
 
+    pub async fn close_merge_request(
+        &self,
+        project: &str,
+        merge_request_iid: u64,
+    ) -> Result<Value, UpstreamError> {
+        self.update_merge_request(UpdateMergeRequestRequest {
+            project: project.to_string(),
+            merge_request_iid,
+            state_event: Some("close".to_string()),
+            ..Default::default()
+        })
+        .await
+    }
+
+    pub async fn delete_merge_request(
+        &self,
+        project: &str,
+        merge_request_iid: u64,
+    ) -> Result<Value, UpstreamError> {
+        let project = self.project_api_segment(project)?;
+
+        self.send_json_value_or_null(self.http.delete(&format!(
+            "/api/v4/projects/{project}/merge_requests/{merge_request_iid}"
+        ))?)
+        .await
+    }
+
     pub async fn add_merge_request_note(
         &self,
         project: &str,
@@ -301,6 +335,54 @@ impl GitlabClient {
             &format!("/api/v4/projects/{project}/merge_requests/{merge_request_iid}/notes"),
             &json!({ "body": body }),
         )?)
+        .await
+    }
+
+    pub async fn update_merge_request_note(
+        &self,
+        project: &str,
+        merge_request_iid: u64,
+        note_id: u64,
+        body: String,
+    ) -> Result<Value, UpstreamError> {
+        let project = self.project_api_segment(project)?;
+        let body = required_non_empty(body, "body")?;
+
+        self.send_json_value_or_null(self.http.put_json(
+            &format!(
+                "/api/v4/projects/{project}/merge_requests/{merge_request_iid}/notes/{note_id}"
+            ),
+            &json!({ "body": body }),
+        )?)
+        .await
+    }
+
+    pub async fn delete_merge_request_note(
+        &self,
+        project: &str,
+        merge_request_iid: u64,
+        note_id: u64,
+    ) -> Result<Value, UpstreamError> {
+        let project = self.project_api_segment(project)?;
+
+        self.send_json_value_or_null(self.http.delete(&format!(
+            "/api/v4/projects/{project}/merge_requests/{merge_request_iid}/notes/{note_id}"
+        ))?)
+        .await
+    }
+
+    pub async fn list_merge_request_discussions(
+        &self,
+        project: &str,
+        merge_request_iid: u64,
+        page: Option<u64>,
+        per_page: Option<u64>,
+    ) -> Result<Value, UpstreamError> {
+        let project = self.project_api_segment(project)?;
+        self.get_json(
+            &format!("/projects/{project}/merge_requests/{merge_request_iid}/discussions"),
+            pagination_query(page, per_page)?,
+        )
         .await
     }
 
@@ -346,6 +428,35 @@ impl GitlabClient {
             ),
             &json!({ "resolved": resolved }),
         )?)
+        .await
+    }
+
+    pub async fn create_branch(
+        &self,
+        request: CreateBranchRequest,
+    ) -> Result<Value, UpstreamError> {
+        let project = self.project_api_segment(&request.project)?;
+        let branch = required_non_empty(request.branch, "branch")?;
+        let ref_name = required_non_empty(request.ref_name, "ref")?;
+
+        self.send_json_value_or_null(self.http.post_json(
+            &format!("/api/v4/projects/{project}/repository/branches"),
+            &json!({
+                "branch": branch,
+                "ref": ref_name,
+            }),
+        )?)
+        .await
+    }
+
+    pub async fn delete_branch(&self, project: &str, branch: &str) -> Result<Value, UpstreamError> {
+        let project = self.project_api_segment(project)?;
+        let branch =
+            percent_encode_path_segment(&required_non_empty(branch.to_string(), "branch")?);
+
+        self.send_json_value_or_null(self.http.delete(&format!(
+            "/api/v4/projects/{project}/repository/branches/{branch}"
+        ))?)
         .await
     }
 
@@ -1120,6 +1231,58 @@ mod tests {
         assert_eq!(requests[1].body["reviewer_ids"], json!([]));
         assert_eq!(requests[1].body["assignee_ids"], json!([]));
         assert_eq!(requests[1].body["target_branch"], "release");
+    }
+
+    #[tokio::test]
+    async fn cleanup_endpoints_send_expected_methods_paths_and_bodies() {
+        let (base_url, requests) = mock_server(json!({"ok": true}), StatusCode::OK).await;
+        let client = client(base_url);
+
+        client
+            .close_merge_request("group/project", 10)
+            .await
+            .unwrap();
+        client
+            .delete_merge_request("group/project", 10)
+            .await
+            .unwrap();
+        client
+            .create_branch(CreateBranchRequest {
+                project: "group/project".to_string(),
+                branch: "feature/api".to_string(),
+                ref_name: "main".to_string(),
+            })
+            .await
+            .unwrap();
+        client
+            .delete_branch("group/project", "feature/api")
+            .await
+            .unwrap();
+
+        let requests = requests.lock().await;
+        assert_eq!(requests[0].method, Method::PUT);
+        assert_eq!(
+            requests[0].path,
+            "/api/v4/projects/group%2Fproject/merge_requests/10"
+        );
+        assert_eq!(requests[0].body["state_event"], "close");
+        assert_eq!(requests[1].method, Method::DELETE);
+        assert_eq!(
+            requests[1].path,
+            "/api/v4/projects/group%2Fproject/merge_requests/10"
+        );
+        assert_eq!(requests[2].method, Method::POST);
+        assert_eq!(
+            requests[2].path,
+            "/api/v4/projects/group%2Fproject/repository/branches"
+        );
+        assert_eq!(requests[2].body["branch"], "feature/api");
+        assert_eq!(requests[2].body["ref"], "main");
+        assert_eq!(requests[3].method, Method::DELETE);
+        assert_eq!(
+            requests[3].path,
+            "/api/v4/projects/group%2Fproject/repository/branches/feature%2Fapi"
+        );
     }
 
     #[tokio::test]

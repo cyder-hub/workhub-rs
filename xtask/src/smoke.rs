@@ -1067,7 +1067,14 @@ fn run_cli_json_smoke(service: SmokeService, binary: &PathBuf, url: &str) -> Res
                 "--body",
                 "CLI smoke",
             ],
-            |value| value.get("id").and_then(Value::as_str) == Some("10"),
+            |value| {
+                value.get("id").and_then(Value::as_str) == Some("10")
+                    || value
+                        .get("data")
+                        .and_then(|data| data.get("id"))
+                        .and_then(Value::as_str)
+                        == Some("10")
+            },
         ),
         SmokeService::Confluence => (
             vec![
@@ -1104,7 +1111,14 @@ fn run_cli_json_smoke(service: SmokeService, binary: &PathBuf, url: &str) -> Res
                 "--title",
                 "CLI Smoke MR",
             ],
-            |value| value.get("title").and_then(Value::as_str) == Some("CLI Smoke MR"),
+            |value| {
+                value.get("title").and_then(Value::as_str) == Some("CLI Smoke MR")
+                    || value
+                        .get("data")
+                        .and_then(|data| data.get("title"))
+                        .and_then(Value::as_str)
+                        == Some("CLI Smoke MR")
+            },
         ),
     };
     let output = run_cli_process(binary, cli_smoke_env(service, url, None), &args)?;
@@ -1133,7 +1147,7 @@ async fn run_cli_mcp_controls_ignored_smoke(
             ],
             Method::POST,
             "/rest/api/2/issue/ABC-1/comment",
-            "id: 10",
+            "Comment added successfully",
         ),
         SmokeService::Confluence => (
             "confluence_create_page",

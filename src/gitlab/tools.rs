@@ -12,7 +12,13 @@ pub const GITLAB_LIST_MERGE_REQUEST_PIPELINES_TOOL_NAME: &str =
     "gitlab_list_merge_request_pipelines";
 pub const GITLAB_CREATE_MERGE_REQUEST_TOOL_NAME: &str = "gitlab_create_merge_request";
 pub const GITLAB_UPDATE_MERGE_REQUEST_TOOL_NAME: &str = "gitlab_update_merge_request";
+pub const GITLAB_CLOSE_MERGE_REQUEST_TOOL_NAME: &str = "gitlab_close_merge_request";
+pub const GITLAB_DELETE_MERGE_REQUEST_TOOL_NAME: &str = "gitlab_delete_merge_request";
 pub const GITLAB_ADD_MERGE_REQUEST_NOTE_TOOL_NAME: &str = "gitlab_add_merge_request_note";
+pub const GITLAB_UPDATE_MERGE_REQUEST_NOTE_TOOL_NAME: &str = "gitlab_update_merge_request_note";
+pub const GITLAB_DELETE_MERGE_REQUEST_NOTE_TOOL_NAME: &str = "gitlab_delete_merge_request_note";
+pub const GITLAB_LIST_MERGE_REQUEST_DISCUSSIONS_TOOL_NAME: &str =
+    "gitlab_list_merge_request_discussions";
 pub const GITLAB_REPLY_MERGE_REQUEST_DISCUSSION_TOOL_NAME: &str =
     "gitlab_reply_merge_request_discussion";
 pub const GITLAB_RESOLVE_MERGE_REQUEST_DISCUSSION_TOOL_NAME: &str =
@@ -21,6 +27,8 @@ pub const GITLAB_GET_MERGE_REQUEST_APPROVAL_STATE_TOOL_NAME: &str =
     "gitlab_get_merge_request_approval_state";
 pub const GITLAB_SET_MERGE_REQUEST_APPROVAL_TOOL_NAME: &str = "gitlab_set_merge_request_approval";
 pub const GITLAB_ACCEPT_MERGE_REQUEST_TOOL_NAME: &str = "gitlab_accept_merge_request";
+pub const GITLAB_CREATE_BRANCH_TOOL_NAME: &str = "gitlab_create_branch";
+pub const GITLAB_DELETE_BRANCH_TOOL_NAME: &str = "gitlab_delete_branch";
 
 #[cfg(test)]
 pub const GITLAB_TOOL_NAMES: &[&str] = &[
@@ -33,12 +41,19 @@ pub const GITLAB_TOOL_NAMES: &[&str] = &[
     GITLAB_LIST_MERGE_REQUEST_PIPELINES_TOOL_NAME,
     GITLAB_CREATE_MERGE_REQUEST_TOOL_NAME,
     GITLAB_UPDATE_MERGE_REQUEST_TOOL_NAME,
+    GITLAB_CLOSE_MERGE_REQUEST_TOOL_NAME,
+    GITLAB_DELETE_MERGE_REQUEST_TOOL_NAME,
     GITLAB_ADD_MERGE_REQUEST_NOTE_TOOL_NAME,
+    GITLAB_UPDATE_MERGE_REQUEST_NOTE_TOOL_NAME,
+    GITLAB_DELETE_MERGE_REQUEST_NOTE_TOOL_NAME,
+    GITLAB_LIST_MERGE_REQUEST_DISCUSSIONS_TOOL_NAME,
     GITLAB_REPLY_MERGE_REQUEST_DISCUSSION_TOOL_NAME,
     GITLAB_RESOLVE_MERGE_REQUEST_DISCUSSION_TOOL_NAME,
     GITLAB_GET_MERGE_REQUEST_APPROVAL_STATE_TOOL_NAME,
     GITLAB_SET_MERGE_REQUEST_APPROVAL_TOOL_NAME,
     GITLAB_ACCEPT_MERGE_REQUEST_TOOL_NAME,
+    GITLAB_CREATE_BRANCH_TOOL_NAME,
+    GITLAB_DELETE_BRANCH_TOOL_NAME,
 ];
 
 fn string_list_or_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -188,10 +203,51 @@ pub struct GitlabUpdateMergeRequestArgs {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct GitlabCloseMergeRequestArgs {
+    pub project: String,
+    pub merge_request_iid: u64,
+    #[schemars(description = "Must equal merge_request_iid to confirm this cleanup action.")]
+    pub confirm_iid: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct GitlabDeleteMergeRequestArgs {
+    pub project: String,
+    pub merge_request_iid: u64,
+    #[schemars(description = "Must equal merge_request_iid to confirm this destructive action.")]
+    pub confirm_iid: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct GitlabAddMergeRequestNoteArgs {
     pub project: String,
     pub merge_request_iid: u64,
     pub body: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct GitlabUpdateMergeRequestNoteArgs {
+    pub project: String,
+    pub merge_request_iid: u64,
+    pub note_id: u64,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct GitlabDeleteMergeRequestNoteArgs {
+    pub project: String,
+    pub merge_request_iid: u64,
+    pub note_id: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct GitlabListMergeRequestDiscussionsArgs {
+    pub project: String,
+    pub merge_request_iid: u64,
+    #[schemars(description = "1-based GitLab pagination page. Defaults to 1.")]
+    pub page: Option<u64>,
+    #[schemars(description = "GitLab page size from 1 to 100. Defaults to 20.")]
+    pub per_page: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -235,6 +291,23 @@ pub struct GitlabAcceptMergeRequestArgs {
     pub should_remove_source_branch: Option<bool>,
     pub merge_commit_message: Option<String>,
     pub squash_commit_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct GitlabCreateBranchArgs {
+    pub project: String,
+    pub branch: String,
+    #[serde(rename = "ref")]
+    #[schemars(description = "Existing branch, tag, or commit SHA used as the new branch ref.")]
+    pub ref_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct GitlabDeleteBranchArgs {
+    pub project: String,
+    pub branch: String,
+    #[schemars(description = "Must equal branch to confirm this destructive action.")]
+    pub confirm_branch: String,
 }
 
 #[cfg(test)]

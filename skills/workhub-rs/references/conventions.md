@@ -57,6 +57,12 @@ Failures leave stdout empty and write stderr. Exit codes:
 | `4` | Upstream HTTP, transport, decode, or unexpected response-shape error. |
 | `5` | Business structured error or output rendering failure. |
 
+When a command returns a structured result with top-level `"success": false`, treat it as a business failure: stdout is empty, the same structured payload is written to stderr, and the process exits with code `5`. Automation must check both the process exit code and JSON business fields such as `success`, `partial_success`, `failed`, and `error`.
+
+State-changing commands use a mutation envelope when implemented: `success`, `message`, `data`, and `warnings`; batch mutations also use `partial_success`, `summary`, and `failed`. No-content upstream responses use `{}` in `data`, not bare `null`. For compatibility or cleanup failures, inspect structured error categories such as `permission_denied`, `not_found`, and `unsupported_or_auth_required`.
+
+Destructive cleanup commands may require an explicit confirmation flag equal to the target, such as `--confirm-id`, `--confirm-iid`, or `--confirm-branch`. Treat a missing or mismatched confirmation value as a hard stop; do not retry by guessing. When a delete result includes `cleanup_hint`, use the suggested read/list command or GitLab UI/API verification to verify the outcome before reporting cleanup complete.
+
 With `--json`, stderr has this shape:
 
 ```json
@@ -95,7 +101,7 @@ workhub cli jira agile sprint add-issues 42 --issues ABC-1,ABC-2
 
 Boolean flags have two forms:
 
-- Presence flags: `--include-content`, `--values-only`, `--delete-subtasks`, `--validate-only`, `--include-raw-dates`.
+- Presence flags: `--include-content`, `--values-only`, `--delete-subtasks`, `--include-raw-dates`.
 - Explicit booleans: `--minor-edit true`, `--resolved false`, `--released true`.
 
 ## Safety
