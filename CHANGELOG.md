@@ -2,59 +2,82 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-06-17
+
+### Added
+- Added Jira MCP tools and CLI commands for deleting issue comments, updating and deleting worklogs, listing issue links, listing remote issue links, and deleting remote issue links.
+- Added Confluence MCP tools and CLI commands for updating and deleting page comments and removing content labels.
+- Added GitLab MCP tools and CLI commands for closing and deleting merge requests, updating and deleting merge request notes, listing merge request discussions, and creating or deleting branches.
+
+### Changed
+- State-changing CLI commands now use a consistent mutation response envelope with `success`, `message`, `data`, and `warnings`; batch-style responses also include `partial_success`, `summary`, and `failed` where applicable.
+- No-content mutation successes now return an empty object in `data` instead of `null`.
+- Removed `--validate-only` from Jira batch issue creation.
+- Confluence page and attachment delete commands now require a matching confirmation id.
+
+### Fixed
+- CLI commands returning a structured `{"success": false}` payload now write the failure payload to stderr and exit with code `5`.
+- Jira bulk issue creation now rejects the removed `validate_only` argument instead of ignoring it.
+- Confluence page comment update and delete now verify that the comment belongs to the requested page before making the change.
+
 ## 0.4.5 - 2026-06-16
 
 ### Changed
-- Changed the Linux/macOS and Windows installers to resolve the latest release from the GitHub release redirect instead of the rate-limited GitHub REST API.
+- Linux/macOS and Windows installers now resolve the latest version through the GitHub release redirect and download assets from the latest-release download URL, avoiding the GitHub REST API.
 
 ## 0.4.4 - 2026-06-16
 
 ### Fixed
-- Fixed Windows installer compatibility with Windows PowerShell by using Windows environment variables for CPU detection and reporting empty checksum downloads explicitly.
+- Fixed Windows installer detection of the local application data directory and CPU architecture in Windows PowerShell.
+- Fixed Windows installer error handling for empty latest-release tags and empty checksum downloads.
 
 ## 0.4.3 - 2026-06-16
 
 ### Added
-- Added interactive Linux/macOS and Windows installer scripts for default-path install, update, and uninstall from GitHub Releases.
+- Added interactive Linux/macOS and Windows installers for installing, updating, or uninstalling the default local `workhub` binary from GitHub Releases.
 
 ## 0.4.2 - 2026-06-16
 
 ### Added
-- Added dialoguer-backed prompts for the CLI config setup wizard, including confirmations, text inputs, secret inputs, and auth-method selection.
-- Added interactive Server/Data Center auth-method selection for Jira, Confluence, and shared Atlassian credentials, including username/password setup paths and configured/partial status markers.
+- Added interactive prompt controls to `workhub cli config setup`, including confirmations, text inputs, hidden secret inputs, and menu-based auth-method selection.
+- Added Jira, Confluence, and shared Atlassian Server/Data Center setup choices for either personal-token auth or username/password auth.
 
 ### Fixed
-- Kept invalid setup input, such as malformed service URLs, on the current prompt until corrected instead of exiting the wizard.
-- Fixed secret setup prompts such as `JIRA_PERSONAL_TOKEN` and `JIRA_PASSWORD` so hidden input can be submitted successfully in interactive terminals.
+- Invalid setup input, including malformed service URLs, now stays on the current prompt until corrected instead of exiting the wizard.
+- Existing setup choices now show whether each auth method is configured or partially configured.
 
 ## 0.4.1 - 2026-06-15
 
 ### Added
-- Added global CLI config management commands for path discovery, redacted display, guided setup, and scripted set/unset updates.
+- Added global CLI configuration commands: `workhub cli config path`, `show`, `setup`, `set`, and `unset`.
+- Added per-platform global CLI config files under the user's application config directory.
 
 ### Changed
-- Refocused the bundled Workhub skill guide on Jira, Confluence, and GitLab business command usage, input forms, and return behavior.
+- `workhub cli` now loads environment values from explicit `--env-file`, then `ENV_FILE`, then the global CLI config file, then the current directory `.env`.
+- `streamhttp` dotenv loading now searches the current directory and parent directories for a default `.env`.
 
 ### Fixed
-- Redacted custom header values in CLI config display.
-- Rejected setup URLs that the runtime would later reject, including non-HTTP(S), hostless, and malformed GitLab, Jira, and Confluence URLs.
+- `workhub cli config show` now redacts secret values before printing configuration.
+- `workhub cli config setup` now rejects service URLs that runtime startup would reject, including non-HTTP(S), hostless, and malformed Jira, Confluence, and GitLab URLs.
 
 ## 0.4.0 - 2026-06-12
 
 ### Added
 - Added the production `workhub cli` command surface for resource-oriented Jira, Confluence, and GitLab operations.
-- Added structured CLI output modes with text output by default, `--json`, `--pretty`, stdout-only success output, stderr-only errors, and documented exit-code categories.
-- Added CLI dotenv loading via `--env-file`, `ENV_FILE`, or default `.env` discovery for CLI and streamable HTTP modes.
-- Added shared operation dispatch and output rendering layers reused by MCP handlers and the CLI.
-- Added CLI documentation, support-matrix coverage, development tooling notes, smoke coverage, and a Workhub skill reference.
+- Added CLI text output by default, compact JSON with `--json`, pretty JSON with `--pretty`, stdout-only success output, stderr-only errors, and stable exit-code categories.
+- Added CLI dotenv loading through `--env-file`, `ENV_FILE`, or default `.env` discovery.
 
 ### Changed
-- Removed legacy multi-user request-auth and session-auth paths; runtime credentials are now sourced from global service configuration only.
-- Updated Docker, Compose, CI, release, and smoke tooling to include the new CLI workflows and artifact checks.
+- Renamed the package and release binary from `mcp-workhub-rs` to `workhub-rs` and `workhub`.
+- Renamed MCP tool visibility environment variables to `MCP_TOOL_PROFILE`, `MCP_TOOLSETS`, `MCP_ENABLED_TOOLS`, and `MCP_DISABLED_TOOLS`.
+- `workhub cli` uses service configuration and project/space filters but ignores MCP tool visibility controls.
+- Streamable HTTP now uses process-wide service configuration only; request-scoped Jira and Confluence credential or service URL overrides were removed.
+- Jira and Confluence OAuth/BYOT access-token environment authentication was removed; use API-token, PAT, or username/password auth instead.
+- GitLab OAuth access-token environment authentication was removed; use `GITLAB_TOKEN` or `GITLAB_PERSONAL_TOKEN` instead.
 
 ### Fixed
-- Kept successful env-file-backed CLI commands stdout-only by suppressing dotenv success diagnostics in CLI mode.
-- Rendered CLI startup configuration failures through the CLI error contract, including JSON formatting and config exit code `3`.
+- Successful env-file-backed CLI commands no longer print dotenv diagnostics to stdout.
+- CLI startup configuration failures now use the CLI error contract, including JSON formatting and config exit code `3`.
 
 ## 0.3.0 - 2026-06-10
 
@@ -62,24 +85,23 @@
 - Added `mcp-workhub-rs -v` to print only the package version and exit.
 
 ### Changed
-- Renamed the released package, binary, and runtime identity from `mcp-atlassian-rs` to `mcp-workhub-rs`, including MCP server metadata, Docker image and Compose service names, release artifact names, `just` shortcuts, and smoke/acceptance tooling paths.
+- Renamed the released package, binary, and runtime identity from `mcp-atlassian-rs` to `mcp-workhub-rs`, including Docker image, Compose service, and release artifact names.
 - Updated the default tracing target namespace from `mcp_atlassian_rs` to `mcp_workhub_rs`; custom `RUST_LOG` filters should use the new module path.
-- Repositioned the project documentation around a provider-neutral Workhub server for Jira, Confluence, and GitLab, with the README focused on quick start, MCP client setup, architecture, Docker, and release usage.
-- Moved the detailed configuration reference into `docs/configuration.md`, with deployment and support documentation updated to use the new binary, Docker, Compose, and artifact names.
 
 ## 0.2.0 - 2026-06-10
 
 ### Added
-- feat(gitlab): Added GitLab merge request tool support.
-- feat(toolsets): Added profile-based access controls for tool exposure.
-- feat(auth): Added Jira and Confluence Server/Data Center username/password Basic Auth via `JIRA_PASSWORD`, `CONFLUENCE_PASSWORD`, and shared `ATLASSIAN_PASSWORD` fallbacks.
+- Added GitLab merge request MCP tools for project lookup, merge request reads, commits, bounded diffs, pipelines, create/update, notes, discussions, approvals, and SHA-gated merge.
+- Added GitLab configuration through `GITLAB_URL`, token variables, project allowlisting, proxy, TLS, custom headers, and mTLS settings.
+- Added profile-based MCP tool access through `TOOL_PROFILE`, `TOOLSETS`, `ENABLED_TOOLS`, and `DISABLED_TOOLS`.
+- Added Jira and Confluence Server/Data Center username/password Basic Auth via `JIRA_PASSWORD`, `CONFLUENCE_PASSWORD`, and shared `ATLASSIAN_PASSWORD` fallbacks.
+- Added shared Atlassian fallback variables for username/API-token and personal-token credentials.
 
 ### Fixed
-- fix(mcp): Corrected advertised output schemas.
+- Corrected advertised MCP output schemas.
 
 ### Changed
-- refactor: Split Atlassian modules for clearer shared HTTP, auth, security, and service-specific boundaries.
-- chore: Migrated validation tooling to `xtask`.
+- Replaced `READ_ONLY_MODE` with profile and exact-tool access controls. The default `basic` profile exposes a smaller safe tool set, while `DISABLED_TOOLS` blocks direct calls even when a tool is otherwise enabled.
 
 ## 0.1.2 - 2026-06-08
 
