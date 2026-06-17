@@ -128,8 +128,10 @@ async fn client_updates_comment_with_next_version_and_storage_payload() {
     ])
     .await;
 
-    let updated = client(base_url)
-        .update_comment("c-1", "<p>Updated</p>")
+    let client = client(base_url);
+    let current = client.get_comment_by_id("c-1").await.unwrap();
+    let updated = client
+        .update_comment_with_current(&current, "c-1", "<p>Updated</p>")
         .await
         .unwrap();
 

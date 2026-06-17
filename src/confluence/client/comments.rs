@@ -56,16 +56,6 @@ impl ConfluenceClient {
             .await
     }
 
-    pub async fn update_comment(
-        &self,
-        comment_id: &str,
-        storage_body: &str,
-    ) -> Result<ConfluenceComment, UpstreamError> {
-        let current = self.get_comment_by_id(comment_id).await?;
-        self.update_comment_with_current(&current, comment_id, storage_body)
-            .await
-    }
-
     pub async fn update_comment_with_current(
         &self,
         current: &ConfluenceComment,
