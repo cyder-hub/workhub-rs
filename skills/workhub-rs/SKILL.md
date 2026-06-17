@@ -11,7 +11,7 @@ It covers:
 
 - Jira issues, projects, fields, Agile, service desk, users, attachments, worklogs, links, and related data.
 - Confluence content search, pages, comments, labels, users, versions, analytics, and attachments.
-- GitLab users, projects, merge requests, notes, discussions, approvals, and merges.
+- GitLab users, projects, merge requests, notes, discussions, approvals, merges, branches, and cleanup.
 
 It does not cover installation, building, deployment, MCP server behavior, credentials, environment variables, global config files, or `workhub cli config`.
 
@@ -56,6 +56,6 @@ Choose Jira for issue tracking work: issue lookup/search/create/update/delete, c
 
 Choose Confluence for knowledge-base work: content search, page lookup/create/update/delete/move, page comments, page versions/diffs, labels, users, analytics, and attachments.
 
-Choose GitLab for source-control review work: current user, project lookup, merge request listing/details/diffs/commits/pipelines, MR notes/discussions, approvals, and merges.
+Choose GitLab for source-control review work: current user, project lookup, merge request listing/details/diffs/commits/pipelines, MR notes/discussions, approvals, merges, branch creation/deletion, and cleanup.
 
 For write, delete, move, approval, and merge operations, first use a read command when the target ID, branch, page, issue, SHA, or current state is uncertain. Only suggest or run destructive or state-changing commands when the user clearly intends that action.

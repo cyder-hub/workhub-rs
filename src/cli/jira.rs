@@ -107,6 +107,7 @@ pub struct IssueCommentArgs {
 pub enum IssueCommentCommand {
     Add(AddIssueCommentArgs),
     Update(UpdateIssueCommentArgs),
+    Delete(DeleteIssueCommentArgs),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -128,6 +129,12 @@ pub struct UpdateIssueCommentArgs {
     pub body_input: BodyInput,
     #[command(flatten)]
     pub visibility_input: VisibilityInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct DeleteIssueCommentArgs {
+    pub issue_key: String,
+    pub comment_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -201,8 +208,6 @@ pub struct CreateIssueArgs {
 pub struct CreateIssuesArgs {
     #[arg(long)]
     pub issues_file: PathBuf,
-    #[arg(long)]
-    pub validate_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -279,6 +284,8 @@ pub struct IssueWorklogArgs {
 pub enum IssueWorklogCommand {
     List(ListIssueWorklogsArgs),
     Add(AddIssueWorklogArgs),
+    Update(UpdateIssueWorklogArgs),
+    Delete(DeleteIssueWorklogArgs),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -312,6 +319,43 @@ pub struct AddIssueWorklogArgs {
     pub new_estimate: Option<String>,
     #[arg(long)]
     pub reduce_by: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+#[command(group(clap::ArgGroup::new("comment_input").args(["comment", "comment_file", "comment_stdin"]).multiple(false)))]
+pub struct UpdateIssueWorklogArgs {
+    pub issue_key: String,
+    pub worklog_id: String,
+    #[arg(long)]
+    pub time_spent: String,
+    #[arg(long)]
+    pub started: Option<String>,
+    #[arg(long)]
+    pub comment: Option<String>,
+    #[arg(long)]
+    pub comment_file: Option<PathBuf>,
+    #[arg(long)]
+    pub comment_stdin: bool,
+    #[command(flatten)]
+    pub visibility_input: VisibilityInput,
+    #[arg(long)]
+    pub adjust_estimate: Option<String>,
+    #[arg(long)]
+    pub new_estimate: Option<String>,
+    #[arg(long)]
+    pub reduce_by: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct DeleteIssueWorklogArgs {
+    pub issue_key: String,
+    pub worklog_id: String,
+    #[arg(long)]
+    pub adjust_estimate: Option<String>,
+    #[arg(long)]
+    pub new_estimate: Option<String>,
+    #[arg(long)]
+    pub increase_by: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -356,8 +400,20 @@ pub struct IssueLinkArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum IssueLinkCommand {
+    List(ListIssueLinksArgs),
     Create(CreateIssueLinkArgs),
     Delete(DeleteIssueLinkArgs),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct ListIssueLinksArgs {
+    pub issue_key: String,
+    #[arg(long = "type")]
+    pub link_type: Option<String>,
+    #[arg(long)]
+    pub linked_issue_key: Option<String>,
+    #[arg(long)]
+    pub direction: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -390,7 +446,20 @@ pub struct IssueRemoteLinkArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum IssueRemoteLinkCommand {
+    List(ListRemoteIssueLinksArgs),
     Create(CreateRemoteIssueLinkArgs),
+    Delete(DeleteRemoteIssueLinkArgs),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct ListRemoteIssueLinksArgs {
+    pub issue_key: String,
+    #[arg(long)]
+    pub global_id: Option<String>,
+    #[arg(long)]
+    pub title: Option<String>,
+    #[arg(long)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -415,6 +484,12 @@ pub struct CreateRemoteIssueLinkArgs {
     pub status_json: Option<String>,
     #[arg(long)]
     pub status_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct DeleteRemoteIssueLinkArgs {
+    pub issue_key: String,
+    pub link_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -906,7 +981,6 @@ async fn execute_issue(
                 context,
                 tool_args::JiraCreateIssuesArgs {
                     issues: read_json_file(&args.issues_file, "issues")?,
-                    validate_only: Some(args.validate_only),
                 },
             )
             .await
@@ -1054,6 +1128,16 @@ async fn execute_issue_comment(
             )
             .await
         }
+        IssueCommentCommand::Delete(args) => {
+            operations::jira::delete_issue_comment(
+                context,
+                tool_args::JiraDeleteCommentArgs {
+                    issue_key: args.issue_key,
+                    comment_id: args.comment_id,
+                },
+            )
+            .await
+        }
     }
 }
 
@@ -1169,6 +1253,43 @@ async fn execute_issue_worklog(
             )
             .await
         }
+        IssueWorklogCommand::Update(args) => {
+            let comment = read_optional_text(
+                args.comment,
+                args.comment_file,
+                args.comment_stdin,
+                "comment",
+            )?;
+            let visibility = read_visibility(args.visibility_input)?;
+            operations::jira::update_issue_worklog(
+                context,
+                tool_args::JiraUpdateWorklogArgs {
+                    issue_key: args.issue_key,
+                    worklog_id: args.worklog_id,
+                    time_spent: args.time_spent,
+                    started: args.started,
+                    comment,
+                    visibility,
+                    adjust_estimate: args.adjust_estimate,
+                    new_estimate: args.new_estimate,
+                    reduce_by: args.reduce_by,
+                },
+            )
+            .await
+        }
+        IssueWorklogCommand::Delete(args) => {
+            operations::jira::delete_issue_worklog(
+                context,
+                tool_args::JiraDeleteWorklogArgs {
+                    issue_key: args.issue_key,
+                    worklog_id: args.worklog_id,
+                    adjust_estimate: args.adjust_estimate,
+                    new_estimate: args.new_estimate,
+                    increase_by: args.increase_by,
+                },
+            )
+            .await
+        }
     }
 }
 
@@ -1177,6 +1298,18 @@ async fn execute_issue_link(
     context: &AppContext,
 ) -> Result<OperationResult, OperationError> {
     match args.command {
+        IssueLinkCommand::List(args) => {
+            operations::jira::list_issue_links(
+                context,
+                tool_args::JiraListIssueLinksArgs {
+                    issue_key: args.issue_key,
+                    link_type: args.link_type,
+                    linked_issue_key: args.linked_issue_key,
+                    direction: args.direction,
+                },
+            )
+            .await
+        }
         IssueLinkCommand::Create(args) => {
             let comment = read_optional_text(
                 args.comment,
@@ -1212,6 +1345,18 @@ async fn execute_issue_remote_link(
     context: &AppContext,
 ) -> Result<OperationResult, OperationError> {
     match args.command {
+        IssueRemoteLinkCommand::List(args) => {
+            operations::jira::list_remote_issue_links(
+                context,
+                tool_args::JiraListRemoteIssueLinksArgs {
+                    issue_key: args.issue_key,
+                    global_id: args.global_id,
+                    title: args.title,
+                    url: args.url,
+                },
+            )
+            .await
+        }
         IssueRemoteLinkCommand::Create(args) => {
             let status = read_optional_json(args.status_json, args.status_file, "status")?;
             operations::jira::create_remote_issue_link(
@@ -1226,6 +1371,16 @@ async fn execute_issue_remote_link(
                     icon_url: args.icon_url,
                     icon_title: args.icon_title,
                     status,
+                },
+            )
+            .await
+        }
+        IssueRemoteLinkCommand::Delete(args) => {
+            operations::jira::delete_remote_issue_link(
+                context,
+                tool_args::JiraDeleteRemoteIssueLinkArgs {
+                    issue_key: args.issue_key,
+                    link_id: args.link_id,
                 },
             )
             .await

@@ -58,3 +58,37 @@ async fn client_adds_label_and_refreshes_label_list() {
     assert_eq!(requests[1].method, Method::GET);
     assert_eq!(requests[1].path, "/rest/api/content/123/label");
 }
+
+#[tokio::test]
+async fn client_removes_label_and_refreshes_label_list() {
+    let (base_url, requests) = queued_mock_server(vec![
+        (StatusCode::NO_CONTENT, json!({})),
+        (
+            StatusCode::OK,
+            json!({
+                "results": [
+                    {"id": "label-2", "name": "team", "prefix": "global", "label": "team", "type": "label"}
+                ],
+                "start": 0,
+                "limit": 200,
+                "size": 1
+            }),
+        ),
+    ])
+    .await;
+
+    let response = client(base_url).remove_label("123", "draft").await.unwrap();
+
+    assert_eq!(response.results.len(), 1);
+    assert_eq!(response.results[0].name.as_deref(), Some("team"));
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, Method::DELETE);
+    assert!(requests[0].path.starts_with("/rest/api/content/123/label?"));
+    assert_eq!(
+        query_value(&requests[0].path, "name").as_deref(),
+        Some("draft")
+    );
+    assert_eq!(requests[1].method, Method::GET);
+    assert_eq!(requests[1].path, "/rest/api/content/123/label");
+}

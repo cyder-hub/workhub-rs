@@ -225,28 +225,32 @@ async fn gitlab_write_handlers_send_expected_payloads_to_mock_rest() {
         .unwrap();
 
     assert_eq!(
-        created.structured_content.as_ref().unwrap()["title"],
+        created.structured_content.as_ref().unwrap()["data"]["title"],
         json!("Add API")
     );
     assert_eq!(
-        updated.structured_content.as_ref().unwrap()["state_event"],
+        updated.structured_content.as_ref().unwrap()["data"]["state_event"],
         json!("close")
     );
     assert_eq!(
-        note.structured_content.as_ref().unwrap()["body"],
+        note.structured_content.as_ref().unwrap()["data"]["body"],
         json!("Looks good")
     );
     assert_eq!(
-        reply.structured_content.as_ref().unwrap()["body"],
+        note.structured_content.as_ref().unwrap()["data"]["discussion_id"],
+        json!("discussion 1")
+    );
+    assert_eq!(
+        reply.structured_content.as_ref().unwrap()["data"]["body"],
         json!("Reply body")
     );
     assert_eq!(
-        resolved.structured_content.as_ref().unwrap()["resolved"],
+        resolved.structured_content.as_ref().unwrap()["data"]["resolved"],
         json!(true)
     );
 
     let requests = requests.lock().await;
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 6);
     assert_eq!(requests[0].method, Method::POST);
     assert_eq!(
         requests[0].path,
@@ -282,18 +286,267 @@ async fn gitlab_write_handlers_send_expected_payloads_to_mock_rest() {
         "/api/v4/projects/group%2Fproject/merge_requests/7/notes"
     );
     assert_eq!(requests[2].body["body"], json!("Looks good"));
-    assert_eq!(requests[3].method, Method::POST);
+    assert_eq!(requests[3].method, Method::GET);
     assert_eq!(
         requests[3].path,
-        "/api/v4/projects/group%2Fproject/merge_requests/7/discussions/discussion%201/notes"
+        "/api/v4/projects/group%2Fproject/merge_requests/7/discussions?page=1&per_page=100"
     );
-    assert_eq!(requests[3].body["body"], json!("Reply body"));
-    assert_eq!(requests[4].method, Method::PUT);
+    assert_eq!(requests[4].method, Method::POST);
     assert_eq!(
         requests[4].path,
+        "/api/v4/projects/group%2Fproject/merge_requests/7/discussions/discussion%201/notes"
+    );
+    assert_eq!(requests[4].body["body"], json!("Reply body"));
+    assert_eq!(requests[5].method, Method::PUT);
+    assert_eq!(
+        requests[5].path,
         "/api/v4/projects/group%2Fproject/merge_requests/7/discussions/discussion%201"
     );
-    assert_eq!(requests[4].body["resolved"], json!(true));
+    assert_eq!(requests[5].body["resolved"], json!(true));
+}
+
+#[tokio::test]
+async fn gitlab_note_cleanup_and_discussion_list_handlers_use_expected_endpoints() {
+    let (base_url, requests) = mock_gitlab_server().await;
+    let server = server_with_config(RuntimeConfig {
+        gitlab: Some(gitlab_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+
+    let discussions = server
+        .gitlab_list_merge_request_discussions(Parameters(
+            gitlab_tools::GitlabListMergeRequestDiscussionsArgs {
+                project: "group/project".to_string(),
+                merge_request_iid: 7,
+                page: Some(2),
+                per_page: Some(50),
+            },
+        ))
+        .await
+        .unwrap();
+    let updated = server
+        .gitlab_update_merge_request_note(Parameters(
+            gitlab_tools::GitlabUpdateMergeRequestNoteArgs {
+                project: "group/project".to_string(),
+                merge_request_iid: 7,
+                note_id: 1,
+                body: "Updated note".to_string(),
+            },
+        ))
+        .await
+        .unwrap();
+    let deleted = server
+        .gitlab_delete_merge_request_note(Parameters(
+            gitlab_tools::GitlabDeleteMergeRequestNoteArgs {
+                project: "group/project".to_string(),
+                merge_request_iid: 7,
+                note_id: 1,
+            },
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        discussions.structured_content.as_ref().unwrap()["items"][0]["id"],
+        json!("discussion 1")
+    );
+    assert_eq!(
+        updated.structured_content.as_ref().unwrap()["data"]["body"],
+        json!("Updated note")
+    );
+    assert_eq!(
+        deleted.structured_content.as_ref().unwrap()["data"]["note_id"],
+        json!(1)
+    );
+    assert_eq!(
+        deleted.structured_content.as_ref().unwrap()["cleanup_hint"]["verified_by"],
+        json!("gitlab mr discussion list")
+    );
+
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0].method, Method::GET);
+    assert_eq!(
+        requests[0].path,
+        "/api/v4/projects/group%2Fproject/merge_requests/7/discussions?page=2&per_page=50"
+    );
+    assert_eq!(requests[1].method, Method::PUT);
+    assert_eq!(
+        requests[1].path,
+        "/api/v4/projects/group%2Fproject/merge_requests/7/notes/1"
+    );
+    assert_eq!(requests[1].body["body"], json!("Updated note"));
+    assert_eq!(requests[2].method, Method::DELETE);
+    assert_eq!(
+        requests[2].path,
+        "/api/v4/projects/group%2Fproject/merge_requests/7/notes/1"
+    );
+}
+
+#[tokio::test]
+async fn gitlab_mr_and_branch_cleanup_handlers_use_expected_endpoints() {
+    let (base_url, requests) = mock_gitlab_server().await;
+    let server = server_with_config(RuntimeConfig {
+        gitlab: Some(gitlab_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+
+    let closed = server
+        .gitlab_close_merge_request(Parameters(gitlab_tools::GitlabCloseMergeRequestArgs {
+            project: "group/project".to_string(),
+            merge_request_iid: 7,
+            confirm_iid: 7,
+        }))
+        .await
+        .unwrap();
+    let deleted_mr = server
+        .gitlab_delete_merge_request(Parameters(gitlab_tools::GitlabDeleteMergeRequestArgs {
+            project: "group/project".to_string(),
+            merge_request_iid: 7,
+            confirm_iid: 7,
+        }))
+        .await
+        .unwrap();
+    let created_branch = server
+        .gitlab_create_branch(Parameters(gitlab_tools::GitlabCreateBranchArgs {
+            project: "group/project".to_string(),
+            branch: "feature/api".to_string(),
+            ref_name: "main".to_string(),
+        }))
+        .await
+        .unwrap();
+    let deleted_branch = server
+        .gitlab_delete_branch(Parameters(gitlab_tools::GitlabDeleteBranchArgs {
+            project: "group/project".to_string(),
+            branch: "feature/api".to_string(),
+            confirm_branch: "feature/api".to_string(),
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        closed.structured_content.as_ref().unwrap()["data"]["state_event"],
+        json!("close")
+    );
+    assert_eq!(
+        deleted_mr.structured_content.as_ref().unwrap()["data"]["merge_request_iid"],
+        json!(7)
+    );
+    assert_eq!(
+        deleted_mr.structured_content.as_ref().unwrap()["cleanup_hint"]["fallback"],
+        json!("gitlab mr close")
+    );
+    assert_eq!(
+        created_branch.structured_content.as_ref().unwrap()["data"]["name"],
+        json!("feature/api")
+    );
+    assert_eq!(
+        deleted_branch.structured_content.as_ref().unwrap()["data"]["branch"],
+        json!("feature/api")
+    );
+
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0].method, Method::PUT);
+    assert_eq!(
+        requests[0].path,
+        "/api/v4/projects/group%2Fproject/merge_requests/7"
+    );
+    assert_eq!(requests[0].body["state_event"], json!("close"));
+    assert_eq!(requests[1].method, Method::DELETE);
+    assert_eq!(
+        requests[1].path,
+        "/api/v4/projects/group%2Fproject/merge_requests/7"
+    );
+    assert_eq!(requests[2].method, Method::POST);
+    assert_eq!(
+        requests[2].path,
+        "/api/v4/projects/group%2Fproject/repository/branches"
+    );
+    assert_eq!(requests[2].body["branch"], json!("feature/api"));
+    assert_eq!(requests[2].body["ref"], json!("main"));
+    assert_eq!(requests[3].method, Method::DELETE);
+    assert_eq!(
+        requests[3].path,
+        "/api/v4/projects/group%2Fproject/repository/branches/feature%2Fapi"
+    );
+}
+
+#[tokio::test]
+async fn gitlab_mr_and_branch_cleanup_guards_and_errors_are_structured() {
+    let (base_url, requests) = mock_gitlab_server().await;
+    let server = server_with_config(RuntimeConfig {
+        gitlab: Some(gitlab_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+
+    let confirm_error = server
+        .gitlab_delete_branch(Parameters(gitlab_tools::GitlabDeleteBranchArgs {
+            project: "group/project".to_string(),
+            branch: "feature/api".to_string(),
+            confirm_branch: "feature/other".to_string(),
+        }))
+        .await
+        .unwrap_err();
+    assert!(
+        confirm_error
+            .message
+            .contains("confirm_branch must match branch")
+    );
+    assert_eq!(requests.lock().await.len(), 0);
+
+    let delete_result = server
+        .gitlab_delete_merge_request(Parameters(gitlab_tools::GitlabDeleteMergeRequestArgs {
+            project: "group/project".to_string(),
+            merge_request_iid: 405,
+            confirm_iid: 405,
+        }))
+        .await
+        .unwrap();
+    assert_eq!(delete_result.is_error, Some(true));
+    let structured = delete_result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["success"], json!(false));
+    assert_eq!(
+        structured["error"]["category"],
+        json!("unsupported_or_auth_required")
+    );
+    assert_eq!(
+        structured["cleanup_hint"]["fallback"],
+        json!("gitlab mr close")
+    );
+}
+
+#[tokio::test]
+async fn gitlab_invalid_discussion_id_returns_structured_failure() {
+    let (base_url, requests) = mock_gitlab_server().await;
+    let server = server_with_config(RuntimeConfig {
+        gitlab: Some(gitlab_config_with_base_url(base_url)),
+        ..runtime_config_all_toolsets()
+    });
+
+    let result = server
+        .gitlab_reply_merge_request_discussion(Parameters(
+            gitlab_tools::GitlabReplyMergeRequestDiscussionArgs {
+                project: "group/project".to_string(),
+                merge_request_iid: 7,
+                discussion_id: "missing".to_string(),
+                body: "Reply body".to_string(),
+            },
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(result.is_error, Some(true));
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["success"], json!(false));
+    assert_eq!(structured["error"]["category"], json!("not_found"));
+    assert_eq!(structured["discussion_id"], json!("missing"));
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].path,
+        "/api/v4/projects/group%2Fproject/merge_requests/7/discussions/missing/notes"
+    );
 }
 
 #[tokio::test]
@@ -352,15 +605,15 @@ async fn gitlab_approval_and_merge_handlers_use_expected_endpoints() {
         json!(true)
     );
     assert_eq!(
-        approved.structured_content.as_ref().unwrap()["approved"],
+        approved.structured_content.as_ref().unwrap()["data"]["approved"],
         json!(true)
     );
     assert_eq!(
-        unapproved.structured_content.as_ref().unwrap()["approved"],
+        unapproved.structured_content.as_ref().unwrap()["data"]["approved"],
         json!(false)
     );
     assert_eq!(
-        accepted.structured_content.as_ref().unwrap()["state"],
+        accepted.structured_content.as_ref().unwrap()["data"]["state"],
         json!("merged")
     );
 
@@ -590,9 +843,39 @@ async fn mock_gitlab_handler(
             })),
         )
             .into_response(),
+        (Method::DELETE, "/api/v4/projects/group%2Fproject/merge_requests/7") => {
+            StatusCode::NO_CONTENT.into_response()
+        }
+        (Method::DELETE, "/api/v4/projects/group%2Fproject/merge_requests/405") => (
+            StatusCode::METHOD_NOT_ALLOWED,
+            Json(json!({"message": "405 Method Not Allowed"})),
+        )
+            .into_response(),
         (Method::POST, "/api/v4/projects/group%2Fproject/merge_requests/7/notes") => (
             StatusCode::OK,
             Json(json!({"id": 1, "body": parsed_body["body"]})),
+        )
+            .into_response(),
+        (Method::PUT, "/api/v4/projects/group%2Fproject/merge_requests/7/notes/1") => (
+            StatusCode::OK,
+            Json(json!({"id": 1, "body": parsed_body["body"]})),
+        )
+            .into_response(),
+        (Method::DELETE, "/api/v4/projects/group%2Fproject/merge_requests/7/notes/1") => {
+            StatusCode::NO_CONTENT.into_response()
+        }
+        (Method::GET, "/api/v4/projects/group%2Fproject/merge_requests/7/discussions") => (
+            StatusCode::OK,
+            Json(json!([{
+                "id": "discussion 1",
+                "individual_note": true,
+                "notes": [{
+                    "id": 1,
+                    "body": "Looks good",
+                    "resolvable": false
+                }],
+                "resolved": false
+            }])),
         )
             .into_response(),
         (
@@ -601,6 +884,14 @@ async fn mock_gitlab_handler(
         ) => (
             StatusCode::OK,
             Json(json!({"id": 2, "body": parsed_body["body"]})),
+        )
+            .into_response(),
+        (
+            Method::POST,
+            "/api/v4/projects/group%2Fproject/merge_requests/7/discussions/missing/notes",
+        ) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"message": "404 Discussion Not Found"})),
         )
             .into_response(),
         (
@@ -635,6 +926,21 @@ async fn mock_gitlab_handler(
             })),
         )
             .into_response(),
+        (Method::POST, "/api/v4/projects/group%2Fproject/repository/branches") => (
+            StatusCode::OK,
+            Json(json!({
+                "name": parsed_body["branch"],
+                "default": false,
+                "protected": false,
+                "commit": {
+                    "id": parsed_body["ref"],
+                }
+            })),
+        )
+            .into_response(),
+        (Method::DELETE, "/api/v4/projects/group%2Fproject/repository/branches/feature%2Fapi") => {
+            StatusCode::NO_CONTENT.into_response()
+        }
         _ => (StatusCode::NOT_FOUND, Json(json!({"path": path}))).into_response(),
     }
 }

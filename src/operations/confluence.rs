@@ -8,7 +8,7 @@ use crate::{
         },
         config::ConfluenceDeployment,
         formatting::{ConfluenceContentFormat, content_to_storage},
-        models::ConfluencePage,
+        models::{ConfluenceComment, ConfluencePage, ConfluencePageSummary},
         tools::*,
     },
     context::AppContext,
@@ -20,7 +20,10 @@ use crate::{
     upstream::error::UpstreamError,
 };
 
-use super::{OperationError, OperationResult, confluence_client, guard_operation};
+use super::{
+    OperationError, OperationResult, confluence_client, guard_operation,
+    mutation_failure_from_upstream, mutation_success_with_fields,
+};
 
 const CONFLUENCE_PAGE_EXPAND: &[&str] = &[
     "body.storage",
@@ -244,11 +247,12 @@ pub async fn create_page(
         None => confluence_emoji_missing_page_id_status(args.emoji.as_deref()),
     };
 
-    Ok(structured(json!({
-        "message": "Page created successfully",
-        "page": confluence_write_page_value(&page, args.include_content.unwrap_or(false)),
-        "emoji_status": emoji_status,
-    })))
+    let page_value = confluence_write_page_value(&page, args.include_content.unwrap_or(false));
+    Ok(structured(mutation_success_with_fields(
+        "Page created successfully",
+        page_value.clone(),
+        [("page", page_value), ("emoji_status", json!(emoji_status))],
+    )))
 }
 
 pub async fn update_page(
@@ -283,11 +287,12 @@ pub async fn update_page(
         None => confluence_emoji_missing_page_id_status(args.emoji.as_deref()),
     };
 
-    Ok(structured(json!({
-        "message": "Page updated successfully",
-        "page": confluence_write_page_value(&page, args.include_content.unwrap_or(false)),
-        "emoji_status": emoji_status,
-    })))
+    let page_value = confluence_write_page_value(&page, args.include_content.unwrap_or(false));
+    Ok(structured(mutation_success_with_fields(
+        "Page updated successfully",
+        page_value.clone(),
+        [("page", page_value), ("emoji_status", json!(emoji_status))],
+    )))
 }
 
 pub async fn delete_page(
@@ -296,16 +301,57 @@ pub async fn delete_page(
 ) -> Result<OperationResult, OperationError> {
     guard_operation(CONFLUENCE_DELETE_PAGE_TOOL_NAME, context)?;
     let page_id = required_non_empty_arg(args.page_id, "page_id")?;
-    match confluence_client(context)?.delete_page(&page_id).await {
+    let confirm_id = required_non_empty_arg(args.confirm_id, "confirm_id")?;
+    confirm_delete_id(&page_id, &confirm_id, "page_id")?;
+    let client = confluence_client(context)?;
+    let page = match client.get_page_by_id(&page_id, &["version", "space"]).await {
+        Ok(page) => page,
+        Err(error) => {
+            return Ok(OperationResult::structured_error(with_extra_fields(
+                mutation_failure_from_upstream(
+                    format!("Cannot confirm page {page_id} before delete"),
+                    &error,
+                    Some(json!({
+                        "verified_by": "confluence page get",
+                        "manual_cleanup": "Check Confluence permissions and delete the page manually if the delete is still intended.",
+                    })),
+                ),
+                [("page_id", json!(page_id))],
+            )));
+        }
+    };
+    let preflight = json!({
+        "id": page.id.as_deref().unwrap_or(page_id.as_str()),
+        "title": page.title.clone(),
+        "type": page.content_type.clone(),
+        "version": page.version.as_ref().and_then(|version| version.number),
+        "space": page.space.as_ref().map(|space| space.to_simplified_value()),
+    });
+
+    match client.delete_page(&page_id).await {
         Ok(_) => Ok(structured(json!({
             "success": true,
             "message": format!("Page {page_id} deleted successfully"),
+            "data": {
+                "page_id": page_id,
+                "preflight": preflight,
+            },
+            "cleanup_hint": {
+                "verified_by": "confluence page get",
+            },
+            "warnings": [],
         }))),
-        Err(error) => Ok(OperationResult::structured_error(json!({
-            "success": false,
-            "message": format!("Error deleting page {page_id}"),
-            "error": error.to_string(),
-        }))),
+        Err(error) => Ok(OperationResult::structured_error(with_extra_fields(
+            mutation_failure_from_upstream(
+                format!("Error deleting page {page_id}"),
+                &error,
+                Some(json!({
+                    "verified_by": "confluence page get",
+                    "manual_cleanup": "Check Confluence permissions and delete the page manually if the delete is still intended.",
+                })),
+            ),
+            [("page_id", json!(page_id))],
+        ))),
     }
 }
 
@@ -326,10 +372,12 @@ pub async fn move_page(
         .await
         .map_err(OperationError::from_upstream)?;
 
-    Ok(structured(json!({
-        "message": "Page moved successfully",
-        "page": confluence_write_page_value(&page, true),
-    })))
+    let page_value = confluence_write_page_value(&page, true);
+    Ok(structured(mutation_success_with_fields(
+        "Page moved successfully",
+        page_value.clone(),
+        [("page", page_value)],
+    )))
 }
 
 pub async fn list_page_comments(
@@ -375,13 +423,18 @@ pub async fn add_page_comment(
         Ok(comment) => Ok(structured(json!({
             "success": true,
             "message": "Comment added successfully",
+            "data": comment.to_simplified_value(),
             "comment": comment.to_simplified_value(),
+            "warnings": [],
         }))),
-        Err(error) => Ok(OperationResult::structured_error(json!({
-            "success": false,
-            "message": format!("Error adding comment to page {page_id}"),
-            "error": error.to_string(),
-        }))),
+        Err(error) => Ok(OperationResult::structured_error(with_extra_fields(
+            mutation_failure_from_upstream(
+                format!("Error adding comment to page {page_id}"),
+                &error,
+                None,
+            ),
+            [("page_id", json!(page_id))],
+        ))),
     }
 }
 
@@ -401,14 +454,162 @@ pub async fn reply_to_comment(
         Ok(comment) => Ok(structured(json!({
             "success": true,
             "message": "Reply added successfully",
+            "data": comment.to_simplified_value(),
             "comment": comment.to_simplified_value(),
+            "warnings": [],
         }))),
-        Err(error) => Ok(OperationResult::structured_error(json!({
-            "success": false,
-            "message": format!("Error replying to comment {comment_id}"),
-            "error": error.to_string(),
-        }))),
+        Err(error) => Ok(OperationResult::structured_error(with_extra_fields(
+            mutation_failure_from_upstream(
+                format!("Error replying to comment {comment_id}"),
+                &error,
+                None,
+            ),
+            [("comment_id", json!(comment_id))],
+        ))),
     }
+}
+
+pub async fn update_page_comment(
+    context: &AppContext,
+    args: ConfluenceUpdateCommentArgs,
+) -> Result<OperationResult, OperationError> {
+    guard_operation(CONFLUENCE_UPDATE_COMMENT_TOOL_NAME, context)?;
+    let page_id = required_non_empty_arg(args.page_id, "page_id")?;
+    let comment_id = required_non_empty_arg(args.comment_id, "comment_id")?;
+    let body = required_non_empty_arg(args.body, "body")?;
+    let storage_body = content_to_storage(&body, ConfluenceContentFormat::Markdown);
+    let client = confluence_client(context)?;
+    let current = match client.get_comment_by_id(&comment_id).await {
+        Ok(comment) => comment,
+        Err(error) => {
+            return Ok(OperationResult::structured_error(with_extra_fields(
+                mutation_failure_from_upstream(
+                    format!("Error updating comment {comment_id}"),
+                    &error,
+                    None,
+                ),
+                [
+                    ("page_id", json!(page_id)),
+                    ("comment_id", json!(comment_id)),
+                ],
+            )));
+        }
+    };
+    ensure_comment_belongs_to_page(&current, &page_id, &comment_id)?;
+
+    match client
+        .update_comment_with_current(&current, &comment_id, &storage_body)
+        .await
+    {
+        Ok(comment) => Ok(structured(json!({
+            "success": true,
+            "message": "Comment updated successfully",
+            "data": comment.to_simplified_value(),
+            "comment": comment.to_simplified_value(),
+            "warnings": [],
+        }))),
+        Err(error) => Ok(OperationResult::structured_error(with_extra_fields(
+            mutation_failure_from_upstream(
+                format!("Error updating comment {comment_id}"),
+                &error,
+                None,
+            ),
+            [
+                ("page_id", json!(page_id)),
+                ("comment_id", json!(comment_id)),
+            ],
+        ))),
+    }
+}
+
+pub async fn delete_page_comment(
+    context: &AppContext,
+    args: ConfluenceDeleteCommentArgs,
+) -> Result<OperationResult, OperationError> {
+    guard_operation(CONFLUENCE_DELETE_COMMENT_TOOL_NAME, context)?;
+    let page_id = required_non_empty_arg(args.page_id, "page_id")?;
+    let comment_id = required_non_empty_arg(args.comment_id, "comment_id")?;
+    let client = confluence_client(context)?;
+    let current = match client.get_comment_by_id(&comment_id).await {
+        Ok(comment) => comment,
+        Err(error) => {
+            return Ok(OperationResult::structured_error(with_extra_fields(
+                mutation_failure_from_upstream(
+                    format!("Error deleting comment {comment_id}"),
+                    &error,
+                    Some(json!({
+                        "verified_by": "confluence page comment list",
+                    })),
+                ),
+                [
+                    ("page_id", json!(page_id)),
+                    ("comment_id", json!(comment_id)),
+                ],
+            )));
+        }
+    };
+    ensure_comment_belongs_to_page(&current, &page_id, &comment_id)?;
+
+    match client.delete_comment(&comment_id).await {
+        Ok(_) => Ok(structured(json!({
+            "success": true,
+            "message": format!("Comment {comment_id} deleted successfully"),
+            "data": {
+                "page_id": page_id,
+                "comment_id": comment_id,
+            },
+            "cleanup_hint": {
+                "verified_by": "confluence page comment list",
+            },
+            "warnings": [],
+        }))),
+        Err(error) => Ok(OperationResult::structured_error(with_extra_fields(
+            mutation_failure_from_upstream(
+                format!("Error deleting comment {comment_id}"),
+                &error,
+                Some(json!({
+                    "verified_by": "confluence page comment list",
+                })),
+            ),
+            [
+                ("page_id", json!(page_id)),
+                ("comment_id", json!(comment_id)),
+            ],
+        ))),
+    }
+}
+
+fn ensure_comment_belongs_to_page(
+    comment: &ConfluenceComment,
+    page_id: &str,
+    comment_id: &str,
+) -> Result<(), OperationError> {
+    if comment_belongs_to_page(comment, page_id) {
+        Ok(())
+    } else {
+        Err(OperationError::invalid_input(format!(
+            "comment_id {comment_id} does not belong to page_id {page_id}"
+        )))
+    }
+}
+
+fn comment_belongs_to_page(comment: &ConfluenceComment, page_id: &str) -> bool {
+    comment
+        .container
+        .as_ref()
+        .is_some_and(|container| content_summary_matches_page(container, page_id))
+        || comment
+            .ancestors
+            .iter()
+            .any(|ancestor| content_summary_matches_page(ancestor, page_id))
+}
+
+fn content_summary_matches_page(summary: &ConfluencePageSummary, page_id: &str) -> bool {
+    summary.id.as_deref() == Some(page_id)
+        && summary
+            .content_type
+            .as_deref()
+            .is_none_or(|content_type| content_type == "page")
 }
 
 pub async fn list_content_labels(
@@ -455,8 +656,7 @@ pub async fn add_content_label(
         .map(|label| label.to_simplified_value())
         .collect::<Vec<_>>();
 
-    Ok(structured(json!({
-        "message": "Label added successfully",
+    let data = json!({
         "content_id": content_id,
         "count": values.len(),
         "labels": values,
@@ -464,7 +664,84 @@ pub async fn add_content_label(
         "limit": labels.limit,
         "size": labels.size,
         "links": labels.links,
-    })))
+    });
+
+    Ok(structured(mutation_success_with_fields(
+        "Label added successfully",
+        data.clone(),
+        [
+            ("content_id", data["content_id"].clone()),
+            ("count", data["count"].clone()),
+            ("labels", data["labels"].clone()),
+            ("start", data["start"].clone()),
+            ("limit", data["limit"].clone()),
+            ("size", data["size"].clone()),
+            ("links", data["links"].clone()),
+        ],
+    )))
+}
+
+pub async fn remove_content_label(
+    context: &AppContext,
+    args: ConfluenceRemoveLabelArgs,
+) -> Result<OperationResult, OperationError> {
+    guard_operation(CONFLUENCE_REMOVE_LABEL_TOOL_NAME, context)?;
+    let content_id = required_non_empty_arg(args.page_id, "page_id")?;
+    let name = required_non_empty_arg(args.name, "name")?;
+
+    match confluence_client(context)?
+        .remove_label(&content_id, &name)
+        .await
+    {
+        Ok(labels) => {
+            let values = labels
+                .results
+                .iter()
+                .map(|label| label.to_simplified_value())
+                .collect::<Vec<_>>();
+            let data = json!({
+                "content_id": content_id,
+                "removed_label": name,
+                "count": values.len(),
+                "labels": values,
+                "start": labels.start,
+                "limit": labels.limit,
+                "size": labels.size,
+                "links": labels.links,
+            });
+
+            Ok(structured(mutation_success_with_fields(
+                "Label removed successfully",
+                data.clone(),
+                [
+                    ("content_id", data["content_id"].clone()),
+                    ("removed_label", data["removed_label"].clone()),
+                    ("count", data["count"].clone()),
+                    ("labels", data["labels"].clone()),
+                    ("start", data["start"].clone()),
+                    ("limit", data["limit"].clone()),
+                    ("size", data["size"].clone()),
+                    ("links", data["links"].clone()),
+                    (
+                        "cleanup_hint",
+                        json!({
+                            "verified_by": "confluence content label list",
+                        }),
+                    ),
+                ],
+            )))
+        }
+        Err(error) => Ok(OperationResult::structured_error(with_extra_fields(
+            mutation_failure_from_upstream(
+                format!("Error removing label {name} from content {content_id}"),
+                &error,
+                Some(json!({
+                    "verified_by": "confluence content label list",
+                })),
+            ),
+            [("content_id", json!(content_id)), ("label", json!(name))],
+        ))),
+    }
 }
 
 pub async fn search_users(
@@ -632,15 +909,22 @@ pub async fn upload_content_attachment(
             "content_id": content_id,
             "filename": filename,
             "minor_edit": minor_edit,
+            "data": attachment.to_simplified_value(),
             "attachment": attachment.to_simplified_value(),
+            "warnings": [],
         }))),
-        Err(error) => Ok(OperationResult::structured_error(json!({
-            "success": false,
-            "content_id": content_id,
-            "filename": filename,
-            "minor_edit": minor_edit,
-            "error": error.to_string(),
-        }))),
+        Err(error) => Ok(OperationResult::structured_error(with_extra_fields(
+            mutation_failure_from_upstream(
+                format!("Error uploading attachment {filename} to content {content_id}"),
+                &error,
+                None,
+            ),
+            [
+                ("content_id", json!(content_id)),
+                ("filename", json!(filename)),
+                ("minor_edit", json!(minor_edit)),
+            ],
+        ))),
     }
 }
 
@@ -883,20 +1167,53 @@ pub async fn delete_attachment(
 ) -> Result<OperationResult, OperationError> {
     guard_operation(CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME, context)?;
     let attachment_id = required_non_empty_arg(args.attachment_id, "attachment_id")?;
-    match confluence_client(context)?
-        .delete_attachment(&attachment_id)
-        .await
-    {
+    let confirm_id = required_non_empty_arg(args.confirm_id, "confirm_id")?;
+    confirm_delete_id(&attachment_id, &confirm_id, "attachment_id")?;
+    let client = confluence_client(context)?;
+    let attachment = match client.get_attachment_by_id(&attachment_id).await {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            return Ok(OperationResult::structured_error(with_extra_fields(
+                mutation_failure_from_upstream(
+                    format!("Cannot confirm attachment {attachment_id} before delete"),
+                    &error,
+                    Some(json!({
+                        "verified_by": "confluence attachment download",
+                        "manual_cleanup": "Check Confluence permissions and delete the attachment manually if the delete is still intended.",
+                    })),
+                ),
+                [("attachment_id", json!(attachment_id))],
+            )));
+        }
+    };
+    let preflight = attachment.to_simplified_value();
+
+    match client.delete_attachment(&attachment_id).await {
         Ok(value) => Ok(structured(json!({
             "success": true,
             "attachment_id": attachment_id,
+            "data": {
+                "attachment_id": attachment_id,
+                "preflight": preflight,
+                "result": value,
+            },
             "result": value,
+            "cleanup_hint": {
+                "verified_by": "confluence attachment download",
+            },
+            "warnings": [],
         }))),
-        Err(error) => Ok(OperationResult::structured_error(json!({
-            "success": false,
-            "attachment_id": attachment_id,
-            "error": error.to_string(),
-        }))),
+        Err(error) => Ok(OperationResult::structured_error(with_extra_fields(
+            mutation_failure_from_upstream(
+                format!("Error deleting attachment {attachment_id}"),
+                &error,
+                Some(json!({
+                    "verified_by": "confluence attachment download",
+                    "manual_cleanup": "Check Confluence permissions and delete the attachment manually if the delete is still intended.",
+                })),
+            ),
+            [("attachment_id", json!(attachment_id))],
+        ))),
     }
 }
 
@@ -970,6 +1287,32 @@ fn wrap_array(value: Value) -> Value {
     match value {
         Value::Array(items) => json!({ "items": items }),
         other => other,
+    }
+}
+
+fn with_extra_fields(
+    mut value: Value,
+    fields: impl IntoIterator<Item = (&'static str, Value)>,
+) -> Value {
+    if let Some(object) = value.as_object_mut() {
+        for (key, field_value) in fields {
+            object.insert(key.to_string(), field_value);
+        }
+    }
+    value
+}
+
+fn confirm_delete_id(
+    target_id: &str,
+    confirm_id: &str,
+    target_field_name: &'static str,
+) -> Result<(), OperationError> {
+    if target_id == confirm_id {
+        Ok(())
+    } else {
+        Err(OperationError::invalid_input(format!(
+            "confirm_id must match {target_field_name}"
+        )))
     }
 }
 

@@ -277,7 +277,7 @@ impl JiraOperationResult {
         Self {
             success: true,
             message: Some(message.into()),
-            data,
+            data: non_null_data(data),
             errors: Vec::new(),
             product_dependency: None,
         }
@@ -288,7 +288,7 @@ impl JiraOperationResult {
         Self {
             success: false,
             message: Some(message.clone()),
-            data: Value::Null,
+            data: json!({}),
             errors: Vec::new(),
             product_dependency: Some(JiraProductDependency::unavailable(product, message)),
         }
@@ -300,9 +300,14 @@ impl JiraOperationResult {
             "message": self.message,
             "data": self.data,
             "errors": self.errors,
+            "warnings": [],
             "product_dependency": self.product_dependency.as_ref().map(JiraProductDependency::to_simplified_value),
         })
     }
+}
+
+fn non_null_data(value: Value) -> Value {
+    if value.is_null() { json!({}) } else { value }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

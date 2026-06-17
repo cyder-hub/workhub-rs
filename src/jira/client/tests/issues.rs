@@ -78,16 +78,13 @@ async fn jira_extension_issue_helpers_use_expected_endpoints() {
         .await
         .unwrap();
     client
-        .batch_create_issues(
-            vec![json!({
-                "fields": {
-                    "project": {"key": "ABC"},
-                    "summary": "Batch",
-                    "issuetype": {"name": "Task"}
-                }
-            })],
-            false,
-        )
+        .batch_create_issues(vec![json!({
+            "fields": {
+                "project": {"key": "ABC"},
+                "summary": "Batch",
+                "issuetype": {"name": "Task"}
+            }
+        })])
         .await
         .unwrap();
     client
@@ -124,6 +121,94 @@ async fn jira_extension_issue_helpers_use_expected_endpoints() {
     assert_eq!(
         requests[3].path,
         "/rest/api/2/issue/ABC-1?deleteSubtasks=true"
+    );
+}
+
+#[tokio::test]
+async fn worklog_update_and_delete_use_expected_endpoints() {
+    let (update_url, update_requests) = mock_server(json!({"id": "10", "timeSpent": "2h"})).await;
+    let update_client =
+        JiraClient::new(config(update_url, JiraDeployment::ServerDataCenter)).unwrap();
+    let updated = update_client
+        .update_worklog(
+            "ABC-1".to_string(),
+            "10".to_string(),
+            json!({"timeSpent": "2h"}),
+            vec![("adjustEstimate".to_string(), "auto".to_string())],
+        )
+        .await
+        .unwrap();
+    let update_requests = update_requests.lock().await;
+
+    assert_eq!(updated["id"], "10");
+    assert_eq!(update_requests[0].method, Method::PUT);
+    assert_eq!(
+        update_requests[0].path,
+        "/rest/api/2/issue/ABC-1/worklog/10?adjustEstimate=auto"
+    );
+    assert_eq!(update_requests[0].body["timeSpent"], "2h");
+
+    let (delete_url, delete_requests) =
+        mock_server_with_status(json!({}), StatusCode::NO_CONTENT).await;
+    let delete_client =
+        JiraClient::new(config(delete_url, JiraDeployment::ServerDataCenter)).unwrap();
+    let deleted = delete_client
+        .delete_worklog(
+            "ABC-1".to_string(),
+            "10".to_string(),
+            vec![("adjustEstimate".to_string(), "new".to_string())],
+        )
+        .await
+        .unwrap();
+    let delete_requests = delete_requests.lock().await;
+
+    assert_eq!(deleted["success"], true);
+    assert_eq!(deleted["data"]["response"], json!({}));
+    assert_eq!(delete_requests[0].method, Method::DELETE);
+    assert_eq!(
+        delete_requests[0].path,
+        "/rest/api/2/issue/ABC-1/worklog/10?adjustEstimate=new"
+    );
+}
+
+#[tokio::test]
+async fn remote_issue_links_list_and_delete_use_expected_endpoints() {
+    let (list_url, list_requests) = mock_server(json!([
+        {
+            "id": 300,
+            "globalId": "gid-1",
+            "object": {"title": "Design", "url": "https://example.invalid/doc"}
+        }
+    ]))
+    .await;
+    let list_client = JiraClient::new(config(list_url, JiraDeployment::ServerDataCenter)).unwrap();
+    let listed = list_client
+        .get_remote_issue_links("ABC-1".to_string())
+        .await
+        .unwrap();
+    let list_requests = list_requests.lock().await;
+
+    assert_eq!(listed[0]["id"], 300);
+    assert_eq!(list_requests[0].method, Method::GET);
+    assert_eq!(list_requests[0].path, "/rest/api/2/issue/ABC-1/remotelink");
+
+    let (delete_url, delete_requests) =
+        mock_server_with_status(json!({}), StatusCode::NO_CONTENT).await;
+    let delete_client =
+        JiraClient::new(config(delete_url, JiraDeployment::ServerDataCenter)).unwrap();
+    let deleted = delete_client
+        .delete_remote_issue_link("ABC-1".to_string(), "300".to_string())
+        .await
+        .unwrap();
+    let delete_requests = delete_requests.lock().await;
+
+    assert_eq!(deleted["success"], true);
+    assert_eq!(deleted["link_id"], "300");
+    assert_eq!(deleted["data"]["response"], json!({}));
+    assert_eq!(delete_requests[0].method, Method::DELETE);
+    assert_eq!(
+        delete_requests[0].path,
+        "/rest/api/2/issue/ABC-1/remotelink/300"
     );
 }
 

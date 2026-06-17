@@ -58,6 +58,7 @@ pub struct ContentLabelArgs {
 pub enum ContentLabelCommand {
     List(ListContentLabelsArgs),
     Add(AddContentLabelArgs),
+    Remove(RemoveContentLabelArgs),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -67,6 +68,12 @@ pub struct ListContentLabelsArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct AddContentLabelArgs {
+    pub content_id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct RemoveContentLabelArgs {
     pub content_id: String,
     pub label: String,
 }
@@ -174,6 +181,8 @@ pub struct UpdatePageArgs {
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct DeletePageArgs {
     pub page_id: String,
+    #[arg(long)]
+    pub confirm_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -198,6 +207,8 @@ pub enum PageCommentCommand {
     List(ListPageCommentsArgs),
     Add(AddPageCommentArgs),
     Reply(ReplyPageCommentArgs),
+    Update(UpdatePageCommentArgs),
+    Delete(DeletePageCommentArgs),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -220,6 +231,21 @@ pub struct ReplyPageCommentArgs {
     pub comment_id: String,
     #[command(flatten)]
     pub body_input: BodyInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+#[command(group(clap::ArgGroup::new("body_input").args(["body", "body_file", "body_stdin"]).required(true).multiple(false)))]
+pub struct UpdatePageCommentArgs {
+    pub page_id: String,
+    pub comment_id: String,
+    #[command(flatten)]
+    pub body_input: BodyInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct DeletePageCommentArgs {
+    pub page_id: String,
+    pub comment_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -372,6 +398,8 @@ pub struct DownloadContentAttachmentsArgs {
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct DeleteAttachmentArgs {
     pub attachment_id: String,
+    #[arg(long)]
+    pub confirm_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -443,6 +471,16 @@ async fn execute_content(
                 operations::confluence::add_content_label(
                     context,
                     tool_args::ConfluenceAddLabelArgs {
+                        page_id: args.content_id,
+                        name: args.label,
+                    },
+                )
+                .await
+            }
+            ContentLabelCommand::Remove(args) => {
+                operations::confluence::remove_content_label(
+                    context,
+                    tool_args::ConfluenceRemoveLabelArgs {
                         page_id: args.content_id,
                         name: args.label,
                     },
@@ -535,6 +573,7 @@ async fn execute_page(
                 context,
                 tool_args::ConfluenceDeletePageArgs {
                     page_id: args.page_id,
+                    confirm_id: args.confirm_id,
                 },
             )
             .await
@@ -589,6 +628,28 @@ async fn execute_page_comment(
                 tool_args::ConfluenceReplyToCommentArgs {
                     comment_id: args.comment_id,
                     body,
+                },
+            )
+            .await
+        }
+        PageCommentCommand::Update(args) => {
+            let body = read_body(args.body_input)?;
+            operations::confluence::update_page_comment(
+                context,
+                tool_args::ConfluenceUpdateCommentArgs {
+                    page_id: args.page_id,
+                    comment_id: args.comment_id,
+                    body,
+                },
+            )
+            .await
+        }
+        PageCommentCommand::Delete(args) => {
+            operations::confluence::delete_page_comment(
+                context,
+                tool_args::ConfluenceDeleteCommentArgs {
+                    page_id: args.page_id,
+                    comment_id: args.comment_id,
                 },
             )
             .await
@@ -736,6 +797,7 @@ async fn execute_attachment(
                 context,
                 tool_args::ConfluenceDeleteAttachmentArgs {
                     attachment_id: args.attachment_id,
+                    confirm_id: args.confirm_id,
                 },
             )
             .await
@@ -896,7 +958,7 @@ mod tests {
                 "--content",
                 "# Updated",
             ],
-            &["confluence", "page", "delete", "123"],
+            &["confluence", "page", "delete", "123", "--confirm-id", "123"],
             &[
                 "confluence",
                 "page",
@@ -953,7 +1015,14 @@ mod tests {
             &["confluence", "attachment", "list", "123"],
             &["confluence", "attachment", "download", "456"],
             &["confluence", "attachment", "download-content", "123"],
-            &["confluence", "attachment", "delete", "456"],
+            &[
+                "confluence",
+                "attachment",
+                "delete",
+                "456",
+                "--confirm-id",
+                "456",
+            ],
             &["confluence", "attachment", "images", "123"],
         ];
 

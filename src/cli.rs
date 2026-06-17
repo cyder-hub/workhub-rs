@@ -106,6 +106,17 @@ fn render_cli_result(
         Ok(result) if result.is_error => Err(render_business_error(result, options)),
         Ok(result) => {
             let output = render_success(&result, options).map_err(rendering_error)?;
+            if output.exit_code != 0 {
+                let message = if output.stderr.is_empty() {
+                    output.stdout
+                } else {
+                    output.stderr
+                };
+                return Err(CliRunError {
+                    message,
+                    exit_code: output.exit_code,
+                });
+            }
             if !output.stdout.is_empty() {
                 println!("{}", output.stdout);
             }
@@ -211,6 +222,24 @@ mod tests {
         assert_eq!(
             error.to_string(),
             r#"{"error":{"category":"config","message":"invalid JIRA_TIMEOUT value `abc`"},"success":false}"#
+        );
+    }
+
+    #[test]
+    fn cli_result_uses_business_failure_exit_code_from_success_renderer() {
+        let error = render_cli_result(
+            Ok(OperationResult::success(serde_json::json!({
+                "success": false,
+                "message": "partial failure"
+            }))),
+            CliOutputOptions::default(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.exit_code(), 5);
+        assert_eq!(
+            error.to_string(),
+            "message: partial failure\nsuccess: false"
         );
     }
 }

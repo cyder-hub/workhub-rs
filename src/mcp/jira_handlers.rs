@@ -3,17 +3,20 @@ use crate::{
         JiraAddCommentArgs, JiraAddIssuesToSprintArgs, JiraAddWatcherArgs, JiraAddWorklogArgs,
         JiraCreateIssueArgs, JiraCreateIssueLinkArgs, JiraCreateIssuesArgs,
         JiraCreateProjectVersionArgs, JiraCreateProjectVersionsArgs, JiraCreateRemoteIssueLinkArgs,
-        JiraCreateSprintArgs, JiraDeleteIssueArgs, JiraDeleteIssueLinkArgs, JiraEditCommentArgs,
+        JiraCreateSprintArgs, JiraDeleteCommentArgs, JiraDeleteIssueArgs, JiraDeleteIssueLinkArgs,
+        JiraDeleteRemoteIssueLinkArgs, JiraDeleteWorklogArgs, JiraEditCommentArgs,
         JiraGetFieldOptionsArgs, JiraGetIssueArgs, JiraGetIssueAttachmentsArgs,
         JiraGetIssueChangelogsArgs, JiraGetIssueDevelopmentArgs, JiraGetIssueImagesArgs,
         JiraGetIssueSlaMetricsArgs, JiraGetIssueTimelineArgs, JiraGetIssuesDevelopmentArgs,
         JiraGetProjectIssuesArgs, JiraGetServiceDeskForProjectArgs, JiraGetTransitionsArgs,
         JiraGetUserArgs, JiraListAgileBoardsArgs, JiraListBoardIssuesArgs,
-        JiraListBoardSprintsArgs, JiraListIssueLinkTypesArgs, JiraListIssueWatchersArgs,
-        JiraListIssueWorklogsArgs, JiraListProjectComponentsArgs, JiraListProjectVersionsArgs,
-        JiraListProjectsArgs, JiraListServiceDeskQueueIssuesArgs, JiraListServiceDeskQueuesArgs,
+        JiraListBoardSprintsArgs, JiraListIssueLinkTypesArgs, JiraListIssueLinksArgs,
+        JiraListIssueWatchersArgs, JiraListIssueWorklogsArgs, JiraListProjectComponentsArgs,
+        JiraListProjectVersionsArgs, JiraListProjectsArgs, JiraListRemoteIssueLinksArgs,
+        JiraListServiceDeskQueueIssuesArgs, JiraListServiceDeskQueuesArgs,
         JiraListSprintIssuesArgs, JiraRemoveWatcherArgs, JiraSearchArgs, JiraSearchFieldsArgs,
         JiraSetIssueParentArgs, JiraTransitionIssueArgs, JiraUpdateIssueArgs, JiraUpdateSprintArgs,
+        JiraUpdateWorklogArgs,
     },
     operations::{self, operation_error_to_mcp, operation_result_to_mcp},
 };
@@ -87,6 +90,14 @@ impl WorkhubMcpServer {
         Parameters(args): Parameters<JiraEditCommentArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         jira_operation_result(operations::jira::update_issue_comment(&self.context, args).await)
+    }
+
+    #[tool(name = "jira_delete_issue_comment")]
+    pub(super) async fn delete_issue_comment(
+        &self,
+        Parameters(args): Parameters<JiraDeleteCommentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        jira_operation_result(operations::jira::delete_issue_comment(&self.context, args).await)
     }
 
     #[tool(name = "jira_list_issue_transitions")]
@@ -233,6 +244,22 @@ impl WorkhubMcpServer {
         jira_operation_result(operations::jira::add_issue_worklog(&self.context, args).await)
     }
 
+    #[tool(name = "jira_update_issue_worklog")]
+    pub(super) async fn update_issue_worklog(
+        &self,
+        Parameters(args): Parameters<JiraUpdateWorklogArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        jira_operation_result(operations::jira::update_issue_worklog(&self.context, args).await)
+    }
+
+    #[tool(name = "jira_delete_issue_worklog")]
+    pub(super) async fn delete_issue_worklog(
+        &self,
+        Parameters(args): Parameters<JiraDeleteWorklogArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        jira_operation_result(operations::jira::delete_issue_worklog(&self.context, args).await)
+    }
+
     #[tool(name = "jira_list_issue_link_types")]
     pub(super) async fn list_issue_link_types(
         &self,
@@ -249,6 +276,14 @@ impl WorkhubMcpServer {
         jira_operation_result(operations::jira::set_issue_parent(&self.context, args).await)
     }
 
+    #[tool(name = "jira_list_issue_links")]
+    pub(super) async fn list_issue_links(
+        &self,
+        Parameters(args): Parameters<JiraListIssueLinksArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        jira_operation_result(operations::jira::list_issue_links(&self.context, args).await)
+    }
+
     #[tool(name = "jira_create_issue_link")]
     pub(super) async fn create_issue_link(
         &self,
@@ -263,6 +298,22 @@ impl WorkhubMcpServer {
         Parameters(args): Parameters<JiraCreateRemoteIssueLinkArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         jira_operation_result(operations::jira::create_remote_issue_link(&self.context, args).await)
+    }
+
+    #[tool(name = "jira_list_remote_issue_links")]
+    pub(super) async fn list_remote_issue_links(
+        &self,
+        Parameters(args): Parameters<JiraListRemoteIssueLinksArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        jira_operation_result(operations::jira::list_remote_issue_links(&self.context, args).await)
+    }
+
+    #[tool(name = "jira_delete_remote_issue_link")]
+    pub(super) async fn delete_remote_issue_link(
+        &self,
+        Parameters(args): Parameters<JiraDeleteRemoteIssueLinkArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        jira_operation_result(operations::jira::delete_remote_issue_link(&self.context, args).await)
     }
 
     #[tool(name = "jira_delete_issue_link")]

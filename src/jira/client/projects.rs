@@ -55,12 +55,33 @@ impl JiraClient {
         versions: Vec<Value>,
     ) -> Result<Value, UpstreamError> {
         let mut results = Vec::new();
+        let mut failed = Vec::new();
         for version in versions {
             match self.create_version(version).await {
                 Ok(value) => results.push(json!({"success": true, "version": value})),
-                Err(error) => results.push(json!({"success": false, "error": error.to_string()})),
+                Err(error) => {
+                    let failure = json!({"success": false, "error": error.to_string()});
+                    failed.push(failure.clone());
+                    results.push(failure);
+                }
             }
         }
-        Ok(json!({ "versions": results }))
+        Ok(json!({
+            "success": failed.is_empty(),
+            "partial_success": !results.is_empty() && !failed.is_empty() && failed.len() < results.len(),
+            "message": if failed.is_empty() {
+                "Project versions created successfully"
+            } else {
+                "One or more project versions failed to create"
+            },
+            "summary": {
+                "total": results.len(),
+                "created": results.len() - failed.len(),
+                "failed": failed.len(),
+            },
+            "versions": results,
+            "failed": failed,
+            "warnings": [],
+        }))
     }
 }

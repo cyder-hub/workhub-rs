@@ -2,7 +2,7 @@
 
 Rust-native MCP server and resource-oriented CLI for work systems. It exposes Jira, Confluence, and GitLab merge-request tools through MCP stdio, streamable HTTP, and `workhub cli ...`.
 
-`workhub-rs` provides 85 business capabilities: 46 Jira, 24 Confluence, and 15 GitLab merge-request capabilities. The MCP surface exposes them as tools; the CLI exposes the same shared operation layer as resource commands. Jira and Confluence have representative real acceptance coverage; GitLab support is currently local/mock validated only. See [docs/support-matrix.md](docs/support-matrix.md) for exact per-tool status.
+`workhub-rs` provides 101 business capabilities: 52 Jira, 27 Confluence, and 22 GitLab merge-request/cleanup capabilities. The MCP surface exposes them as tools; the CLI exposes the same shared operation layer as resource commands. Jira and Confluence have representative real acceptance coverage; GitLab support is currently local/mock validated only. See [docs/support-matrix.md](docs/support-matrix.md) for exact per-tool status.
 
 ## Quick Start
 
@@ -113,7 +113,7 @@ Most desktop MCP clients accept a `mcp.json` shape like this. Use an absolute pa
 }
 ```
 
-For GitLab read-only use, choose a token with `read_api`. For GitLab create/update/note/discussion/approval/merge tools, use a token with `api`. `GITLAB_PROJECTS_FILTER` is optional but recommended for production because it restricts project-scoped GitLab tools before any upstream HTTP request is sent.
+For GitLab read-only use, choose a token with `read_api`. For GitLab create/update/cleanup/note/discussion/approval/merge/branch tools, use a token with `api`. `GITLAB_PROJECTS_FILTER` is optional but recommended for production because it restricts project-scoped GitLab tools before any upstream HTTP request is sent.
 
 ## Tool Access
 

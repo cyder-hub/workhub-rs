@@ -451,11 +451,6 @@ pub(super) fn high_risk_input_fields() -> Vec<HighRiskInputField> {
             reason: "bulk object list with partial failure semantics",
         },
         HighRiskInputField {
-            tool_name: tools::JIRA_CREATE_ISSUES_TOOL_NAME,
-            field_name: "validate_only",
-            reason: "bulk dry-run behavior switch",
-        },
-        HighRiskInputField {
             tool_name: tools::JIRA_UPDATE_ISSUE_TOOL_NAME,
             field_name: "fields",
             reason: "destructive field update object",
@@ -831,6 +826,11 @@ pub(super) fn high_risk_input_fields() -> Vec<HighRiskInputField> {
             reason: "string-or-number page identifier",
         },
         HighRiskInputField {
+            tool_name: confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME,
+            field_name: "confirm_id",
+            reason: "destructive delete confirmation identifier",
+        },
+        HighRiskInputField {
             tool_name: confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME,
             field_name: "page_id",
             reason: "string-or-number page identifier",
@@ -871,12 +871,37 @@ pub(super) fn high_risk_input_fields() -> Vec<HighRiskInputField> {
             reason: "Markdown reply body",
         },
         HighRiskInputField {
+            tool_name: confluence_tools::CONFLUENCE_UPDATE_COMMENT_TOOL_NAME,
+            field_name: "comment_id",
+            reason: "string-or-number comment identifier",
+        },
+        HighRiskInputField {
+            tool_name: confluence_tools::CONFLUENCE_UPDATE_COMMENT_TOOL_NAME,
+            field_name: "body",
+            reason: "Markdown comment body",
+        },
+        HighRiskInputField {
+            tool_name: confluence_tools::CONFLUENCE_DELETE_COMMENT_TOOL_NAME,
+            field_name: "comment_id",
+            reason: "string-or-number comment identifier",
+        },
+        HighRiskInputField {
             tool_name: confluence_tools::CONFLUENCE_ADD_LABEL_TOOL_NAME,
             field_name: "page_id",
             reason: "string-or-number content identifier",
         },
         HighRiskInputField {
             tool_name: confluence_tools::CONFLUENCE_ADD_LABEL_TOOL_NAME,
+            field_name: "name",
+            reason: "label mutation value",
+        },
+        HighRiskInputField {
+            tool_name: confluence_tools::CONFLUENCE_REMOVE_LABEL_TOOL_NAME,
+            field_name: "page_id",
+            reason: "string-or-number content identifier",
+        },
+        HighRiskInputField {
+            tool_name: confluence_tools::CONFLUENCE_REMOVE_LABEL_TOOL_NAME,
             field_name: "name",
             reason: "label mutation value",
         },
@@ -959,6 +984,11 @@ pub(super) fn high_risk_input_fields() -> Vec<HighRiskInputField> {
             tool_name: confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME,
             field_name: "attachment_id",
             reason: "string-or-number attachment identifier",
+        },
+        HighRiskInputField {
+            tool_name: confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME,
+            field_name: "confirm_id",
+            reason: "destructive delete confirmation identifier",
         },
         HighRiskInputField {
             tool_name: confluence_tools::CONFLUENCE_GET_CONTENT_IMAGE_ATTACHMENTS_TOOL_NAME,
@@ -1206,6 +1236,20 @@ pub(super) async fn mock_jira_handler(
                         "name": "Done",
                         "statusCategory": {"name": "Done"}
                     },
+                    "issuelinks": [
+                        {
+                            "id": "200",
+                            "type": {"name": "Blocks"},
+                            "outwardIssue": {
+                                "id": "10002",
+                                "key": "ABC-2",
+                                "fields": {
+                                    "summary": "Blocked issue",
+                                    "status": {"name": "To Do"}
+                                }
+                            }
+                        }
+                    ],
                     "customfield_sla": {
                         "name": "Time to resolution SLA",
                         "ongoingCycle": {
@@ -1333,6 +1377,17 @@ pub(super) async fn mock_jira_handler(
     if method == Method::POST
         && path == "/rest/api/2/issue/ABC-1/worklog?adjustEstimate=new&newEstimate=2h"
     {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "id": "300",
+                "timeSpent": parsed_body["timeSpent"],
+                "started": parsed_body["started"]
+            })),
+        )
+            .into_response();
+    }
+    if method == Method::PUT && path == "/rest/api/2/issue/ABC-1/worklog/300?adjustEstimate=auto" {
         return (
             StatusCode::OK,
             Json(json!({
@@ -1499,6 +1554,26 @@ pub(super) async fn mock_jira_handler(
             Json(json!({"id": "300", "object": parsed_body["object"]})),
         )
             .into_response();
+    }
+    if method == Method::GET && path == "/rest/api/2/issue/ABC-1/remotelink" {
+        return (
+            StatusCode::OK,
+            Json(json!([
+                {
+                    "id": "300",
+                    "globalId": "system=https://example.invalid&id=doc-1",
+                    "relationship": "documents",
+                    "object": {
+                        "title": "Design doc",
+                        "url": "https://example.invalid/doc"
+                    }
+                }
+            ])),
+        )
+            .into_response();
+    }
+    if method == Method::DELETE && path == "/rest/api/2/issue/ABC-1/remotelink/300" {
+        return StatusCode::NO_CONTENT.into_response();
     }
     if method == Method::DELETE && path == "/rest/api/2/issueLink/200" {
         return StatusCode::NO_CONTENT.into_response();
@@ -1797,6 +1872,38 @@ pub(super) async fn mock_confluence_handler(
         )
             .into_response();
     }
+    if method == Method::GET && path_only == "/rest/api/content/c-1" {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "id": "c-1",
+                "title": "Roadmap",
+                "type": "comment",
+                "body": {"storage": {"value": "<p>First comment</p>"}},
+                "version": {"number": 2, "by": {"displayName": "Ada"}},
+                "container": {"id": "123", "type": "page", "title": "Roadmap"},
+                "extensions": {"location": "footer"},
+                "_links": {"webui": "/spaces/ENG/pages/123?focusedCommentId=c-1"}
+            })),
+        )
+            .into_response();
+    }
+    if method == Method::GET && path_only == "/rest/api/content/c-other" {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "id": "c-other",
+                "title": "Other page comment",
+                "type": "comment",
+                "body": {"storage": {"value": "<p>Other</p>"}},
+                "version": {"number": 1, "by": {"displayName": "Ada"}},
+                "container": {"id": "999", "type": "page", "title": "Other page"},
+                "extensions": {"location": "footer"},
+                "_links": {"webui": "/spaces/ENG/pages/999?focusedCommentId=c-other"}
+            })),
+        )
+            .into_response();
+    }
     if method == Method::GET && path_only == "/rest/api/content/empty/child/comment" {
         return (
             StatusCode::OK,
@@ -1841,6 +1948,16 @@ pub(super) async fn mock_confluence_handler(
     }
     if method == Method::POST && path_only == "/rest/api/content/123/label" {
         return StatusCode::NO_CONTENT.into_response();
+    }
+    if method == Method::DELETE && path_only == "/rest/api/content/123/label" {
+        if query_value(&path, "name").as_deref() == Some("draft") {
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"message": "label not found"})),
+        )
+            .into_response();
     }
     if method == Method::POST && path_only == "/rest/api/content/label-error/label" {
         return (
@@ -1893,6 +2010,25 @@ pub(super) async fn mock_confluence_handler(
         )
             .into_response();
     }
+    if method == Method::PUT && path_only == "/rest/api/content/c-1" {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "id": "c-1",
+                "title": parsed_body["title"],
+                "type": "comment",
+                "body": parsed_body["body"],
+                "version": parsed_body["version"],
+                "container": parsed_body["container"],
+                "extensions": {"location": "footer"},
+                "_links": {"webui": "/spaces/ENG/pages/123?focusedCommentId=c-1"}
+            })),
+        )
+            .into_response();
+    }
+    if method == Method::DELETE && path_only == "/rest/api/content/c-1" {
+        return StatusCode::NO_CONTENT.into_response();
+    }
     if method == Method::PUT
         && (path_only == "/rest/api/content/900/property/emoji-title-published"
             || path_only == "/rest/api/content/123/property/emoji-title-published")
@@ -1926,6 +2062,27 @@ pub(super) async fn mock_confluence_handler(
                 "version": parsed_body["version"],
                 "ancestors": parsed_body.get("ancestors").cloned().unwrap_or(Value::Array(vec![]))
             })),
+        )
+            .into_response();
+    }
+    if method == Method::GET && path_only == "/rest/api/content/delete-error" {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "id": "delete-error",
+                "title": "Delete error page",
+                "type": "page",
+                "status": "current",
+                "space": {"key": "ENG", "name": "Engineering"},
+                "version": {"number": 3}
+            })),
+        )
+            .into_response();
+    }
+    if method == Method::GET && path_only == "/rest/api/content/preflight-forbidden" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"message": "preflight forbidden"})),
         )
             .into_response();
     }
@@ -1992,6 +2149,27 @@ pub(super) async fn mock_confluence_handler(
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"errorMessages": ["delete attachment failed"]})),
+        )
+            .into_response();
+    }
+    if method == Method::GET && path_only == "/rest/api/content/att-delete-error" {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "id": "att-delete-error",
+                "type": "attachment",
+                "title": "delete-error.bin",
+                "status": "current",
+                "extensions": {"mediaType": "application/octet-stream", "fileSize": 12},
+                "_links": {"download": "/download/attachments/att-delete-error/delete-error.bin"}
+            })),
+        )
+            .into_response();
+    }
+    if method == Method::GET && path_only == "/rest/api/content/att-preflight-forbidden" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"message": "attachment preflight forbidden"})),
         )
             .into_response();
     }

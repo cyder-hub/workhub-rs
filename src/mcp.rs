@@ -228,7 +228,7 @@ impl ServerHandler for WorkhubMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(SERVER_NAME, env!("CARGO_PKG_VERSION")))
             .with_instructions(format!(
-                "workhub-rs exposes 85 Jira, Confluence, and GitLab business tools. MCP tool visibility is controlled by MCP_TOOL_PROFILE, MCP_TOOLSETS, MCP_ENABLED_TOOLS, and MCP_DISABLED_TOOLS. Jira, Confluence, and GitLab tools are available when their service configuration and authentication are complete. The resource CLI ignores MCP tool visibility controls. See docs/support-matrix.md for per-tool and runtime support status."
+                "workhub-rs exposes 101 Jira, Confluence, and GitLab business tools. MCP tool visibility is controlled by MCP_TOOL_PROFILE, MCP_TOOLSETS, MCP_ENABLED_TOOLS, and MCP_DISABLED_TOOLS. Jira, Confluence, and GitLab tools are available when their service configuration and authentication are complete. The resource CLI ignores MCP tool visibility controls. See docs/support-matrix.md for per-tool and runtime support status."
             ))
     }
 }

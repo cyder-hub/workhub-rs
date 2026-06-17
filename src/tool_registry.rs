@@ -534,9 +534,8 @@ fn jira_mutation_result_schema() -> JsonObject {
         "properties": {
             "success": { "type": "boolean" },
             "data": {
-                "description": "Jira REST response payload; may be null for no-content responses.",
+                "description": "Jira REST response payload; empty object for no-content responses.",
                 "anyOf": [
-                    { "type": "null" },
                     { "type": "object", "additionalProperties": true },
                     { "type": "array", "items": true },
                     { "type": "string" },
@@ -544,7 +543,9 @@ fn jira_mutation_result_schema() -> JsonObject {
                     { "type": "boolean" }
                 ]
             },
-            "message": { "type": "string" }
+            "message": { "type": "string" },
+            "warnings": { "type": "array", "items": true },
+            "cleanup_hint": { "type": "object", "additionalProperties": true }
         },
         "additionalProperties": true
     }))
@@ -574,8 +575,12 @@ fn jira_partitioned_versions_schema() -> JsonObject {
     schema_object(json!({
         "type": "object",
         "description": "structuredContent for Jira project-version batch creation with per-item success partitions.",
-        "required": ["versions"],
+        "required": ["success", "partial_success", "summary", "versions", "failed"],
         "properties": {
+            "success": { "type": "boolean" },
+            "partial_success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "summary": { "type": "object", "additionalProperties": true },
             "versions": {
                 "type": "array",
                 "items": {
@@ -588,7 +593,9 @@ fn jira_partitioned_versions_schema() -> JsonObject {
                     },
                     "additionalProperties": true
                 }
-            }
+            },
+            "failed": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+            "warnings": { "type": "array", "items": true }
         },
         "additionalProperties": true
     }))

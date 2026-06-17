@@ -79,6 +79,17 @@ pub const JIRA_EDIT_COMMENT_METADATA: ToolMetadata = ToolMetadata {
     description: "Update an existing Jira issue comment, optionally with visibility restrictions.",
 };
 
+jira_metadata!(
+    JIRA_DELETE_COMMENT_METADATA,
+    tools::JIRA_DELETE_COMMENT_TOOL_NAME,
+    Write,
+    "jira_issue_comments_update",
+    destructive_write,
+    "Delete Jira issue comment",
+    "Delete an existing comment from a Jira issue.",
+    JiraMutationResult
+);
+
 pub const JIRA_GET_TRANSITIONS_METADATA: ToolMetadata = ToolMetadata {
     name: tools::JIRA_GET_TRANSITIONS_TOOL_NAME,
     service: ToolService::Jira,
@@ -117,7 +128,7 @@ jira_metadata!(
     "jira_issues_bulk_write",
     additive_write,
     "Create Jira issues",
-    "Create multiple Jira issues in one bulk request; validate_only can dry-run validation.",
+    "Create multiple Jira issues in one bulk request.",
     JiraCreateIssuesResult
 );
 jira_metadata!(
@@ -250,6 +261,26 @@ jira_metadata!(
     "Add a worklog entry to a Jira issue."
 );
 jira_metadata!(
+    JIRA_UPDATE_WORKLOG_METADATA,
+    tools::JIRA_UPDATE_WORKLOG_TOOL_NAME,
+    Write,
+    "jira_issue_worklogs_write",
+    destructive_write,
+    "Update Jira issue worklog",
+    "Update a worklog entry on a Jira issue.",
+    JiraMutationResult
+);
+jira_metadata!(
+    JIRA_DELETE_WORKLOG_METADATA,
+    tools::JIRA_DELETE_WORKLOG_TOOL_NAME,
+    Write,
+    "jira_issue_worklogs_write",
+    destructive_write,
+    "Delete Jira issue worklog",
+    "Delete a worklog entry from a Jira issue.",
+    JiraMutationResult
+);
+jira_metadata!(
     JIRA_LIST_ISSUE_LINK_TYPES_METADATA,
     tools::JIRA_LIST_ISSUE_LINK_TYPES_TOOL_NAME,
     Read,
@@ -268,6 +299,15 @@ jira_metadata!(
     "Set a Jira issue parent or epic using the parent key field."
 );
 jira_metadata!(
+    JIRA_LIST_ISSUE_LINKS_METADATA,
+    tools::JIRA_LIST_ISSUE_LINKS_TOOL_NAME,
+    Read,
+    "jira_issue_links_read",
+    read_only,
+    "List Jira issue links",
+    "Discover issue links for one Jira issue, including link ids for cleanup."
+);
+jira_metadata!(
     JIRA_CREATE_ISSUE_LINK_METADATA,
     tools::JIRA_CREATE_ISSUE_LINK_TOOL_NAME,
     Write,
@@ -277,6 +317,15 @@ jira_metadata!(
     "Create a typed relationship between two Jira issues."
 );
 jira_metadata!(
+    JIRA_LIST_REMOTE_ISSUE_LINKS_METADATA,
+    tools::JIRA_LIST_REMOTE_ISSUE_LINKS_TOOL_NAME,
+    Read,
+    "jira_issue_links_read",
+    read_only,
+    "List Jira remote issue links",
+    "Discover remote issue links for one Jira issue, including remote-link ids for cleanup."
+);
+jira_metadata!(
     JIRA_CREATE_REMOTE_ISSUE_LINK_METADATA,
     tools::JIRA_CREATE_REMOTE_ISSUE_LINK_TOOL_NAME,
     Write,
@@ -284,6 +333,16 @@ jira_metadata!(
     additive_write,
     "Create Jira remote issue link",
     "Create an external remote link on a Jira issue."
+);
+jira_metadata!(
+    JIRA_DELETE_REMOTE_ISSUE_LINK_METADATA,
+    tools::JIRA_DELETE_REMOTE_ISSUE_LINK_TOOL_NAME,
+    Write,
+    "jira_issue_links_delete",
+    destructive_write,
+    "Delete Jira remote issue link",
+    "Delete a remote issue link from a Jira issue by remote-link id.",
+    JiraMutationResult
 );
 jira_metadata!(
     JIRA_DELETE_ISSUE_LINK_METADATA,
@@ -459,6 +518,7 @@ pub(super) const TOOLS: &[ToolMetadata] = &[
     JIRA_GET_FIELD_OPTIONS_METADATA,
     JIRA_ADD_COMMENT_METADATA,
     JIRA_EDIT_COMMENT_METADATA,
+    JIRA_DELETE_COMMENT_METADATA,
     JIRA_GET_TRANSITIONS_METADATA,
     JIRA_TRANSITION_ISSUE_METADATA,
     JIRA_CREATE_ISSUE_METADATA,
@@ -477,10 +537,15 @@ pub(super) const TOOLS: &[ToolMetadata] = &[
     JIRA_REMOVE_WATCHER_METADATA,
     JIRA_LIST_ISSUE_WORKLOGS_METADATA,
     JIRA_ADD_WORKLOG_METADATA,
+    JIRA_UPDATE_WORKLOG_METADATA,
+    JIRA_DELETE_WORKLOG_METADATA,
     JIRA_LIST_ISSUE_LINK_TYPES_METADATA,
     JIRA_SET_ISSUE_PARENT_METADATA,
+    JIRA_LIST_ISSUE_LINKS_METADATA,
     JIRA_CREATE_ISSUE_LINK_METADATA,
+    JIRA_LIST_REMOTE_ISSUE_LINKS_METADATA,
     JIRA_CREATE_REMOTE_ISSUE_LINK_METADATA,
+    JIRA_DELETE_REMOTE_ISSUE_LINK_METADATA,
     JIRA_DELETE_ISSUE_LINK_METADATA,
     JIRA_GET_ISSUE_ATTACHMENTS_METADATA,
     JIRA_GET_ISSUE_IMAGES_METADATA,

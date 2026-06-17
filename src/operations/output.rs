@@ -29,6 +29,20 @@ pub fn render_success(
     result: &OperationResult,
     options: CliOutputOptions,
 ) -> Result<RenderedOutput, serde_json::Error> {
+    if is_business_failure_payload(&result.value) {
+        let stderr = if options.json {
+            render_json(&result.value, options.pretty)?
+        } else {
+            render_text(result)?
+        };
+
+        return Ok(RenderedOutput {
+            stdout: String::new(),
+            stderr,
+            exit_code: OperationError::business("business failure").exit_code(),
+        });
+    }
+
     let stdout = if options.json {
         render_json(&result.value, options.pretty)?
     } else {
@@ -74,6 +88,10 @@ fn render_json(value: &Value, pretty: bool) -> Result<String, serde_json::Error>
     } else {
         serde_json::to_string(value)
     }
+}
+
+fn is_business_failure_payload(value: &Value) -> bool {
+    value.get("success").and_then(Value::as_bool) == Some(false)
 }
 
 fn render_text(result: &OperationResult) -> Result<String, serde_json::Error> {
@@ -547,6 +565,56 @@ mod tests {
         assert_eq!(compact.stdout, r#"{"success":true}"#);
         assert!(pretty.stdout.contains('\n'));
         assert!(compact.stderr.is_empty());
+    }
+
+    #[test]
+    fn operations_output_renders_business_failure_json_to_stderr() {
+        let result = OperationResult::success(json!({
+            "success": false,
+            "message": "some items failed",
+            "partial_success": true
+        }));
+
+        let compact = render_success(
+            &result,
+            CliOutputOptions {
+                json: true,
+                pretty: false,
+            },
+        )
+        .unwrap();
+        let pretty = render_success(
+            &result,
+            CliOutputOptions {
+                json: true,
+                pretty: true,
+            },
+        )
+        .unwrap();
+
+        assert!(compact.stdout.is_empty());
+        assert_eq!(compact.exit_code, 5);
+        assert_eq!(
+            compact.stderr,
+            r#"{"message":"some items failed","partial_success":true,"success":false}"#
+        );
+        assert!(pretty.stdout.is_empty());
+        assert_eq!(pretty.exit_code, 5);
+        assert!(pretty.stderr.contains('\n'));
+        assert!(pretty.stderr.contains(r#""success": false"#));
+    }
+
+    #[test]
+    fn operations_output_renders_business_failure_text_to_stderr() {
+        let result = OperationResult::success(json!({
+            "success": false,
+            "message": "create failed"
+        }));
+        let output = render_success(&result, CliOutputOptions::default()).unwrap();
+
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, "message: create failed\nsuccess: false");
+        assert_eq!(output.exit_code, 5);
     }
 
     #[test]

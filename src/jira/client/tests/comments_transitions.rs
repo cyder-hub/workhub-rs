@@ -48,6 +48,23 @@ async fn edit_comment_uses_put_endpoint_and_visibility() {
 }
 
 #[tokio::test]
+async fn delete_comment_uses_delete_endpoint_and_returns_cleanup_envelope() {
+    let (base_url, requests) = mock_server_with_status(json!({}), StatusCode::NO_CONTENT).await;
+    let client = JiraClient::new(config(base_url, JiraDeployment::ServerDataCenter)).unwrap();
+    let value = client
+        .delete_comment("ABC-1".to_string(), "10".to_string())
+        .await
+        .unwrap();
+    let requests = requests.lock().await;
+
+    assert_eq!(value["success"], true);
+    assert_eq!(value["comment_id"], "10");
+    assert_eq!(value["data"]["response"], json!({}));
+    assert_eq!(requests[0].method, Method::DELETE);
+    assert_eq!(requests[0].path, "/rest/api/2/issue/ABC-1/comment/10");
+}
+
+#[tokio::test]
 async fn comment_missing_optional_payload_fields_is_simplified() {
     let (base_url, _requests) = mock_server(json!({"id": "10"})).await;
     let client = JiraClient::new(config(base_url, JiraDeployment::ServerDataCenter)).unwrap();

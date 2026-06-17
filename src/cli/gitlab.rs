@@ -24,6 +24,7 @@ pub enum GitlabCommand {
     Project(ProjectArgs),
     #[command(name = "mr")]
     MergeRequest(MergeRequestArgs),
+    Branch(BranchArgs),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -68,6 +69,8 @@ pub enum MergeRequestCommand {
     Pipelines(ListMergeRequestPipelinesArgs),
     Create(CreateMergeRequestArgs),
     Update(UpdateMergeRequestArgs),
+    Close(CloseMergeRequestArgs),
+    Delete(DeleteMergeRequestArgs),
     Note(MergeRequestNoteArgs),
     Discussion(MergeRequestDiscussionArgs),
     Approval(MergeRequestApprovalArgs),
@@ -187,6 +190,22 @@ pub struct UpdateMergeRequestArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct CloseMergeRequestArgs {
+    pub project: String,
+    pub iid: String,
+    #[arg(long)]
+    pub confirm_iid: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct DeleteMergeRequestArgs {
+    pub project: String,
+    pub iid: String,
+    #[arg(long)]
+    pub confirm_iid: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct MergeRequestNoteArgs {
     #[command(subcommand)]
     pub command: MergeRequestNoteCommand,
@@ -195,6 +214,8 @@ pub struct MergeRequestNoteArgs {
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum MergeRequestNoteCommand {
     Add(AddMergeRequestNoteArgs),
+    Update(UpdateMergeRequestNoteArgs),
+    Delete(DeleteMergeRequestNoteArgs),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -207,6 +228,23 @@ pub struct AddMergeRequestNoteArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
+#[command(group(clap::ArgGroup::new("body_input").args(["body", "body_file", "body_stdin"]).required(true).multiple(false)))]
+pub struct UpdateMergeRequestNoteArgs {
+    pub project: String,
+    pub iid: String,
+    pub note_id: String,
+    #[command(flatten)]
+    pub body_input: BodyInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct DeleteMergeRequestNoteArgs {
+    pub project: String,
+    pub iid: String,
+    pub note_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct MergeRequestDiscussionArgs {
     #[command(subcommand)]
     pub command: MergeRequestDiscussionCommand,
@@ -214,8 +252,19 @@ pub struct MergeRequestDiscussionArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum MergeRequestDiscussionCommand {
+    List(ListMergeRequestDiscussionsArgs),
     Reply(ReplyMergeRequestDiscussionArgs),
     Resolve(ResolveMergeRequestDiscussionArgs),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct ListMergeRequestDiscussionsArgs {
+    pub project: String,
+    pub iid: String,
+    #[arg(long)]
+    pub page: Option<u32>,
+    #[arg(long)]
+    pub per_page: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
@@ -282,6 +331,34 @@ pub struct AcceptMergeRequestArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct BranchArgs {
+    #[command(subcommand)]
+    pub command: BranchCommand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum BranchCommand {
+    Create(CreateBranchArgs),
+    Delete(DeleteBranchArgs),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct CreateBranchArgs {
+    pub project: String,
+    pub branch: String,
+    #[arg(long = "ref")]
+    pub ref_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct DeleteBranchArgs {
+    pub project: String,
+    pub branch: String,
+    #[arg(long)]
+    pub confirm_branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct DescriptionInput {
     #[arg(long)]
     pub description: Option<String>,
@@ -309,6 +386,7 @@ pub async fn execute(
         GitlabCommand::User(args) => execute_user(args, context).await,
         GitlabCommand::Project(args) => execute_project(args, context).await,
         GitlabCommand::MergeRequest(args) => execute_merge_request(args, context).await,
+        GitlabCommand::Branch(args) => execute_branch(args, context).await,
     }
 }
 
@@ -451,6 +529,28 @@ async fn execute_merge_request(
             )
             .await
         }
+        MergeRequestCommand::Close(args) => {
+            operations::gitlab::close_merge_request(
+                context,
+                tool_args::GitlabCloseMergeRequestArgs {
+                    project: args.project,
+                    merge_request_iid: parse_u64(&args.iid, "iid")?,
+                    confirm_iid: parse_u64(&args.confirm_iid, "confirm_iid")?,
+                },
+            )
+            .await
+        }
+        MergeRequestCommand::Delete(args) => {
+            operations::gitlab::delete_merge_request(
+                context,
+                tool_args::GitlabDeleteMergeRequestArgs {
+                    project: args.project,
+                    merge_request_iid: parse_u64(&args.iid, "iid")?,
+                    confirm_iid: parse_u64(&args.confirm_iid, "confirm_iid")?,
+                },
+            )
+            .await
+        }
         MergeRequestCommand::Note(args) => execute_merge_request_note(args, context).await,
         MergeRequestCommand::Discussion(args) => {
             execute_merge_request_discussion(args, context).await
@@ -492,6 +592,30 @@ async fn execute_merge_request_note(
             )
             .await
         }
+        MergeRequestNoteCommand::Update(args) => {
+            let body = read_body(args.body_input)?;
+            operations::gitlab::update_merge_request_note(
+                context,
+                tool_args::GitlabUpdateMergeRequestNoteArgs {
+                    project: args.project,
+                    merge_request_iid: parse_u64(&args.iid, "iid")?,
+                    note_id: parse_u64(&args.note_id, "note_id")?,
+                    body,
+                },
+            )
+            .await
+        }
+        MergeRequestNoteCommand::Delete(args) => {
+            operations::gitlab::delete_merge_request_note(
+                context,
+                tool_args::GitlabDeleteMergeRequestNoteArgs {
+                    project: args.project,
+                    merge_request_iid: parse_u64(&args.iid, "iid")?,
+                    note_id: parse_u64(&args.note_id, "note_id")?,
+                },
+            )
+            .await
+        }
     }
 }
 
@@ -500,6 +624,18 @@ async fn execute_merge_request_discussion(
     context: &AppContext,
 ) -> Result<OperationResult, OperationError> {
     match args.command {
+        MergeRequestDiscussionCommand::List(args) => {
+            operations::gitlab::list_merge_request_discussions(
+                context,
+                tool_args::GitlabListMergeRequestDiscussionsArgs {
+                    project: args.project,
+                    merge_request_iid: parse_u64(&args.iid, "iid")?,
+                    page: args.page.map(u64::from),
+                    per_page: args.per_page.map(u64::from),
+                },
+            )
+            .await
+        }
         MergeRequestDiscussionCommand::Reply(args) => {
             let body = read_body(args.body_input)?;
             operations::gitlab::reply_merge_request_discussion(
@@ -550,6 +686,36 @@ async fn execute_merge_request_approval(
                     project: args.project,
                     merge_request_iid: parse_u64(&args.iid, "iid")?,
                     action: parse_approval_action(&args.action)?,
+                },
+            )
+            .await
+        }
+    }
+}
+
+async fn execute_branch(
+    args: BranchArgs,
+    context: &AppContext,
+) -> Result<OperationResult, OperationError> {
+    match args.command {
+        BranchCommand::Create(args) => {
+            operations::gitlab::create_branch(
+                context,
+                tool_args::GitlabCreateBranchArgs {
+                    project: args.project,
+                    branch: args.branch,
+                    ref_name: args.ref_name,
+                },
+            )
+            .await
+        }
+        BranchCommand::Delete(args) => {
+            operations::gitlab::delete_branch(
+                context,
+                tool_args::GitlabDeleteBranchArgs {
+                    project: args.project,
+                    branch: args.branch,
+                    confirm_branch: args.confirm_branch,
                 },
             )
             .await
@@ -758,12 +924,52 @@ mod tests {
             &[
                 "gitlab",
                 "mr",
+                "close",
+                "group/project",
+                "7",
+                "--confirm-iid",
+                "7",
+            ],
+            &[
+                "gitlab",
+                "mr",
+                "delete",
+                "group/project",
+                "7",
+                "--confirm-iid",
+                "7",
+            ],
+            &[
+                "gitlab",
+                "mr",
                 "note",
                 "add",
                 "group/project",
                 "7",
                 "--body",
                 "Looks good",
+            ],
+            &[
+                "gitlab",
+                "mr",
+                "note",
+                "update",
+                "group/project",
+                "7",
+                "1",
+                "--body",
+                "Updated",
+            ],
+            &["gitlab", "mr", "note", "delete", "group/project", "7", "1"],
+            &[
+                "gitlab",
+                "mr",
+                "discussion",
+                "list",
+                "group/project",
+                "7",
+                "--per-page",
+                "50",
             ],
             &[
                 "gitlab",
@@ -806,6 +1012,24 @@ mod tests {
                 "7",
                 "--sha",
                 "abc123",
+            ],
+            &[
+                "gitlab",
+                "branch",
+                "create",
+                "group/project",
+                "feature/api",
+                "--ref",
+                "main",
+            ],
+            &[
+                "gitlab",
+                "branch",
+                "delete",
+                "group/project",
+                "feature/api",
+                "--confirm-branch",
+                "feature/api",
             ],
         ];
 
@@ -873,7 +1097,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_gitlab_executes_note_and_diff_preflight_validation() {
-        let note_error = execute(
+        let note_result = execute(
             gitlab_args([
                 "gitlab",
                 "mr",
@@ -887,7 +1111,7 @@ mod tests {
             &gitlab_context(BTreeSet::new(), BTreeSet::new()),
         )
         .await
-        .unwrap_err();
+        .unwrap();
         let diff_error = execute(
             gitlab_args([
                 "gitlab",
@@ -903,8 +1127,12 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert_eq!(note_error.category, OperationErrorCategory::InvalidInput);
-        assert!(note_error.message.contains("body must not be empty"));
+        assert_eq!(note_result.is_error, true);
+        assert_eq!(note_result.value["success"], serde_json::json!(false));
+        assert_eq!(
+            note_result.value["error"]["category"],
+            serde_json::json!("invalid_input")
+        );
         assert_eq!(diff_error.category, OperationErrorCategory::InvalidInput);
         assert!(
             diff_error
@@ -937,6 +1165,43 @@ mod tests {
                 .message
                 .contains("action must be approve or unapprove")
         );
+    }
+
+    #[tokio::test]
+    async fn cli_gitlab_executes_cleanup_confirm_validation() {
+        let mr_error = execute(
+            gitlab_args([
+                "gitlab",
+                "mr",
+                "delete",
+                "group/project",
+                "7",
+                "--confirm-iid",
+                "8",
+            ]),
+            &gitlab_context(BTreeSet::new(), BTreeSet::new()),
+        )
+        .await
+        .unwrap_err();
+        let branch_error = execute(
+            gitlab_args([
+                "gitlab",
+                "branch",
+                "delete",
+                "group/project",
+                "feature/api",
+                "--confirm-branch",
+                "feature/other",
+            ]),
+            &gitlab_context(BTreeSet::new(), BTreeSet::new()),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(mr_error.category, OperationErrorCategory::InvalidInput);
+        assert!(mr_error.message.contains("confirm_iid must match"));
+        assert_eq!(branch_error.category, OperationErrorCategory::InvalidInput);
+        assert!(branch_error.message.contains("confirm_branch must match"));
     }
 
     #[tokio::test]

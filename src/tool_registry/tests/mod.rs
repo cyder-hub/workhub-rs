@@ -239,10 +239,10 @@ fn profile_tool_counts_match_registered_taxonomy() {
             .count()
     };
 
-    assert_eq!(count("basic"), 23);
-    assert_eq!(count("developer"), 47);
-    assert_eq!(count("manager"), 82);
-    assert_eq!(count("full"), 85);
+    assert_eq!(count("basic"), 24);
+    assert_eq!(count("developer"), 54);
+    assert_eq!(count("manager"), 98);
+    assert_eq!(count("full"), 101);
     assert_eq!(count("custom"), 0);
 }
 
@@ -253,7 +253,7 @@ fn registered_tool_metadata_is_complete_unique_and_uses_known_toolsets() {
     let mut used_toolsets = BTreeSet::new();
     let tools = registered_tools().collect::<Vec<_>>();
 
-    assert_eq!(tools.len(), 85);
+    assert_eq!(tools.len(), 101);
     for metadata in tools {
         assert!(
             names.insert(metadata.name),
@@ -420,6 +420,12 @@ fn gitlab_metadata_uses_coarse_toolsets() {
             .toolset,
         Some("gitlab_merge_requests_merge")
     );
+    assert_eq!(
+        metadata_for(gitlab_tools::GITLAB_CREATE_BRANCH_TOOL_NAME)
+            .unwrap()
+            .toolset,
+        Some("gitlab_merge_requests_write")
+    );
 }
 
 #[test]
@@ -464,21 +470,33 @@ fn destructive_annotation_set_matches_reviewed_write_tools() {
             tools::JIRA_TRANSITION_ISSUE_TOOL_NAME,
             tools::JIRA_UPDATE_ISSUE_TOOL_NAME,
             tools::JIRA_DELETE_ISSUE_TOOL_NAME,
+            tools::JIRA_DELETE_COMMENT_TOOL_NAME,
             tools::JIRA_REMOVE_WATCHER_TOOL_NAME,
             tools::JIRA_SET_ISSUE_PARENT_TOOL_NAME,
             tools::JIRA_DELETE_ISSUE_LINK_TOOL_NAME,
+            tools::JIRA_UPDATE_WORKLOG_TOOL_NAME,
+            tools::JIRA_DELETE_WORKLOG_TOOL_NAME,
+            tools::JIRA_DELETE_REMOTE_ISSUE_LINK_TOOL_NAME,
             tools::JIRA_UPDATE_SPRINT_TOOL_NAME,
             tools::JIRA_ADD_ISSUES_TO_SPRINT_TOOL_NAME,
             confluence_tools::CONFLUENCE_UPDATE_PAGE_TOOL_NAME,
             confluence_tools::CONFLUENCE_DELETE_PAGE_TOOL_NAME,
             confluence_tools::CONFLUENCE_MOVE_PAGE_TOOL_NAME,
+            confluence_tools::CONFLUENCE_UPDATE_COMMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_DELETE_COMMENT_TOOL_NAME,
+            confluence_tools::CONFLUENCE_REMOVE_LABEL_TOOL_NAME,
             confluence_tools::CONFLUENCE_UPLOAD_CONTENT_ATTACHMENT_TOOL_NAME,
             confluence_tools::CONFLUENCE_UPLOAD_CONTENT_ATTACHMENTS_TOOL_NAME,
             confluence_tools::CONFLUENCE_DELETE_ATTACHMENT_TOOL_NAME,
             gitlab_tools::GITLAB_UPDATE_MERGE_REQUEST_TOOL_NAME,
+            gitlab_tools::GITLAB_CLOSE_MERGE_REQUEST_TOOL_NAME,
+            gitlab_tools::GITLAB_DELETE_MERGE_REQUEST_TOOL_NAME,
+            gitlab_tools::GITLAB_UPDATE_MERGE_REQUEST_NOTE_TOOL_NAME,
+            gitlab_tools::GITLAB_DELETE_MERGE_REQUEST_NOTE_TOOL_NAME,
             gitlab_tools::GITLAB_RESOLVE_MERGE_REQUEST_DISCUSSION_TOOL_NAME,
             gitlab_tools::GITLAB_SET_MERGE_REQUEST_APPROVAL_TOOL_NAME,
             gitlab_tools::GITLAB_ACCEPT_MERGE_REQUEST_TOOL_NAME,
+            gitlab_tools::GITLAB_DELETE_BRANCH_TOOL_NAME,
         ])
     );
 }
@@ -673,6 +691,8 @@ fn gitlab_profile_toolsets_and_disabled_tools_are_enforced() {
         tool(gitlab_tools::GITLAB_GET_PROJECT_TOOL_NAME),
         tool(gitlab_tools::GITLAB_GET_MERGE_REQUEST_TOOL_NAME),
         tool(gitlab_tools::GITLAB_CREATE_MERGE_REQUEST_TOOL_NAME),
+        tool(gitlab_tools::GITLAB_CLOSE_MERGE_REQUEST_TOOL_NAME),
+        tool(gitlab_tools::GITLAB_DELETE_BRANCH_TOOL_NAME),
         tool(gitlab_tools::GITLAB_ACCEPT_MERGE_REQUEST_TOOL_NAME),
     ];
 
@@ -682,13 +702,17 @@ fn gitlab_profile_toolsets_and_disabled_tools_are_enforced() {
     );
     assert!(guard_tool_call(gitlab_tools::GITLAB_GET_PROJECT_TOOL_NAME, &basic).is_ok());
     assert!(guard_tool_call(gitlab_tools::GITLAB_GET_MERGE_REQUEST_TOOL_NAME, &basic).is_err());
+    assert!(guard_tool_call(gitlab_tools::GITLAB_CLOSE_MERGE_REQUEST_TOOL_NAME, &basic).is_err());
+    assert!(guard_tool_call(gitlab_tools::GITLAB_DELETE_BRANCH_TOOL_NAME, &basic).is_err());
     assert!(guard_tool_call(gitlab_tools::GITLAB_ACCEPT_MERGE_REQUEST_TOOL_NAME, &basic).is_err());
 
     assert_eq!(
         names(visible_tools(candidates, &developer)),
         vec![
             gitlab_tools::GITLAB_ACCEPT_MERGE_REQUEST_TOOL_NAME.to_string(),
+            gitlab_tools::GITLAB_CLOSE_MERGE_REQUEST_TOOL_NAME.to_string(),
             gitlab_tools::GITLAB_CREATE_MERGE_REQUEST_TOOL_NAME.to_string(),
+            gitlab_tools::GITLAB_DELETE_BRANCH_TOOL_NAME.to_string(),
             gitlab_tools::GITLAB_GET_MERGE_REQUEST_TOOL_NAME.to_string(),
             gitlab_tools::GITLAB_GET_PROJECT_TOOL_NAME.to_string(),
         ]
