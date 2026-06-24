@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-06-24
+
+### Added
+- Added structured Workhub observability logging with redaction, runtime context events, panic diagnostics, and separate run, error, and audit log files.
+- Added configurable logging profiles, targets, payload policies, rotation, retention, compression, and support-bundle size through `[observability.logging]` and `WORKHUB_LOG_*`.
+- Added `workhub logs path`, `workhub logs bundle`, and `workhub logs usage` commands for locating logs, collecting redacted support bundles, and summarizing tool usage.
+- Added smoke and documentation coverage for logging behavior, support bundles, and deployment-time log configuration.
+
+### Changed
+- Logs now avoid stdout across runtime modes so stdio, version, and CLI command output remain machine-parseable.
+- Streamable HTTP keeps compact stderr logging by default, while stdio, version, `logs`, and non-verbose CLI modes default to file logging.
+- Docker Compose now passes through supported `WORKHUB_LOG_*` variables for container logging configuration.
+
+### Fixed
+- Dotenv-provided `WORKHUB_LOG_*` variables are loaded before observability initialization, so env-file logging configuration applies to startup logs.
+- Removed the deprecated `MCP_TOOL_CALL_DEBUG` Compose passthrough in favor of supported `WORKHUB_LOG_*` settings.
+
 ## 0.5.0 - 2026-06-17
 
 ### Added
