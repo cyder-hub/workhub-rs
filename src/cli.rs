@@ -27,6 +27,8 @@ pub struct CliArgs {
     pub json: bool,
     #[arg(long, global = true, requires = "json")]
     pub pretty: bool,
+    #[arg(short = 'v', long, global = true)]
+    pub verbose: bool,
     #[command(subcommand)]
     pub command: ProviderCommand,
 }

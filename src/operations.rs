@@ -5,7 +5,8 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     confluence::client::ConfluenceClient, context::AppContext, gitlab::client::GitlabClient,
-    jira::client::JiraClient, tool_registry, upstream::error::UpstreamError,
+    jira::client::JiraClient, observability::events::emit_security_rejection, tool_registry,
+    upstream::error::UpstreamError,
 };
 
 pub mod confluence;
@@ -50,7 +51,15 @@ impl OperationResult {
 pub fn guard_operation(tool_name: &str, context: &AppContext) -> Result<(), OperationError> {
     tool_registry::guard_operation_access(tool_name, context)
         .map(|_| ())
-        .map_err(OperationError::from_tool_guard)
+        .map_err(|error| {
+            emit_security_rejection(
+                "operation_filter_rejected",
+                "runtime_tool_controls",
+                None,
+                format!("operation rejected by runtime controls: {tool_name}"),
+            );
+            OperationError::from_tool_guard(error)
+        })
 }
 
 pub fn jira_client(context: &AppContext) -> Result<JiraClient, OperationError> {

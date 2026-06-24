@@ -169,6 +169,12 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 | CLI JSON output | `workhub cli --json ...` and `--pretty` | Supported | Successful JSON goes to stdout; errors go to stderr. `--pretty` requires `--json`. |
 | CLI env file loading | `workhub cli --env-file <path>`, `ENV_FILE`, global `.env`, `./.env` | Supported | CLI priority is explicit env file, `ENV_FILE`, global CLI `.env`, strict current-directory `./.env`; `stdio` intentionally does not load dotenv files. |
 | CLI global config management | `workhub cli config path/show/setup/set/unset` | Supported | Operates on the global CLI `.env` before normal runtime config is loaded. `setup` is a lightweight authorization wizard; advanced settings can be changed with `set`. Secret values are redacted by `show`. |
+| Observability logging config | `[observability.logging]`, `WORKHUB_LOG_*` | Supported | Supports profile, level, advanced filter, payload policy, console/file targets, log directory, rotation, retention, compression, and support-bundle size. |
+| Runtime log files | `workhub.log*`, `workhub-error.log*`, `workhub-audit.log*` | Supported | Runtime state, diagnostic error envelopes, and security/audit events are routed to separate NDJSON files. |
+| Log rotation and retention | `WORKHUB_LOG_ROTATION`, retention and compression variables | Supported | Supports daily/hourly/size rotation, gzip-compressed rotated files, retention by file count, and retention by days. |
+| Log discovery | `workhub logs path` | Supported | Prints log directory, enabled targets, and recent log files as JSON. |
+| Tool usage summary | `workhub logs usage --since <duration>` | Supported | Summarizes MCP tool and CLI command usage from recent runtime/error logs, including calls, success/failure counts, incomplete calls, success rate, and duration summaries. |
+| Support bundle | `workhub logs bundle --since <duration> --output <path>` | Supported | Creates a redacted ZIP with recent runtime/error/audit logs, `runtime-summary.json`, and `manifest.json`. |
 | Health endpoint | `GET /healthz` | Supported | Available for streamable HTTP deployments and compose healthchecks. |
 | GitLab project allowlist | `GITLAB_PROJECTS_FILTER` | Supported | Optional exact allowlist of numeric project IDs or full paths. Project-scoped GitLab tools reject unlisted projects before sending HTTP. |
 
@@ -196,7 +202,7 @@ All GitLab rows below are implemented in Rust and are registry-managed business 
 
 | Capability | Surface | Rust status | Notes |
 | --- | --- | --- | --- |
-| stdio transport | `workhub stdio` | Supported | Logs go to stderr; stdout remains MCP protocol-only. |
+| stdio transport | `workhub stdio` | Supported | Compact console logs go to stderr, structured logs go to files, and stdout remains MCP protocol-only. |
 | Streamable HTTP transport | `workhub streamhttp` | Supported | Default endpoint is `/mcp`; path is configurable. |
 | Production CLI | `workhub cli` | Supported | One-shot command surface for Jira, Confluence, and GitLab using the shared operation layer. |
 | Health check | `GET /healthz` | Supported | Returns a simple status response for HTTP deployments. |

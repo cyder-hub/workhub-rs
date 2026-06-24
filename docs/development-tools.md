@@ -73,6 +73,16 @@ Smoke options:
 
 `cargo xtask smoke cli all` runs the production `workhub cli ...` command surface against local mock upstreams. It verifies default text stdout, `--json` stdout, and disabled-tool stderr behavior for Jira, Confluence, and GitLab.
 
+## Agent And Skill CLI Guidance
+
+Agent-facing instructions and skills that call `workhub cli ...` should use the CLI output modes deliberately:
+
+- Start with the default table/key-value output for broad discovery, list, search, and manual inspection commands. This keeps agent context small while preserving the identifiers and status fields normally needed for follow-up actions.
+- Switch to `--json` only when the next step depends on exact structured data, nested fields, warning/error envelopes, null/false/empty-string distinctions, or deterministic test assertions.
+- Before using `--json`, reduce the result size with a specific object command, low `--limit`, service filters, or `--fields` where available.
+- If the default output lacks one field the agent needs, run a second narrow `--json` command for the selected object instead of repeating the whole broad query in JSON.
+- Keep smoke tests and assertions free to use JSON when they need machine parsing, but do not copy that testing habit into general user-facing skill examples.
+
 Run real acceptance preflight or full acceptance:
 
 ```bash

@@ -43,6 +43,8 @@ enum SmokeTarget {
     Gitlab(smoke::SmokeArgs),
     /// Run production CLI smoke checks.
     Cli(smoke::CliSmokeArgs),
+    /// Run observability logging smoke checks.
+    Logs,
 }
 
 impl SmokeTarget {
@@ -56,6 +58,7 @@ impl SmokeTarget {
                 SmokeDispatch::Mcp(args.into_command(smoke::SmokeService::GitLab))
             }
             Self::Cli(args) => SmokeDispatch::Cli(args.into_command()),
+            Self::Logs => SmokeDispatch::Logs,
         }
     }
 }
@@ -64,6 +67,7 @@ impl SmokeTarget {
 enum SmokeDispatch {
     Mcp(smoke::SmokeCommand),
     Cli(smoke::CliSmokeCommand),
+    Logs,
 }
 
 #[tokio::main]
@@ -82,6 +86,7 @@ async fn main() -> XtaskResult<()> {
             let exit_code = match target.into_command() {
                 SmokeDispatch::Mcp(command) => smoke::run(command).await?,
                 SmokeDispatch::Cli(command) => smoke::run_cli(command).await?,
+                SmokeDispatch::Logs => smoke::run_logs().await?,
             };
             if exit_code != 0 {
                 std::process::exit(exit_code);
@@ -157,6 +162,17 @@ mod tests {
             panic!("expected cli smoke command");
         };
         assert_eq!(args.service, smoke::CliSmokeService::GitLab);
+    }
+
+    #[test]
+    fn parses_logs_smoke_command() {
+        let cli = Cli::try_parse_from(["xtask", "smoke", "logs"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            XtaskCommand::Smoke(SmokeCli {
+                target: Some(SmokeTarget::Logs)
+            })
+        ));
     }
 
     #[test]

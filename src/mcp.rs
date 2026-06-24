@@ -3,8 +3,22 @@ use std::{sync::Arc, time::Instant};
 #[cfg(test)]
 use crate::upstream::error::UpstreamError;
 use crate::{
-    confluence::client::ConfluenceClient, context::AppContext, gitlab::client::GitlabClient,
-    mcp_errors::upstream_error, tool_registry, upstream::redaction::redact_text,
+    confluence::client::ConfluenceClient,
+    context::AppContext,
+    gitlab::client::GitlabClient,
+    mcp_errors::upstream_error,
+    observability::{
+        context::{CorrelationIds, new_tool_call_id},
+        events::{
+            OperationLogContext, emit_operation_completed, emit_operation_failure_message,
+            emit_operation_started, emit_security_rejection,
+        },
+        schema::{ErrorDiagnosticEnvelope, LogEvent, LogKind, LogLevel, Outcome, PayloadPolicy},
+        sinks::{emit_global_event, global_context},
+    },
+    operations::error::OperationErrorCategory,
+    tool_registry,
+    upstream::redaction::redact_text,
 };
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
@@ -150,6 +164,99 @@ fn optional_non_empty_arg(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn emit_mcp_tool_started(tool_call_id: &str, tool_name: &str, arguments: serde_json::Value) {
+    let Some(context) = global_context() else {
+        return;
+    };
+    let mut event = LogEvent::new(
+        LogLevel::Info,
+        LogKind::Mcp,
+        "mcp.tool_call.started",
+        "MCP tool call started",
+        "workhub::mcp",
+        context.mode.clone(),
+        context.version.clone(),
+        context.run_id.clone(),
+        context.pid,
+    )
+    .with_correlation(CorrelationIds::for_tool_call(tool_call_id.to_string()))
+    .with_outcome(Outcome::Started)
+    .with_field("arguments", arguments);
+    event.tool_name = Some(tool_name.to_string());
+    event.payload_policy = PayloadPolicy::SanitizedArgs;
+    emit_global_event(&event);
+}
+
+fn provider_from_tool_name(tool_name: &str) -> String {
+    tool_name
+        .split_once('_')
+        .map(|(provider, _)| provider)
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn emit_mcp_tool_completed(tool_call_id: &str, tool_name: &str, elapsed_ms: u128) {
+    let Some(context) = global_context() else {
+        return;
+    };
+    let mut event = LogEvent::new(
+        LogLevel::Info,
+        LogKind::Mcp,
+        "mcp.tool_call.completed",
+        "MCP tool call completed",
+        "workhub::mcp",
+        context.mode.clone(),
+        context.version.clone(),
+        context.run_id.clone(),
+        context.pid,
+    )
+    .with_correlation(CorrelationIds::for_tool_call(tool_call_id.to_string()))
+    .with_outcome(Outcome::Succeeded)
+    .with_duration_ms(elapsed_ms.try_into().unwrap_or(u64::MAX));
+    event.tool_name = Some(tool_name.to_string());
+    emit_global_event(&event);
+}
+
+fn emit_mcp_tool_failed(tool_call_id: &str, tool_name: &str, error: &ErrorData, elapsed_ms: u128) {
+    let Some(context) = global_context() else {
+        return;
+    };
+    let error_message = redact_text(error.message.as_ref());
+    let envelope = ErrorDiagnosticEnvelope {
+        timestamp_utc: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        kind: LogKind::Mcp,
+        event: "mcp.tool_call.failed".to_string(),
+        message: "MCP tool call failed".to_string(),
+        target: "workhub::mcp".to_string(),
+        mode: context.mode.clone(),
+        version: context.version.clone(),
+        run_id: context.run_id.clone(),
+        pid: context.pid,
+        correlation: CorrelationIds::for_tool_call(tool_call_id.to_string()),
+        provider: None,
+        operation: None,
+        tool_name: Some(tool_name.to_string()),
+        command_path: None,
+        duration_ms: Some(elapsed_ms.try_into().unwrap_or(u64::MAX)),
+        exit_code: None,
+        error_category: OperationErrorCategory::Business,
+        error_kind: format!("mcp_error_{}", error.code.0),
+        error_message: error_message.clone(),
+        phase: "mcp_tool_call".to_string(),
+        cause_summary: error_message.clone(),
+        cause_chain: vec![format!("tool {tool_name}: {error_message}")],
+        impact: "tool call failed before returning a successful MCP result".to_string(),
+        remediation_action: "inspect_tool_arguments_or_provider_configuration".to_string(),
+        remediation_evidence: format!("tool_name={tool_name} error_code={}", error.code.0),
+        related_log_file: crate::observability::rotation::RUN_LOG_FILE.to_string(),
+        related_line_hint: format!("run_id={} tool_call_id={tool_call_id}", context.run_id),
+        support_bundle_hint: "workhub logs bundle --since 24h".to_string(),
+        payload_policy: PayloadPolicy::Metadata,
+        fields: Default::default(),
+    };
+    emit_global_event(&envelope.to_log_event());
+}
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for WorkhubMcpServer {
     async fn call_tool(
@@ -158,50 +265,47 @@ impl ServerHandler for WorkhubMcpServer {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let tool_name = request.name.to_string();
-        let debug_arguments = tracing::enabled!(tracing::Level::DEBUG)
-            .then(|| sanitize_tool_log_arguments(request.arguments.as_ref()));
+        let tool_call_id = new_tool_call_id();
+        let operation = OperationLogContext::new(tool_name.as_str())
+            .with_provider(provider_from_tool_name(tool_name.as_str()))
+            .with_correlation(CorrelationIds::for_tool_call(tool_call_id.clone()));
+        let sanitized_arguments = sanitize_tool_log_arguments(request.arguments.as_ref());
         let started_at = Instant::now();
 
-        if let Some(arguments) = debug_arguments.as_ref() {
-            tracing::debug!(
-                tool = %tool_name,
-                arguments = %arguments,
-                "MCP tool call started"
-            );
-        }
+        emit_mcp_tool_started(&tool_call_id, &tool_name, sanitized_arguments);
+        emit_operation_started(&operation);
 
-        let result = async {
-            self.guard_registered_tool_call(tool_name.as_str())?;
-
-            let tool_call_context = ToolCallContext::new(self, request, context);
-            self.tool_router.call(tool_call_context).await
-        }
-        .await;
+        let result = match self.guard_registered_tool_call(tool_name.as_str()) {
+            Ok(()) => {
+                let tool_call_context = ToolCallContext::new(self, request, context);
+                self.tool_router.call(tool_call_context).await
+            }
+            Err(error) => {
+                emit_security_rejection(
+                    "mcp_tool_filter_rejected",
+                    "mcp_tool_visibility",
+                    None,
+                    format!("MCP tool call rejected by runtime controls: {tool_name}"),
+                );
+                Err(error)
+            }
+        };
         let elapsed_ms = started_at.elapsed().as_millis();
 
         match &result {
             Ok(_) => {
-                tracing::debug!(
-                    tool = %tool_name,
-                    elapsed_ms,
-                    "MCP tool call completed"
-                );
+                emit_mcp_tool_completed(&tool_call_id, &tool_name, elapsed_ms);
+                emit_operation_completed(&operation, elapsed_ms.try_into().unwrap_or(u64::MAX));
             }
             Err(error) => {
-                tracing::warn!(
-                    tool = %tool_name,
-                    "MCP tool call failed"
+                emit_mcp_tool_failed(&tool_call_id, &tool_name, error, elapsed_ms);
+                emit_operation_failure_message(
+                    &operation,
+                    OperationErrorCategory::Business,
+                    format!("mcp_error_{}", error.code.0),
+                    redact_text(error.message.as_ref()),
+                    elapsed_ms.try_into().unwrap_or(u64::MAX),
                 );
-                if let Some(arguments) = debug_arguments.as_ref() {
-                    tracing::debug!(
-                        tool = %tool_name,
-                        arguments = %arguments,
-                        error_code = error.code.0,
-                        error_message = %redact_text(error.message.as_ref()),
-                        elapsed_ms,
-                        "MCP tool call failed details"
-                    );
-                }
             }
         }
 

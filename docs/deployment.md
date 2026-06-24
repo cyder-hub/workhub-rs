@@ -10,6 +10,7 @@ This guide describes the supported runtime shapes for `workhub-rs`.
 - Configure only the Jira, Confluence, and GitLab services you want exposed.
 - Restrict exposed MCP tools with `MCP_TOOL_PROFILE`, `MCP_TOOLSETS`, `MCP_ENABLED_TOOLS`, or `MCP_DISABLED_TOOLS` when the MCP client should not see every configured tool. The resource CLI ignores these MCP visibility controls.
 - Keep service credentials in a secret manager, shell environment, or orchestrator secret. Do not commit dotenv files with real credentials.
+- Set `WORKHUB_LOG_DIR` to a durable writable path in service deployments, or rely on the platform log directory for local binaries.
 - Check `GET /healthz` for streamable HTTP deployments.
 - Review `SECURITY.md` before exposing the HTTP endpoint beyond localhost.
 
@@ -37,15 +38,7 @@ Use stdio when an MCP client starts the server process directly:
 workhub stdio
 ```
 
-Logs are written to stderr. Stdout is reserved for the MCP protocol.
-
-To include MCP tool call names, elapsed time, failures, and redacted arguments in stderr logs, enable tool-call diagnostics:
-
-```bash
-MCP_TOOL_CALL_DEBUG=true workhub stdio
-```
-
-`RUST_LOG` remains the advanced logging control and takes precedence over `MCP_TOOL_CALL_DEBUG` when set.
+Stdout is reserved for the MCP protocol. By default, stdio writes structured NDJSON to the platform log directory and does not emit console log summaries. Use `workhub logs path` to print the exact directory and active targets.
 
 ## Streamable HTTP
 
@@ -63,11 +56,7 @@ GET /healthz
 
 The MCP endpoint path defaults to `/mcp` and can be set with `MCP_HTTP_PATH` or `--path`.
 
-To enable tool-call diagnostics for streamable HTTP:
-
-```bash
-MCP_TOOL_CALL_DEBUG=true workhub streamhttp --host 0.0.0.0 --port 8000 --path /mcp
-```
+For service deployments, set `WORKHUB_LOG_DIR` to a persistent volume and keep the default `file,error_file,audit_file` targets enabled.
 
 ## Resource CLI
 
@@ -75,13 +64,13 @@ Use the CLI for one-shot automation and shell workflows:
 
 ```bash
 workhub cli jira issue get ABC-1 --fields summary,status
-workhub cli --json confluence page get --id 123456
+workhub cli confluence page get --id 123456
 workhub cli gitlab mr list group/project --state opened
 ```
 
 The CLI uses the same service credentials, project/space filters, proxy, TLS, mTLS, redirect policy, and redaction behavior as MCP tool calls. It ignores MCP tool visibility controls such as `MCP_TOOL_PROFILE`, `MCP_TOOLSETS`, `MCP_ENABLED_TOOLS`, and `MCP_DISABLED_TOOLS`. It does not offer provider URL, token, password, proxy, custom-header, TLS, or mTLS command-line override flags.
 
-Successful default output is compact text on stdout. `--json` emits result JSON on stdout. Errors and diagnostics are written to stderr with non-zero exit codes. CLI mode does not initialize tracing, so successful commands do not emit startup logs.
+Successful default output is compact text on stdout. `--json` emits result JSON on stdout. Errors are written to stderr and logs are written to the configured log files; stdout remains parseable for successful command results. CLI mode does not enable console logs by default. Use `workhub cli -v ...`, `workhub cli --verbose ...`, or explicitly include `console` in `WORKHUB_LOG_TARGETS` when you want compact log summaries on stderr.
 
 See [cli.md](cli.md) for the full command reference.
 
@@ -99,10 +88,10 @@ Run the image:
 docker run --rm -p 8000:8000 workhub-rs:local
 ```
 
-Run the image with tool-call diagnostics:
+Run the image with a persistent log directory:
 
 ```bash
-docker run --rm -e MCP_TOOL_CALL_DEBUG=true -p 8000:8000 workhub-rs:local
+docker run --rm -e WORKHUB_LOG_DIR=/var/log/workhub -v workhub-logs:/var/log/workhub -p 8000:8000 workhub-rs:local
 ```
 
 Run with compose:
@@ -113,10 +102,10 @@ docker compose up --build
 
 The image runs as a non-root `app` user. The compose service includes a `/healthz` healthcheck and maps `${MCP_PORT:-8000}` on the host to container port `8000`.
 
-Compose passes through runtime control variables plus Jira, Confluence, GitLab, shared `ATLASSIAN_*`, and proxy variables. For example:
+Compose passes through runtime control variables plus Jira, Confluence, GitLab, shared `ATLASSIAN_*`, logging, and proxy variables. For example:
 
 ```bash
-MCP_TOOL_CALL_DEBUG=true docker compose up --build
+WORKHUB_LOG_PROFILE=support docker compose up --build
 ```
 
 ## Runtime Controls
@@ -130,8 +119,14 @@ MCP_TOOL_CALL_DEBUG=true docker compose up --build
 | `MCP_HTTP_HOST` / `MCP_HTTP_PORT` / `MCP_HTTP_PATH` | Configure streamable HTTP when CLI flags are not used. Ignored by stdio startup. |
 | `MCP_PORT` | Compose-only host port mapping. Does not configure the Rust process itself. |
 | `ENV_FILE` | Optional dotenv file loaded by `streamhttp` and `cli` startup. The explicit `--env-file <path>` argument takes precedence. For `cli`, the global CLI `.env` and strict `./.env` are lower-priority fallbacks. Ignored by `stdio`. |
-| `MCP_TOOL_CALL_DEBUG` | Set `true` to enable MCP tool-call diagnostics when `RUST_LOG` is unset. Uses `workhub_rs::mcp=debug,workhub_rs=info,rmcp=info`. |
-| `RUST_LOG` | Advanced tracing filter. Takes precedence over `MCP_TOOL_CALL_DEBUG`. |
+| `WORKHUB_LOG_PROFILE` | Select `production`, `support`, `development`, `quiet`, or `test`. Defaults to `production`. |
+| `WORKHUB_LOG_DIR` | Override the platform log directory. Set this to a persistent writable volume in containers. |
+| `WORKHUB_LOG_TARGETS` | Select `console`, `file`, `error_file`, and/or `audit_file`. Defaults are mode-specific: streamable HTTP uses all four targets; stdio, version, `logs`, and CLI commands omit `console` unless CLI `-v`/`--verbose` is used. |
+| `WORKHUB_LOG_LEVEL` | Set the global minimum level. Defaults to `info`. |
+| `WORKHUB_LOG_FILTER` | Advanced module filter for targeted troubleshooting. |
+| `WORKHUB_LOG_PAYLOADS` | Select `none`, `metadata`, or `sanitized_args`. Defaults to `metadata`. |
+| `WORKHUB_LOG_ROTATION`, `WORKHUB_LOG_MAX_BYTES`, `WORKHUB_LOG_RETENTION_FILES`, `WORKHUB_LOG_RETENTION_DAYS`, `WORKHUB_LOG_COMPRESSION` | Configure rotation, retention, and gzip compression. |
+| `WORKHUB_LOG_BUNDLE_MAX_BYTES` | Configure the maximum included log bytes for `workhub logs bundle`. |
 
 ## Jira, Confluence, And GitLab Auth
 
@@ -172,10 +167,22 @@ Supported outbound network controls:
 
 Reserved auth, cookie, host, content, proxy, connection, and GitLab token headers are rejected in custom outbound headers. GitLab does not use the shared `ATLASSIAN_*` fallback variables for proxy, custom headers, mTLS, TLS verification, or timeout.
 
+## Log Operations
+
+Use these commands on the same host/container that runs Workhub:
+
+```bash
+workhub logs path
+workhub logs usage --since 24h
+workhub logs bundle --since 24h --output workhub-logs.zip
+```
+
+`workhub logs path` prints JSON with the log directory, enabled targets, and recent files. `workhub logs usage` reports MCP tool and CLI command call counts, success/failure counts, incomplete calls, and duration summaries for a selected time window. `workhub logs bundle` creates a redacted ZIP with recent runtime, error, and audit logs plus `runtime-summary.json` and `manifest.json`.
+
 ## Security Behavior
 
-- Secret-looking values are redacted from logs, MCP debug output, development acceptance output, URL query values, and upstream error summaries.
-- MCP tool-call diagnostics include redacted JSON arguments. They can still include business data such as JQL, issue keys, page IDs, summaries, or descriptions, so enable them only while troubleshooting.
+- Secret-looking values are redacted from logs, development acceptance output, URL query values, and upstream error summaries.
+- Support and development payload settings can include redacted argument metadata. They can still include business identifiers such as JQL, issue keys, page IDs, summaries, or descriptions, so use those profiles only while troubleshooting.
 - Outbound upstream redirects are same-origin only and limited to 3 hops.
 
 ## Unsupported In The Current Rust Release

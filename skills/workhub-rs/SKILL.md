@@ -1,6 +1,6 @@
 ---
 name: workhub-rs
-description: "User-facing business command guide for the installed workhub CLI. Use when a user wants to operate Jira, Confluence, or GitLab with `workhub cli ...`: choose the right business command, form arguments/body/file/stdin/JSON inputs, and explain default text or JSON returns. Do not use for installation, builds, server/MCP runtime, deployment, environment setup, credential configuration, or `workhub cli config` guidance."
+description: "User-facing business command guide for the installed workhub CLI. Use when a user wants to operate Jira, Confluence, or GitLab with `workhub cli ...`: choose the right business command, form arguments/body/file/stdin/JSON inputs, prefer compact default text for broad discovery, switch to JSON only when exact structured fields are needed, and explain output behavior. Do not use for installation, builds, server/MCP runtime, deployment, environment setup, credential configuration, or `workhub cli config` guidance."
 ---
 
 # Workhub Business CLI Guide
@@ -40,7 +40,11 @@ workhub cli confluence ...
 workhub cli gitlab ...
 ```
 
-Use `--json` when the user needs automation-friendly output. Use `--pretty` only with `--json`.
+Prefer the default table/key-value output for broad discovery, list, search, and manual inspection commands. This preserves the identifiers and status fields normally needed for follow-up work while keeping agent context small.
+
+Use `--json` only when the next step depends on exact structured data: nested fields, warning/error envelopes, null/false/empty-string distinctions, deterministic assertions, or a script that must parse the result. Before using JSON on a broad query, narrow the result with a specific object command, a low limit, filters, or field selection where available. If default output is missing one needed field, run a second narrow JSON command for the selected object instead of repeating a broad query in JSON.
+
+Use `--pretty` only with `--json`, and only when a human needs to inspect the JSON.
 
 Use built-in help only to verify exact flag spelling when needed:
 
