@@ -78,13 +78,23 @@ Run a CLI command with the same environment configuration:
 ```bash
 workhub cli config setup jira
 workhub cli jira issue get ABC-1 --fields summary,status
-workhub cli --json confluence page get --id 123456
+workhub cli confluence page get --id 123456
 workhub cli gitlab mr list group/project --state opened
 ```
 
 For globally installed binaries, `workhub cli ...` reads `${XDG_CONFIG_HOME:-$HOME/.config}/workhub/.env` on Linux/Unix, `$HOME/Library/Application Support/workhub/.env` on macOS, or `%APPDATA%\workhub\.env` on Windows before falling back to strict `./.env`. Use `workhub cli config path`, `show`, `setup`, `set`, and `unset` to manage the global CLI config.
 
 See [docs/cli.md](docs/cli.md) for the full command reference and output contract.
+
+Find local logs or create a redacted support bundle:
+
+```bash
+workhub logs path
+workhub logs usage --since 24h
+workhub logs bundle --since 24h --output workhub-logs.zip
+```
+
+Runtime logs use three NDJSON files: `workhub.log` for normal runtime state, `workhub-error.log` for diagnostic envelopes, and `workhub-audit.log` for security/audit events. Streamable HTTP also enables compact stderr summaries by default; stdio, version, `logs`, and CLI command modes keep console logs off unless explicitly enabled. Stdout stays reserved for MCP protocol frames, version output, and successful CLI command results.
 
 ## MCP stdio JSON
 
@@ -145,7 +155,7 @@ Since then, this project has diverged in a few practical ways: it uses a Rust-na
 
 ## Documentation
 
-- [Configuration](docs/configuration.md): service credentials, tool access, network/TLS, diagnostics, and content conversion notes.
+- [Configuration](docs/configuration.md): service credentials, tool access, logging, network/TLS, and content conversion notes.
 - [CLI reference](docs/cli.md): production resource-oriented CLI commands, output, errors, and env-file behavior.
 - [Deployment](docs/deployment.md): stdio, streamable HTTP, Docker, compose, auth, security, and unsupported deployment capabilities.
 - [Support matrix](docs/support-matrix.md): every Jira, Confluence, and GitLab tool with local/real acceptance status.
@@ -157,10 +167,11 @@ Since then, this project has diverged in a few practical ways: it uses a Rust-na
 
 The codebase is a Rust 1.94 / edition 2024 workspace:
 
-- `src/main.rs`: CLI parsing, tracing, stdio, streamable HTTP, production CLI dispatch, and `/healthz`.
+- `src/main.rs`: CLI parsing, observability bootstrap, stdio, streamable HTTP, production CLI dispatch, and `/healthz`.
+- `src/observability/`: logging configuration, event schema, redaction, sinks, rotation, panic capture, and support bundle generation.
 - `src/cli.rs` and `src/cli/`: resource-oriented production CLI parser and provider adapters.
 - `src/operations.rs` and `src/operations/`: shared provider operation layer used by MCP handlers and CLI adapters.
-- `src/mcp.rs` and `src/mcp/`: RMCP server glue, handlers, schema sanitization, and tool-call diagnostics.
+- `src/mcp.rs` and `src/mcp/`: RMCP server glue, handlers, schema sanitization, and tool-call event handling.
 - `src/jira/`, `src/confluence/`, `src/gitlab/`: provider-specific config, clients, tools, models, formatting, and tests.
 - `src/upstream/`: provider-agnostic HTTP, auth, proxy, mTLS, custom headers, redaction, same-origin redirect, and error helpers.
 - `src/atlassian/`: Atlassian-specific compatibility and shared Jira/Confluence behavior.

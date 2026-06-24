@@ -1,12 +1,13 @@
 use std::{
     collections::BTreeMap,
-    io::{BufRead, BufReader, Write},
+    fs::{self, File},
+    io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::mpsc,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -21,10 +22,12 @@ use axum::{
     routing::any,
 };
 use clap::{Args, ValueEnum};
+use flate2::read::GzDecoder;
 use reqwest::header::HeaderMap as ReqwestHeaderMap;
 use serde_json::{Value, json};
 use tokio::{sync::Mutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
+use zip::ZipArchive;
 
 use crate::XtaskResult;
 
@@ -33,6 +36,7 @@ type EnvMap = BTreeMap<String, String>;
 const JIRA_TOKEN: &str = "test-smoke-token";
 const CONFLUENCE_TOKEN: &str = "test-confluence-smoke-token";
 const GITLAB_TOKEN: &str = "test-gitlab-smoke-token";
+const LOG_SMOKE_SECRET: &str = "xtask-log-smoke-secret";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmokeCommand {
@@ -175,6 +179,11 @@ pub async fn run_all() -> XtaskResult<i32> {
         }
     }
 
+    let exit_code = run_logs().await?;
+    if exit_code != 0 {
+        return Ok(exit_code);
+    }
+
     Ok(0)
 }
 
@@ -183,6 +192,16 @@ pub async fn run_cli(command: CliSmokeCommand) -> XtaskResult<i32> {
         Ok(()) => Ok(0),
         Err(error) => {
             eprintln!("CLI smoke failed: {error}");
+            Ok(1)
+        }
+    }
+}
+
+pub async fn run_logs() -> XtaskResult<i32> {
+    match run_logs_inner() {
+        Ok(()) => Ok(0),
+        Err(error) => {
+            eprintln!("logs smoke failed: {error}");
             Ok(1)
         }
     }
@@ -205,6 +224,132 @@ async fn run_cli_inner(command: CliSmokeCommand) -> Result<(), String> {
         run_cli_service(*service, &binary).await?;
     }
 
+    Ok(())
+}
+
+fn run_logs_inner() -> Result<(), String> {
+    let binary = build_mcp_binary()?;
+    let log_dir = unique_smoke_dir("logs");
+    fs::create_dir_all(&log_dir)
+        .map_err(|error| format!("failed to create log smoke directory: {error}"))?;
+    let bundle_path = log_dir.join("workhub-logs.zip");
+    let env = log_smoke_env(&log_dir);
+
+    let path_output = run_workhub_process(&binary, env.clone(), &["logs", "path"], &log_dir)?;
+    assert_process_status(&path_output, Some(0), "logs path")?;
+    assert_json_stdout(&path_output, "logs path")?;
+    assert_compact_stderr(&path_output.stderr, "logs path")?;
+    assert_no_log_smoke_secret(&path_output.stdout, "logs path stdout")?;
+    assert_no_log_smoke_secret(&path_output.stderr, "logs path stderr")?;
+
+    let mut security_env = env.clone();
+    security_env.insert("JIRA_URL".to_string(), "http://127.0.0.1:9".to_string());
+    security_env.insert(
+        "JIRA_PERSONAL_TOKEN".to_string(),
+        LOG_SMOKE_SECRET.to_string(),
+    );
+    security_env.insert(
+        "JIRA_CUSTOM_HEADERS".to_string(),
+        format!("Authorization={LOG_SMOKE_SECRET}"),
+    );
+    let security_output = run_workhub_process(
+        &binary,
+        security_env,
+        &["cli", "--json", "jira", "project", "list"],
+        &log_dir,
+    )?;
+    assert_process_status(
+        &security_output,
+        Some(3),
+        "reserved custom header rejection",
+    )?;
+    if !security_output.stdout.trim().is_empty() {
+        return Err(format!(
+            "reserved custom header rejection polluted stdout: {}",
+            security_output.stdout
+        ));
+    }
+    assert_compact_stderr(
+        &security_output.stderr,
+        "reserved custom header rejection stderr",
+    )?;
+    assert_no_log_smoke_secret(&security_output.stderr, "reserved custom header stderr")?;
+
+    let invalid_bundle_output = run_workhub_process(
+        &binary,
+        env.clone(),
+        &[
+            "logs",
+            "bundle",
+            "--since",
+            "bad",
+            "--output",
+            bundle_path
+                .to_str()
+                .ok_or("bundle path is not valid UTF-8")?,
+        ],
+        &log_dir,
+    )?;
+    assert_process_status(&invalid_bundle_output, Some(2), "invalid bundle since")?;
+    if !invalid_bundle_output.stdout.trim().is_empty() {
+        return Err(format!(
+            "invalid bundle since polluted stdout: {}",
+            invalid_bundle_output.stdout
+        ));
+    }
+    assert_compact_stderr(&invalid_bundle_output.stderr, "invalid bundle since stderr")?;
+
+    for _ in 0..8 {
+        let output = run_workhub_process(&binary, env.clone(), &["logs", "path"], &log_dir)?;
+        assert_process_status(&output, Some(0), "rotation logs path")?;
+    }
+
+    let bundle_output = run_workhub_process(
+        &binary,
+        env.clone(),
+        &[
+            "logs",
+            "bundle",
+            "--since",
+            "24h",
+            "--output",
+            bundle_path
+                .to_str()
+                .ok_or("bundle path is not valid UTF-8")?,
+        ],
+        &log_dir,
+    )?;
+    assert_process_status(&bundle_output, Some(0), "logs bundle")?;
+    let bundle_json = assert_json_stdout(&bundle_output, "logs bundle")?;
+    if bundle_json.get("truncated").and_then(Value::as_bool) != Some(false) {
+        return Err(format!("logs bundle unexpectedly truncated: {bundle_json}"));
+    }
+    assert_compact_stderr(&bundle_output.stderr, "logs bundle stderr")?;
+
+    assert_log_files(&log_dir)?;
+    assert_rotation_retention(&log_dir)?;
+    assert_log_file_contains(&log_dir.join("workhub.log"), "logs.command.completed")?;
+    assert_log_file_contains(&log_dir.join("workhub-error.log"), "logs.command.failed")?;
+    assert_log_file_contains(&log_dir.join("workhub-audit.log"), "reserved_custom_header")?;
+    assert_no_secret_in_log_dir(&log_dir)?;
+    assert_bundle_contents(&bundle_path)?;
+
+    let quiet_output = run_workhub_process(
+        &binary,
+        BTreeMap::from([("WORKHUB_LOG_PROFILE".to_string(), "test".to_string())]),
+        &["logs", "path"],
+        &log_dir,
+    )?;
+    assert_process_status(&quiet_output, Some(0), "test profile logs path")?;
+    if !quiet_output.stderr.trim().is_empty() {
+        return Err(format!(
+            "test profile logs path wrote stderr: {}",
+            quiet_output.stderr
+        ));
+    }
+
+    let _ = fs::remove_dir_all(&log_dir);
+    println!("observability logs smoke passed");
     Ok(())
 }
 
@@ -1251,6 +1396,7 @@ fn smoke_env(service: SmokeService, url: &str, restricted: bool) -> EnvMap {
             }
         }
     }
+    env.insert("WORKHUB_LOG_PROFILE".to_string(), "test".to_string());
     env
 }
 
@@ -1281,10 +1427,42 @@ fn cli_smoke_env(service: SmokeService, url: &str, disabled_tool: Option<&str>) 
         }
     }
     env.insert("MCP_TOOL_PROFILE".to_string(), "custom".to_string());
+    env.insert("WORKHUB_LOG_PROFILE".to_string(), "test".to_string());
     if let Some(disabled_tool) = disabled_tool {
         env.insert("MCP_DISABLED_TOOLS".to_string(), disabled_tool.to_string());
     }
     env
+}
+
+fn log_smoke_env(log_dir: &Path) -> EnvMap {
+    BTreeMap::from([
+        ("WORKHUB_LOG_DIR".to_string(), log_dir.display().to_string()),
+        (
+            "WORKHUB_LOG_TARGETS".to_string(),
+            "console,file,error_file,audit_file".to_string(),
+        ),
+        ("WORKHUB_LOG_FORMAT".to_string(), "compact".to_string()),
+        ("WORKHUB_LOG_ROTATION".to_string(), "size".to_string()),
+        ("WORKHUB_LOG_MAX_BYTES".to_string(), "900".to_string()),
+        ("WORKHUB_LOG_RETENTION_FILES".to_string(), "1".to_string()),
+        ("WORKHUB_LOG_RETENTION_DAYS".to_string(), "1".to_string()),
+        ("WORKHUB_LOG_COMPRESSION".to_string(), "true".to_string()),
+        (
+            "WORKHUB_LOG_BUNDLE_MAX_BYTES".to_string(),
+            "1048576".to_string(),
+        ),
+    ])
+}
+
+fn unique_smoke_dir(label: &str) -> PathBuf {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    std::env::temp_dir().join(format!(
+        "workhub-{label}-smoke-{}-{millis}",
+        std::process::id()
+    ))
 }
 
 #[derive(Debug)]
@@ -1313,6 +1491,206 @@ fn run_cli_process(
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
+}
+
+fn run_workhub_process(
+    binary: &PathBuf,
+    env: EnvMap,
+    args: &[&str],
+    current_dir: &Path,
+) -> Result<CliProcessOutput, String> {
+    let output = Command::new(binary)
+        .args(args)
+        .env_clear()
+        .envs(env)
+        .current_dir(current_dir)
+        .output()
+        .map_err(|error| format!("failed to run Workhub smoke command {args:?}: {error}"))?;
+
+    Ok(CliProcessOutput {
+        status_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn assert_process_status(
+    output: &CliProcessOutput,
+    expected: Option<i32>,
+    label: &str,
+) -> Result<(), String> {
+    if output.status_code == expected {
+        return Ok(());
+    }
+    Err(format!(
+        "{label} exited {:?}, expected {:?}; stdout={} stderr={}",
+        output.status_code, expected, output.stdout, output.stderr
+    ))
+}
+
+fn assert_json_stdout(output: &CliProcessOutput, label: &str) -> Result<Value, String> {
+    serde_json::from_str(output.stdout.trim()).map_err(|error| {
+        format!(
+            "{label} stdout was not JSON: {error}; stdout={}",
+            output.stdout
+        )
+    })
+}
+
+fn assert_compact_stderr(stderr: &str, label: &str) -> Result<(), String> {
+    let Some(line) = stderr.lines().next() else {
+        return Err(format!("{label} did not write compact stderr"));
+    };
+    let chars = line.chars().collect::<Vec<_>>();
+    let valid = chars.len() >= 23
+        && chars.get(4) == Some(&'-')
+        && chars.get(7) == Some(&'-')
+        && chars.get(10) == Some(&' ')
+        && chars.get(13) == Some(&':')
+        && chars.get(16) == Some(&':')
+        && chars.get(19) == Some(&'.');
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "{label} stderr did not start with local timestamp: {line}"
+        ))
+    }
+}
+
+fn assert_log_files(log_dir: &Path) -> Result<(), String> {
+    for name in ["workhub.log", "workhub-error.log", "workhub-audit.log"] {
+        let path = log_dir.join(name);
+        if !path.exists() {
+            return Err(format!("expected log file missing: {}", path.display()));
+        }
+    }
+    Ok(())
+}
+
+fn assert_rotation_retention(log_dir: &Path) -> Result<(), String> {
+    let rotated = fs::read_dir(log_dir)
+        .map_err(|error| format!("failed to read log directory: {error}"))?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with("workhub.log."))
+        .collect::<Vec<_>>();
+    if rotated.is_empty() {
+        return Err("expected at least one rotated run log".to_string());
+    }
+    if rotated.len() > 1 {
+        return Err(format!(
+            "retention_files=1 should keep at most one rotated run log, found {rotated:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn assert_log_file_contains(path: &Path, needle: &str) -> Result<(), String> {
+    let content = read_log_file(path)?;
+    if content.contains(needle) {
+        Ok(())
+    } else {
+        Err(format!("{} did not contain {needle:?}", path.display()))
+    }
+}
+
+fn assert_no_secret_in_log_dir(log_dir: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(log_dir)
+        .map_err(|error| format!("failed to read log directory for secret scan: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("failed to inspect log entry: {error}"))?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !is_workhub_log_name(name) {
+            continue;
+        }
+        let content = read_log_file(&path)?;
+        assert_no_log_smoke_secret(&content, &format!("log file {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn assert_bundle_contents(bundle_path: &Path) -> Result<(), String> {
+    let file = File::open(bundle_path)
+        .map_err(|error| format!("failed to open bundle {}: {error}", bundle_path.display()))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|error| format!("failed to read bundle {}: {error}", bundle_path.display()))?;
+    let mut names = Vec::new();
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| format!("failed to read bundle entry {index}: {error}"))?;
+        let name = entry.name().to_string();
+        let mut content = String::new();
+        let _ = entry.read_to_string(&mut content);
+        assert_no_log_smoke_secret(&content, &format!("bundle entry {name}"))?;
+        names.push(name);
+    }
+    for required in ["manifest.json", "runtime-summary.json"] {
+        if !names.iter().any(|name| name == required) {
+            return Err(format!(
+                "bundle missing required entry {required}: {names:?}"
+            ));
+        }
+    }
+    if !names
+        .iter()
+        .any(|name| name.starts_with("logs/workhub.log"))
+    {
+        return Err(format!("bundle missing run log entry: {names:?}"));
+    }
+    if !names
+        .iter()
+        .any(|name| name.starts_with("logs/workhub-error.log"))
+    {
+        return Err(format!("bundle missing error log entry: {names:?}"));
+    }
+    if !names
+        .iter()
+        .any(|name| name.starts_with("logs/workhub-audit.log"))
+    {
+        return Err(format!("bundle missing audit log entry: {names:?}"));
+    }
+    Ok(())
+}
+
+fn read_log_file(path: &Path) -> Result<String, String> {
+    let mut content = String::new();
+    if path.extension().and_then(|extension| extension.to_str()) == Some("gz") {
+        GzDecoder::new(
+            File::open(path)
+                .map_err(|error| format!("failed to open {}: {error}", path.display()))?,
+        )
+        .read_to_string(&mut content)
+        .map_err(|error| format!("failed to decompress {}: {error}", path.display()))?;
+    } else {
+        File::open(path)
+            .map_err(|error| format!("failed to open {}: {error}", path.display()))?
+            .read_to_string(&mut content)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    }
+    Ok(content)
+}
+
+fn assert_no_log_smoke_secret(content: &str, label: &str) -> Result<(), String> {
+    for secret in [JIRA_TOKEN, CONFLUENCE_TOKEN, GITLAB_TOKEN, LOG_SMOKE_SECRET] {
+        if content.contains(secret) {
+            return Err(format!("{label} leaked fixture secret"));
+        }
+    }
+    Ok(())
+}
+
+fn is_workhub_log_name(name: &str) -> bool {
+    name == "workhub.log"
+        || name == "workhub-error.log"
+        || name == "workhub-audit.log"
+        || name.starts_with("workhub.log.")
+        || name.starts_with("workhub-error.log.")
+        || name.starts_with("workhub-audit.log.")
 }
 
 fn assert_cli_success_text(

@@ -2,7 +2,7 @@ use std::fmt::{Debug, Formatter};
 
 use reqwest::header::{HeaderName, HeaderValue};
 
-use crate::error::ConfigError;
+use crate::{error::ConfigError, observability::events::emit_security_rejection};
 
 pub const CUSTOM_HEADER_RESERVED_NAMES: &[&str] = &[
     "authorization",
@@ -101,6 +101,12 @@ fn parse_custom_headers(variable: &'static str, value: &str) -> Result<CustomHea
         }
         let normalized_name = name.to_ascii_lowercase();
         if CUSTOM_HEADER_RESERVED_NAMES.contains(&normalized_name.as_str()) {
+            emit_security_rejection(
+                "reserved_custom_header",
+                "custom_header_reserved_names",
+                None,
+                format!("reserved custom header rejected: {normalized_name}"),
+            );
             return Err(ConfigError::ReservedCustomHeader {
                 variable,
                 header: normalized_name,

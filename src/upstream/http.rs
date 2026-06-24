@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::{
     Client, ClientBuilder, Method, NoProxy, Proxy, RequestBuilder, Url, header::CONTENT_TYPE,
@@ -10,10 +10,16 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::upstream::{
-    auth::UpstreamAuth, custom_headers::CustomHeaders, error::UpstreamError,
-    mtls::ClientTlsIdentityConfig, proxy::ProxyConfig, redaction::redact_text,
-    security::MAX_SAME_ORIGIN_REDIRECTS,
+use crate::{
+    observability::events::{
+        UpstreamRequestLogContext, emit_security_rejection, emit_upstream_completed,
+        emit_upstream_failed, emit_upstream_started,
+    },
+    upstream::{
+        auth::UpstreamAuth, custom_headers::CustomHeaders, error::UpstreamError,
+        mtls::ClientTlsIdentityConfig, proxy::ProxyConfig, redaction::redact_text,
+        security::MAX_SAME_ORIGIN_REDIRECTS,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -133,6 +139,12 @@ impl UpstreamHttpClient {
 
         if let Ok(url) = Url::parse(trimmed) {
             if !same_origin(&self.base_url, &url) {
+                emit_security_rejection(
+                    "absolute_url_cross_origin",
+                    "same_origin_or_relative_url",
+                    url.host_str().map(ToString::to_string),
+                    format!("{field_name} rejected cross-origin URL"),
+                );
                 return Err(UpstreamError::invalid_input(format!(
                     "{field_name} absolute URL must use the configured upstream base origin"
                 )));
@@ -197,7 +209,19 @@ impl UpstreamHttpClient {
         T: DeserializeOwned,
     {
         let request_context = request_context(&builder);
-        let response = builder.send().await.map_err(UpstreamError::transport)?;
+        let request_log = upstream_request_log_context(&builder);
+        let started_at = Instant::now();
+        if let Some(request_log) = &request_log {
+            emit_upstream_started(request_log);
+        }
+        let response = match builder.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                let error = UpstreamError::transport(error);
+                emit_upstream_error(request_log.as_ref(), &error, started_at);
+                return Err(error);
+            }
+        };
         let status = response.status();
 
         if !status.is_success() {
@@ -205,12 +229,31 @@ impl UpstreamHttpClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "failed to read error response".to_string());
-            return Err(UpstreamError::http_status(status, message));
+            let error = UpstreamError::http_status(status, message);
+            emit_upstream_error(request_log.as_ref(), &error, started_at);
+            return Err(error);
         }
 
-        let bytes = response.bytes().await.map_err(UpstreamError::transport)?;
-        serde_json::from_slice(&bytes)
+        let bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let error = UpstreamError::transport(error);
+                emit_upstream_error(request_log.as_ref(), &error, started_at);
+                return Err(error);
+            }
+        };
+        match serde_json::from_slice(&bytes)
             .map_err(|error| UpstreamError::json_decode_body(error, request_context.as_deref()))
+        {
+            Ok(value) => {
+                emit_upstream_success(request_log.as_ref(), status, started_at);
+                Ok(value)
+            }
+            Err(error) => {
+                emit_upstream_error(request_log.as_ref(), &error, started_at);
+                Err(error)
+            }
+        }
     }
 
     pub async fn send_json_value_or_null(
@@ -218,7 +261,19 @@ impl UpstreamHttpClient {
         builder: RequestBuilder,
     ) -> Result<Value, UpstreamError> {
         let request_context = request_context(&builder);
-        let response = builder.send().await.map_err(UpstreamError::transport)?;
+        let request_log = upstream_request_log_context(&builder);
+        let started_at = Instant::now();
+        if let Some(request_log) = &request_log {
+            emit_upstream_started(request_log);
+        }
+        let response = match builder.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                let error = UpstreamError::transport(error);
+                emit_upstream_error(request_log.as_ref(), &error, started_at);
+                return Err(error);
+            }
+        };
         let status = response.status();
 
         if !status.is_success() {
@@ -226,16 +281,36 @@ impl UpstreamHttpClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "failed to read error response".to_string());
-            return Err(UpstreamError::http_status(status, message));
+            let error = UpstreamError::http_status(status, message);
+            emit_upstream_error(request_log.as_ref(), &error, started_at);
+            return Err(error);
         }
 
-        let bytes = response.bytes().await.map_err(UpstreamError::transport)?;
+        let bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let error = UpstreamError::transport(error);
+                emit_upstream_error(request_log.as_ref(), &error, started_at);
+                return Err(error);
+            }
+        };
         if bytes.is_empty() {
+            emit_upstream_success(request_log.as_ref(), status, started_at);
             return Ok(Value::Null);
         }
 
-        serde_json::from_slice(&bytes)
+        match serde_json::from_slice(&bytes)
             .map_err(|error| UpstreamError::json_decode_body(error, request_context.as_deref()))
+        {
+            Ok(value) => {
+                emit_upstream_success(request_log.as_ref(), status, started_at);
+                Ok(value)
+            }
+            Err(error) => {
+                emit_upstream_error(request_log.as_ref(), &error, started_at);
+                Err(error)
+            }
+        }
     }
 
     pub async fn send_bytes_limited(
@@ -243,7 +318,19 @@ impl UpstreamHttpClient {
         builder: RequestBuilder,
         max_bytes: u64,
     ) -> Result<DownloadedContent, UpstreamError> {
-        let response = builder.send().await.map_err(UpstreamError::transport)?;
+        let request_log = upstream_request_log_context(&builder);
+        let started_at = Instant::now();
+        if let Some(request_log) = &request_log {
+            emit_upstream_started(request_log);
+        }
+        let response = match builder.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                let error = UpstreamError::transport(error);
+                emit_upstream_error(request_log.as_ref(), &error, started_at);
+                return Err(error);
+            }
+        };
         let status = response.status();
         let content_type = response
             .headers()
@@ -256,29 +343,43 @@ impl UpstreamHttpClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "failed to read error response".to_string());
-            return Err(UpstreamError::http_status(status, message));
+            let error = UpstreamError::http_status(status, message);
+            emit_upstream_error(request_log.as_ref(), &error, started_at);
+            return Err(error);
         }
 
         if response
             .content_length()
             .is_some_and(|content_length| content_length > max_bytes)
         {
-            return Err(UpstreamError::invalid_input(format!(
+            let error = UpstreamError::invalid_input(format!(
                 "response body exceeds configured limit of {max_bytes} bytes"
-            )));
+            ));
+            emit_upstream_error(request_log.as_ref(), &error, started_at);
+            return Err(error);
         }
 
         let mut response = response;
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(UpstreamError::transport)? {
+        while let Some(chunk) = match response.chunk().await {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                let error = UpstreamError::transport(error);
+                emit_upstream_error(request_log.as_ref(), &error, started_at);
+                return Err(error);
+            }
+        } {
             if bytes.len() as u64 + chunk.len() as u64 > max_bytes {
-                return Err(UpstreamError::invalid_input(format!(
+                let error = UpstreamError::invalid_input(format!(
                     "response body exceeds configured limit of {max_bytes} bytes"
-                )));
+                ));
+                emit_upstream_error(request_log.as_ref(), &error, started_at);
+                return Err(error);
             }
             bytes.extend_from_slice(&chunk);
         }
 
+        emit_upstream_success(request_log.as_ref(), status, started_at);
         Ok(DownloadedContent {
             content_type,
             bytes,
@@ -366,10 +467,22 @@ fn same_origin(left: &Url, right: &Url) -> bool {
 fn same_origin_redirect_policy() -> Policy {
     Policy::custom(|attempt| {
         if attempt.previous().len() > MAX_SAME_ORIGIN_REDIRECTS {
+            emit_security_rejection(
+                "redirect_limit_exceeded",
+                "same_origin_redirects_only",
+                attempt.url().host_str().map(ToString::to_string),
+                "upstream redirect rejected by same-origin policy",
+            );
             return attempt.error("too many same-origin redirects");
         }
 
         let Some(previous) = attempt.previous().last() else {
+            emit_security_rejection(
+                "redirect_missing_previous_url",
+                "same_origin_redirects_only",
+                attempt.url().host_str().map(ToString::to_string),
+                "upstream redirect rejected by same-origin policy",
+            );
             return attempt.error("redirect chain is missing previous URL");
         };
 
@@ -378,9 +491,51 @@ fn same_origin_redirect_policy() -> Policy {
         {
             attempt.follow()
         } else {
+            emit_security_rejection(
+                "redirect_cross_origin",
+                "same_origin_redirects_only",
+                attempt.url().host_str().map(ToString::to_string),
+                "upstream redirect rejected by same-origin policy",
+            );
             attempt.error("blocked unsafe redirect")
         }
     })
+}
+
+fn upstream_request_log_context(builder: &RequestBuilder) -> Option<UpstreamRequestLogContext> {
+    let request = builder.try_clone()?.build().ok()?;
+    Some(UpstreamRequestLogContext::from_url(
+        request.method(),
+        request.url(),
+    ))
+}
+
+fn emit_upstream_success(
+    request: Option<&UpstreamRequestLogContext>,
+    status: reqwest::StatusCode,
+    started_at: Instant,
+) {
+    if let Some(request) = request {
+        emit_upstream_completed(request, status, elapsed_ms(started_at));
+    }
+}
+
+fn emit_upstream_error(
+    request: Option<&UpstreamRequestLogContext>,
+    error: &UpstreamError,
+    started_at: Instant,
+) {
+    if let Some(request) = request {
+        emit_upstream_failed(request, error, elapsed_ms(started_at));
+    }
+}
+
+fn elapsed_ms(started_at: Instant) -> u64 {
+    started_at
+        .elapsed()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn request_context(builder: &RequestBuilder) -> Option<String> {

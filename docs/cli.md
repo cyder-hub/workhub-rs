@@ -9,8 +9,10 @@ The CLI does not expose raw MCP tool calls, schema dumping, or tool-name fallbac
 Run commands as:
 
 ```bash
-workhub cli [--env-file <path>] [--json] [--pretty] <provider> <resource> <action> ...
+workhub cli [--env-file <path>] [--json] [--pretty] [-v|--verbose] <provider> <resource> <action> ...
 workhub cli config <path|show|setup|set|unset> ...
+workhub logs path
+workhub logs bundle [--since <duration>] [--output <path>]
 ```
 
 Global flags:
@@ -20,6 +22,15 @@ Global flags:
 | `--env-file <path>` | Load a dotenv file before reading runtime configuration. Takes precedence over `ENV_FILE`. |
 | `--json` | Print successful results as compact JSON to stdout. Errors are JSON on stderr. |
 | `--pretty` | Pretty-print JSON. Requires `--json`. |
+| `-v`, `--verbose` | Enable compact console log summaries on stderr for this CLI command. |
+
+Agent and skill output selection:
+
+- Prefer the default human-readable output for discovery, broad list/search commands, and manual inspection. It is intentionally cheaper for agents to read and usually includes the key identifiers needed for the next step.
+- Use `--json` only when the next action requires exact structured fields, nested data, null/false/empty-string distinctions, complete warning/error envelopes, or machine parsing for tests and scripts.
+- Scope JSON before requesting it. Prefer a specific `get` command, a low `--limit`, and narrow selectors such as `--fields summary,status` over broad list/search JSON.
+- If the default output is missing a required field, do a second narrow `--json` call for the selected object or small result set instead of rerunning the entire broad query as JSON.
+- Do not use broad `--json` list/search output as the default agent habit. It wastes context and can expose more business data than the next step needs.
 
 Environment loading:
 
@@ -57,17 +68,29 @@ Output and exits:
 
 | Case | stdout | stderr | Exit |
 | --- | --- | --- | --- |
-| Success, default | Compact text | Empty | `0` |
-| Success, `--json` | Result JSON | Empty | `0` |
+| Success, default | Compact text | Empty unless `-v`, `--verbose`, or explicit console logging is enabled | `0` |
+| Success, `--json` | Result JSON | Empty unless `-v`, `--verbose`, or explicit console logging is enabled | `0` |
 | Usage error | Empty | Usage/error text | `2` |
-| Invalid input | Empty | Operation error | `2` |
-| Missing service, unavailable service, project/space filter rejection | Empty | Operation error | `3` |
-| Upstream HTTP/transport/decode/shape error | Empty | Operation error | `4` |
-| Business structured error surfaced as CLI failure | Empty | Structured failure payload | `5` |
+| Invalid input | Empty | Operation error, plus compact log summary only when console logging is enabled | `2` |
+| Missing service, unavailable service, project/space filter rejection | Empty | Operation error, plus compact log summary only when console logging is enabled | `3` |
+| Upstream HTTP/transport/decode/shape error | Empty | Operation error, plus compact log summary only when console logging is enabled | `4` |
+| Business structured error surfaced as CLI failure | Empty | Structured failure payload, plus compact log summary only when console logging is enabled | `5` |
 
 Default text output renders scalar object fields as `key: value`. Object arrays inside results, such as `issues`, `values`, `results`, or `items`, are expanded into tabular sections with inferred key columns. Empty cells are shown as `-` so missing values remain visible in plain terminal output. Use `--json` when a caller needs the exact structured response.
 
 If a command returns a structured result whose top-level `success` field is `false`, the CLI treats it as a business failure even when the operation reached the service successfully. In that case stdout is empty, the result payload is written to stderr, and the process exits with code `5`. Automation should check both the process exit code and the JSON business fields.
+
+For automation, stdout is always reserved for successful command results. Logs never use stdout. CLI mode does not enable console logs by default; use `workhub cli -v ...`, `workhub cli --verbose ...`, or explicitly include `console` in `WORKHUB_LOG_TARGETS` when you want compact log summaries on stderr. The compact console format writes short stderr lines that begin with local time in `YYYY-MM-DD HH:MM:SS.mmm` format.
+
+Log helper commands:
+
+| Command | Behavior |
+| --- | --- |
+| `workhub logs path` | Print JSON with the active log directory, enabled targets, and recent `workhub.log*`, `workhub-error.log*`, and `workhub-audit.log*` files. |
+| `workhub logs bundle --since 24h --output workhub-logs.zip` | Create a redacted ZIP containing recent runtime, error, and audit logs plus `runtime-summary.json` and `manifest.json`. |
+| `workhub logs usage --since 24h [--source all\|mcp\|cli] [--limit 50] [--sort calls\|failures\|success-rate\|avg-duration\|name] [--json] [--pretty]` | Summarize MCP tool and CLI command usage from recent logs, including calls, success/failure counts, incomplete calls, success rate, duration summaries, and last-seen timestamps. |
+
+`workhub logs usage` defaults to a compact table. Use `--json` when a script or agent needs the complete structure. The command reads `workhub.log*` and `workhub-error.log*`, including gzip-compressed rotated logs, and intentionally ignores `mode=logs` self-events.
 
 State-changing commands use a stable mutation envelope where applicable: top-level `success`, `message`, `data`, and `warnings`; batch commands also expose `partial_success`, `summary`, and `failed` when individual items can fail. No-content upstream responses use an empty object in `data` instead of a bare `null`. Compatibility and cleanup failures use structured error categories such as `permission_denied`, `not_found`, and `unsupported_or_auth_required` when the upstream status is specific enough to classify safely.
 

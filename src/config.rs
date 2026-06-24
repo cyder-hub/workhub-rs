@@ -172,17 +172,6 @@ pub struct HttpConfigOverrides {
     pub path: Option<String>,
 }
 
-pub(crate) fn parse_extended_truthy(value: Option<&str>) -> bool {
-    matches!(
-        value.map(|value| value.trim().to_ascii_lowercase()),
-        Some(value)
-            if matches!(
-                value.as_str(),
-                "true" | "1" | "yes" | "y" | "on"
-            )
-    )
-}
-
 fn parse_enabled_tools(value: Option<&str>) -> Option<BTreeSet<String>> {
     let tools = parse_csv_names(value);
     if tools.is_empty() { None } else { Some(tools) }

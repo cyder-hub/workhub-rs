@@ -19,6 +19,14 @@ Global output flags:
 
 ## Output
 
+Choose output mode by task shape:
+
+- Use default text for broad discovery, list, search, and manual inspection commands. The table/key-value output is intentionally compact and normally includes the identifiers, names, statuses, and timestamps needed for the next command.
+- Use `--json` when the next step needs exact structure: nested fields, machine parsing, warning/error envelopes, null/false/empty-string distinctions, deterministic tests, or fields not rendered in the default text.
+- Narrow JSON before running it. Prefer a specific object command, low `--limit`, service filters, or field-selection flags where available.
+- If a broad text result identifies the target but omits one required field, run a second narrow `--json` command for that target rather than repeating the broad query as JSON.
+- Use `--pretty` only when a human needs to inspect the JSON; compact JSON is better for automated parsing.
+
 Default success output is compact text:
 
 ```text
@@ -38,10 +46,10 @@ Rules:
 - Nested objects prefer readable identifiers such as `name`, `title`, `key`, `username`, or `id`.
 - Mutations usually return a short operation summary in text mode and the underlying result object with `--json`.
 
-Use JSON for automation:
+Examples where JSON is justified:
 
 ```bash
-workhub cli --json jira issue search --jql 'project = ABC' --limit 10
+workhub cli --json jira issue search --jql 'project = ABC' --limit 3
 workhub cli --json --pretty confluence page get --id 123456 --markdown true
 ```
 

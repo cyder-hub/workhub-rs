@@ -199,14 +199,71 @@ mTLS:
 
 SOCKS proxy support is not compiled in.
 
-## Diagnostics
+## Observability Logging
 
-| Variable | Default | Behavior |
+All runtime modes initialize Workhub observability before loading provider runtime configuration. Logs never use stdout. Stdio keeps stdout protocol-only, `workhub -v` keeps stdout version-only, and successful `workhub cli ...` commands keep stdout for command results. By default, streamable HTTP enables compact console logs on stderr, while stdio, version, `logs`, and CLI command modes write logs only to files. Use `workhub cli -v ...`, `workhub cli --verbose ...`, or explicit `WORKHUB_LOG_TARGETS` when you want CLI console log summaries.
+
+The platform config file is `${XDG_CONFIG_HOME:-$HOME/.config}/workhub/config.toml` on Linux/Unix, `$HOME/Library/Application Support/workhub/config.toml` on macOS, and `%APPDATA%\workhub\config.toml` on Windows. Environment variables override the TOML values.
+
+Example:
+
+```toml
+[observability.logging]
+profile = "production"
+level = "info"
+payloads = "metadata"
+targets = ["console", "file", "error_file", "audit_file"]
+format = "compact"
+dir = "/var/log/workhub"
+compression = true
+
+[observability.logging.rotation]
+kind = ["daily", "size"]
+max_bytes = 20971520
+
+[observability.logging.retention]
+files = 20
+days = 14
+
+[observability.logging.support_bundle]
+max_bytes = 52428800
+```
+
+| Config / variable | Default | Behavior |
 | --- | --- | --- |
-| `MCP_TOOL_CALL_DEBUG` | `false` | Enables MCP tool-call diagnostics when `RUST_LOG` is unset. Arguments are redacted and truncated, but can still contain business data. |
-| `RUST_LOG` | unset | Advanced tracing filter. Takes precedence over `MCP_TOOL_CALL_DEBUG`. |
+| `profile` / `WORKHUB_LOG_PROFILE` | `production` | One of `production`, `support`, `development`, `quiet`, or `test`. Support and development profiles include more debug metadata after redaction; quiet disables console logs by default. |
+| `level` / `WORKHUB_LOG_LEVEL` | `info` | Global minimum level: `trace`, `debug`, `info`, `warn`, or `error`. |
+| `filter` / `WORKHUB_LOG_FILTER` | unset | Advanced module filter for development and targeted troubleshooting. |
+| `payloads` / `WORKHUB_LOG_PAYLOADS` | `metadata` | One of `none`, `metadata`, or `sanitized_args`. Business bodies, attachments, page bodies, issue descriptions, and diffs are not logged by default. |
+| `targets` / `WORKHUB_LOG_TARGETS` | mode-specific | Comma-separated or TOML list target set. Streamable HTTP defaults to `console,file,error_file,audit_file`; stdio, version, `logs`, and CLI commands default to `file,error_file,audit_file`; `workhub cli -v ...` also enables `console`. |
+| `format` / `WORKHUB_LOG_FORMAT` | `compact` | Console format: `compact` or `json`. File logs are always NDJSON. |
+| `dir` / `WORKHUB_LOG_DIR` | platform log directory | Log directory. Linux/Unix default is `${XDG_STATE_HOME:-$HOME/.local/state}/workhub/logs`; macOS default is `$HOME/Library/Logs/workhub`; Windows default is `%LOCALAPPDATA%\workhub\logs`. |
+| `rotation.kind` / `WORKHUB_LOG_ROTATION` | `daily,size` | Rotation modes: `daily`, `hourly`, and/or `size`. |
+| `rotation.max_bytes` / `WORKHUB_LOG_MAX_BYTES` | `20971520` | Size rotation threshold for each active log file. |
+| `retention.files` / `WORKHUB_LOG_RETENTION_FILES` | `20` | Maximum rotated files retained per log family. |
+| `retention.days` / `WORKHUB_LOG_RETENTION_DAYS` | `14` | Maximum rotated-file age in days. |
+| `compression` / `WORKHUB_LOG_COMPRESSION` | `true` | Compress rotated logs with gzip. |
+| `support_bundle.max_bytes` / `WORKHUB_LOG_BUNDLE_MAX_BYTES` | `52428800` | Maximum log bytes included in a generated support bundle. |
 
-The equivalent diagnostic filter is `workhub_rs::mcp=debug,workhub_rs=info,rmcp=info`.
+Log routing:
+
+| Event type | Console stderr | `workhub.log*` | `workhub-error.log*` | `workhub-audit.log*` |
+| --- | --- | --- | --- | --- |
+| Lifecycle/config/CLI/MCP/operation/upstream runtime state | Compact summaries for important events | Yes | Error events only | No |
+| Error diagnostics | Short summary and next action | Yes | Full diagnostic envelope | No |
+| Security rejection and audit events | Warnings for important rejections | No | Severe failures only | Yes |
+| Storage/rotation/retention events | Short warning when needed | Yes | Failures only | Audit sink storage events |
+| Panic capture | Short summary | Yes | Full diagnostic envelope | No |
+
+Use the log helper commands for local troubleshooting and support requests:
+
+```bash
+workhub logs path
+workhub logs usage --since 24h
+workhub logs bundle --since 24h --output workhub-logs.zip
+```
+
+`workhub logs path` prints the active log directory, enabled targets, and recent log files as JSON. `workhub logs usage` summarizes MCP tool and CLI command usage from recent `workhub.log*` and `workhub-error.log*` files, with `--json` available for automation. `workhub logs bundle` creates a ZIP containing recent `workhub.log*`, `workhub-error.log*`, `workhub-audit.log*`, `runtime-summary.json`, and `manifest.json`. Bundle export applies a second redaction pass and enforces the configured size limit.
 
 ## Streamable HTTP Endpoint
 
@@ -216,7 +273,7 @@ Security behavior:
 
 - Protect public HTTP deployments with a fronting gateway or network boundary appropriate for your environment.
 - Outbound upstream HTTP redirects are limited to same-origin `http`/`https` redirects, maximum 3 hops.
-- Logs, MCP debug argument output, acceptance compact errors, HTTP status summaries, and URL query values are redacted for secret-looking header, token, cookie, password, key, signature, and env secret values.
+- Logs, structured payload summaries, acceptance compact errors, HTTP status summaries, and URL query values are redacted for secret-looking header, token, cookie, password, key, signature, and env secret values.
 
 ## Confluence Content Conversion
 
